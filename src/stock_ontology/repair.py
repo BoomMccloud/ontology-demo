@@ -13,7 +13,7 @@ from typing import Any
 
 from stock_ontology.db import OntologyDB, merge_edge_facets
 from stock_ontology.models import Node
-from stock_ontology.registry import OntologyRegistry
+from stock_ontology.registry import OntologyRegistry, normalize_name_key
 from stock_ontology.vocab import canonicalize_edge_facets, canonicalize_node_facets
 
 
@@ -162,7 +162,7 @@ def _merge_exact_duplicates(db: OntologyDB, report: RepairReport) -> None:
         owner_by_key: dict[str, str] = {}
         for node in nodes:
             for label in [node.name, *node.aliases]:
-                key = label.strip().casefold()
+                key = normalize_name_key(label)
                 if not key:
                     continue
                 if key in owner_by_key:
@@ -181,15 +181,15 @@ def _merge_exact_duplicates(db: OntologyDB, report: RepairReport) -> None:
 def _merge_cluster(db: OntologyDB, cluster: list[Node], report: RepairReport) -> None:
     cluster.sort(key=lambda n: (n.created_at, n.id))
     survivor, losers = cluster[0], cluster[1:]
-    survivor_key = survivor.name.strip().casefold()
+    survivor_key = normalize_name_key(survivor.name)
     aliases = list(survivor.aliases)
-    seen = {a.strip().casefold() for a in aliases} | {survivor_key}
+    seen = {normalize_name_key(a) for a in aliases} | {survivor_key}
     facets = dict(survivor.facets)
     summary = survivor.summary
 
     for loser in losers:
         for label in [loser.name, *loser.aliases]:
-            key = label.strip().casefold()
+            key = normalize_name_key(label)
             if key and key not in seen:
                 seen.add(key)
                 aliases.append(label.strip())

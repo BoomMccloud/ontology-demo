@@ -50,7 +50,7 @@ type.
 - Signal filters: `parse_sentiment_filter`, `parse_category_filter` and
   `SIGNAL_CATEGORY_ALIASES` parse user input once. `matches_signal_filter`
   holds the category, rumor and sentiment rule that both the agent's
-  `query_entity_signals` and web `run_hybrid_search` call.
+  `query_entity_signals` and web search (`search.SearchFilters.matches`) call.
 
 ## Registry (`registry.py`)
 

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from stock_ontology.config import SUPPORTED_EXTENSIONS
-from stock_ontology.db import OntologyDB
+from stock_ontology.db import OntologyDB, node_meta
 from stock_ontology.llm import LLMClient
 from stock_ontology.registry import OntologyRegistry, create_minimal_registry
 from stock_ontology.models import (
@@ -291,8 +291,8 @@ class IngestionPipeline:
         node = local_nodes.get(node_id) or self.db.get_node(node_id)
         if node is None:
             return "entity", None
-        et = node.facets.get("entity_type")
-        return node.node_type, str(et) if et else None
+        _, node_type, entity_type = node_meta(node)
+        return node_type, entity_type
 
     def _process_document(
         self,

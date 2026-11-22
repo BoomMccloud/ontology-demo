@@ -26,7 +26,6 @@ from stock_ontology.db.schema import (
     node_meta,
     node_to_dict,
     now_iso,
-    row_to_edge,
     row_to_node,
     sql_casefold,
 )
@@ -50,6 +49,25 @@ from stock_ontology.vocab import (
     parse_filter_values,
     parse_sentiment_filter,
 )
+
+
+def _edge_rank(relation: Any, edge_facets: dict[str, Any]) -> tuple[int, int]:
+    """Rank duplicate edges to one neighbor: prefer a known sentiment, then ABOUT."""
+    return (
+        1 if normalize_sentiment(edge_facets.get("sentiment")) is not None else 0,
+        1 if relation == "ABOUT" else 0,
+    )
+
+
+def _merge_exposure(
+    base: dict[str, Any], new: dict[str, Any]
+) -> tuple[dict[str, Any], str | None]:
+    """Merge edge facets and normalize the merged exposure sentiment in place."""
+    merged = merge_edge_facets(base, new)
+    exp = normalize_sentiment(merged.get("sentiment"))
+    if exp is not None:
+        merged["sentiment"] = exp
+    return merged, exp
 
 
 class OntologyDB:
@@ -165,10 +183,6 @@ class OntologyDB:
                     str(r["id"]), str(r["node_type"]), str(r["name"]), json.loads(r["aliases_json"] or "[]")
                 )
             return int(self.conn.execute("SELECT COUNT(*) FROM node_lookup").fetchone()[0])
-
-
-    _row_to_node = staticmethod(row_to_node)
-    _row_to_edge = staticmethod(row_to_edge)
 
     # ------------------------------------------------------------------
     # Write Operations (Pipeline only; blocked by SQLite when read_only)
@@ -386,65 +400,33 @@ class OntologyDB:
         view_node.facets["status"] = "active"
         view_node.updated_at = now
 
-        if prior is not None and prior.id != view_node.id:
+        supersedes_prior = prior is not None and prior.id != view_node.id
+        if supersedes_prior:
             prior.facets["status"] = "superseded"
             prior.updated_at = now
             self.upsert_node(prior)
 
         self.upsert_node(view_node, embedding=embedding)
 
-        self.upsert_edge(
-            Edge(
-                id=f"edge_{uuid.uuid4().hex[:12]}",
-                from_id=view_node.id,
-                to_id=company_id,
-                relation="ABOUT",
-                facets={"consensus_link": True},
-                source_doc_id=None,
-                created_at=now,
-            )
-        )
-
-        if prior is not None and prior.id != view_node.id:
+        def link(from_id: str, to_id: str, relation: str, facets: dict[str, Any]) -> None:
             self.upsert_edge(
                 Edge(
                     id=f"edge_{uuid.uuid4().hex[:12]}",
-                    from_id=view_node.id,
-                    to_id=prior.id,
-                    relation="SUPERSEDES",
-                    facets={},
-                    source_doc_id=None,
+                    from_id=from_id,
+                    to_id=to_id,
+                    relation=relation,
+                    facets=facets,
                     created_at=now,
                 )
             )
 
-        for sid in supporting_ids:
-            if sid != view_node.id and self.get_node(sid) is not None:
-                self.upsert_edge(
-                    Edge(
-                        id=f"edge_{uuid.uuid4().hex[:12]}",
-                        from_id=sid,
-                        to_id=view_node.id,
-                        relation="SUPPORTS",
-                        facets={"consensus_evidence": True},
-                        source_doc_id=None,
-                        created_at=now,
-                    )
-                )
-
-        for cid in contradicting_ids:
-            if cid != view_node.id and self.get_node(cid) is not None:
-                self.upsert_edge(
-                    Edge(
-                        id=f"edge_{uuid.uuid4().hex[:12]}",
-                        from_id=cid,
-                        to_id=view_node.id,
-                        relation="CONTRADICTS",
-                        facets={"consensus_evidence": True},
-                        source_doc_id=None,
-                        created_at=now,
-                    )
-                )
+        link(view_node.id, company_id, "ABOUT", {"consensus_link": True})
+        if supersedes_prior:
+            link(view_node.id, prior.id, "SUPERSEDES", {})
+        for relation, ids in (("SUPPORTS", supporting_ids), ("CONTRADICTS", contradicting_ids)):
+            for sid in ids:
+                if sid != view_node.id and self.get_node(sid) is not None:
+                    link(sid, view_node.id, relation, {"consensus_evidence": True})
 
         return view_node
 
@@ -732,14 +714,12 @@ class OntologyDB:
             (vec_blob, fetch_k),
         ).fetchall()
 
+        distances = {str(row["node_id"]): float(row["distance"]) for row in rows}
         results: list[tuple[Node, float]] = []
-        for row in rows:
-            node = self.get_node(str(row["node_id"]))
-            if node is None:
-                continue
+        for node in self.get_nodes(list(distances)):
             if node_type is not None and node.node_type != node_type:
                 continue
-            results.append((node, float(row["distance"])))
+            results.append((node, distances[node.id]))
             if len(results) >= limit:
                 break
         return results
@@ -755,7 +735,7 @@ class OntologyDB:
         if not cleaned:
             return []
         pattern = f"%{cleaned}%"
-        params: list[Any] = [pattern, pattern, pattern, pattern, pattern]
+        params: list[Any] = [pattern] * 4
         sql = """
             SELECT * FROM nodes
             WHERE (
@@ -767,23 +747,15 @@ class OntologyDB:
         """
         if node_type is not None:
             sql += " AND node_type = ?"
-            params_query = [pattern, pattern, pattern, pattern, node_type, pattern, limit]
-            sql += """
-                ORDER BY
-                    CASE WHEN lower(name) LIKE lower(?) THEN 0 ELSE 1 END,
-                    updated_at DESC
-                LIMIT ?
-            """
-        else:
-            params_query = [pattern, pattern, pattern, pattern, pattern, limit]
-            sql += """
-                ORDER BY
-                    CASE WHEN lower(name) LIKE lower(?) THEN 0 ELSE 1 END,
-                    updated_at DESC
-                LIMIT ?
-            """
-        _ = params  # unused placeholder avoided
-        rows = self.conn.execute(sql, params_query).fetchall()
+            params.append(node_type)
+        sql += """
+            ORDER BY
+                CASE WHEN lower(name) LIKE lower(?) THEN 0 ELSE 1 END,
+                updated_at DESC
+            LIMIT ?
+        """
+        params += [pattern, limit]
+        rows = self.conn.execute(sql, params).fetchall()
         return [row_to_node(r) for r in rows]
 
     def get_incident_edges(self, node_id: str) -> list[dict[str, Any]]:
@@ -984,15 +956,16 @@ class OntologyDB:
                 "direction": item["direction"],
                 "edge_facets": item["facets"],
             }
-            if ntype == "event":
-                rel = str(item["relation"])
-                rank = (
-                    1 if normalize_sentiment(item["facets"].get("sentiment")) is not None else 0,
-                    1 if rel == "ABOUT" else 0,
-                )
-                if nid not in events_by_id or rank > events_by_id[nid][0]:
+            if ntype == "view" and neighbor["facets"].get("view_type") == "consensus":
+                status = neighbor["facets"].get("status", "active")
+                if (consensus is None or nid != consensus.id) and status == "superseded":
+                    prior_by_id.setdefault(nid, {**neighbor, **edge_info})
+            elif ntype in ("event", "view"):
+                bucket = events_by_id if ntype == "event" else views_by_id
+                rank = _edge_rank(item["relation"], item["facets"])
+                if nid not in bucket or rank > bucket[nid][0]:
                     eff_sent, sent_src = resolve_item_sentiment(neighbor["facets"], item["facets"])
-                    events_by_id[nid] = (
+                    bucket[nid] = (
                         rank,
                         {
                             **neighbor,
@@ -1001,32 +974,6 @@ class OntologyDB:
                             "sentiment_source": sent_src,
                         },
                     )
-            elif ntype == "view":
-                vtype = neighbor["facets"].get("view_type")
-                status = neighbor["facets"].get("status", "active")
-                if vtype == "consensus":
-                    if consensus is None or nid != consensus.id:
-                        if status == "superseded" and nid not in prior_by_id:
-                            prior_by_id[nid] = {**neighbor, **edge_info}
-                else:
-                    rel = str(item["relation"])
-                    rank = (
-                        1 if normalize_sentiment(item["facets"].get("sentiment")) is not None else 0,
-                        1 if rel == "ABOUT" else 0,
-                    )
-                    if nid not in views_by_id or rank > views_by_id[nid][0]:
-                        eff_sent, sent_src = resolve_item_sentiment(
-                            neighbor["facets"], item["facets"]
-                        )
-                        views_by_id[nid] = (
-                            rank,
-                            {
-                                **neighbor,
-                                **edge_info,
-                                "effective_sentiment": eff_sent,
-                                "sentiment_source": sent_src,
-                            },
-                        )
             elif ntype == "theme":
                 res, direction = self._canonicalize_incident_edge(entity, item)
                 seen_theme_ids.add(nid)
@@ -1039,10 +986,7 @@ class OntologyDB:
                 rank = (1 if res.matched else 0, 1 if direction == "outgoing" else 0)
                 existing_theme = direct_themes_map.get(nid)
                 if existing_theme is None:
-                    merged_facets = merge_edge_facets({}, res.facets)
-                    exp_sent = normalize_sentiment(merged_facets.get("sentiment"))
-                    if exp_sent is not None:
-                        merged_facets["sentiment"] = exp_sent
+                    merged_facets, exp_sent = _merge_exposure({}, res.facets)
                     direct_themes_map[nid] = {
                         **neighbor,
                         "relation": res.relation,
@@ -1054,10 +998,9 @@ class OntologyDB:
                         "_best_rank": rank,
                     }
                 else:
-                    merged_facets = merge_edge_facets(existing_theme["edge_facets"], res.facets)
-                    exp_sent = normalize_sentiment(merged_facets.get("sentiment"))
-                    if exp_sent is not None:
-                        merged_facets["sentiment"] = exp_sent
+                    merged_facets, exp_sent = _merge_exposure(
+                        existing_theme["edge_facets"], res.facets
+                    )
                     existing_theme["edge_facets"] = merged_facets
                     existing_theme["exposure_sentiment"] = exp_sent
                     if rank > existing_theme["_best_rank"]:
@@ -1197,10 +1140,7 @@ class OntologyDB:
                     continue
 
             edge_facets = item["facets"]
-            rank = (
-                1 if normalize_sentiment(edge_facets.get("sentiment")) is not None else 0,
-                1 if rel == "ABOUT" else 0,
-            )
+            rank = _edge_rank(rel, edge_facets)
 
             nid = str(neighbor["id"])
             if nid in by_node_id and rank <= by_node_id[nid][0]:
@@ -1447,10 +1387,7 @@ class OntologyDB:
                 by_rel = direct_links_by_company[cid]
                 existing_lk = by_rel.get(item_res.relation)
                 if existing_lk is None:
-                    merged_facets = merge_edge_facets({}, item_res.facets)
-                    exp_sent = normalize_sentiment(merged_facets.get("sentiment"))
-                    if exp_sent is not None:
-                        merged_facets["sentiment"] = exp_sent
+                    merged_facets, exp_sent = _merge_exposure({}, item_res.facets)
                     link_obj = {
                         "via": "direct",
                         "relation": item_res.relation,
@@ -1461,10 +1398,7 @@ class OntologyDB:
                     by_rel[item_res.relation] = link_obj
                     entry["links"].append(link_obj)
                 else:
-                    merged_facets = merge_edge_facets(existing_lk["facets"], item_res.facets)
-                    exp_sent = normalize_sentiment(merged_facets.get("sentiment"))
-                    if exp_sent is not None:
-                        merged_facets["sentiment"] = exp_sent
+                    merged_facets, exp_sent = _merge_exposure(existing_lk["facets"], item_res.facets)
                     existing_lk["facets"] = merged_facets
                     existing_lk["exposure_sentiment"] = exp_sent
             elif nb["node_type"] in ("event", "view"):
@@ -1651,52 +1585,9 @@ class OntologyDB:
             nb_id = str(item["neighbor"]["id"])
             if nb_id == entity_id:
                 continue
-            rel = str(item["relation"])
             edge_facets = item["facets"]
-            rank = (
-                1 if normalize_sentiment(edge_facets.get("sentiment")) is not None else 0,
-                1 if rel == "ABOUT" else 0,
-            )
+            rank = _edge_rank(item["relation"], edge_facets)
             if nb_id not in best_ranks or rank > best_ranks[nb_id]:
                 best_ranks[nb_id] = rank
                 connected[nb_id] = edge_facets
         return connected
-
-    def list_recent_edges(self, limit: int = 80) -> list[dict[str, Any]]:
-        """Return recent edges joined with endpoint node names and types."""
-        rows = self.conn.execute(
-            """
-            SELECT
-                e.id AS edge_id,
-                e.relation AS relation,
-                e.facets_json AS facets_json,
-                e.source_doc_id AS source_doc_id,
-                nf.id AS from_id,
-                nf.name AS from_name,
-                nf.node_type AS from_type,
-                nt.id AS to_id,
-                nt.name AS to_name,
-                nt.node_type AS to_type
-            FROM edges e
-            JOIN nodes nf ON nf.id = e.from_id
-            JOIN nodes nt ON nt.id = e.to_id
-            ORDER BY e.created_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-        return [
-            {
-                "edge_id": str(r["edge_id"]),
-                "relation": str(r["relation"]),
-                "facets": json.loads(r["facets_json"]),
-                "source_doc_id": r["source_doc_id"],
-                "from_id": str(r["from_id"]),
-                "from_name": str(r["from_name"]),
-                "from_type": str(r["from_type"]),
-                "to_id": str(r["to_id"]),
-                "to_name": str(r["to_name"]),
-                "to_type": str(r["to_type"]),
-            }
-            for r in rows
-        ]

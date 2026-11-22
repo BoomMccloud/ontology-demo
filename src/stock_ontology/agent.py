@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent, AbstractToolset, FunctionToolset, Tool, UsageLimits, capture_run_messages
@@ -21,6 +22,7 @@ from stock_ontology.i18n import (
 from stock_ontology.llm import AgentTurn, LLMClient
 from stock_ontology.llm.pydantic_ai_model import LLMClientModel
 from stock_ontology.models import Node, NodeType
+from stock_ontology.search import SearchFilters, SearchHit, scan_notes, search_ontology
 from stock_ontology.vocab import EVENT_STATUS, SENTIMENT_FILTER_VALUES, SIGNAL_CATEGORIES
 
 AGENT_SYSTEM_PROMPT = """You are an investment research assistant for portfolio managers at a stock fund.
@@ -63,7 +65,11 @@ def build_agent_system_prompt(language: str = DEFAULT_LANGUAGE) -> str:
 TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "search_nodes",
-        "description": "Hybrid semantic vector + keyword search across nodes in the ontology.",
+        "description": (
+            "Entity-first search across the ontology: entities matching by name or alias come first, "
+            "then items connected to them through relationships, keyword and semantic matches. "
+            "Each result carries `match_reason` (name, alias, relationship, note, semantic)."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -76,6 +82,24 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of results to return (default 8).",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_notes",
+        "description": (
+            "Grep the raw research notes for a literal, case-insensitive phrase. Returns matching "
+            "`passages` with `file` (relative to the notes directory), 1-based `line`, and `text`."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Literal phrase to find (not a regex)."},
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of passages to return (default 20).",
                 },
             },
             "required": ["query"],
@@ -260,6 +284,7 @@ class OntologyAgent:
         *,
         language: str = DEFAULT_LANGUAGE,
         toolsets: Sequence[AbstractToolset[Any]] = (),
+        data_dir: Path | None = None,
     ) -> None:
         if not db.read_only:
             raise ValueError(
@@ -269,6 +294,7 @@ class OntologyAgent:
         self.llm = llm
         self.language = normalize_language(language) or DEFAULT_LANGUAGE
         self.toolsets = list(toolsets)
+        self.data_dir = Path(data_dir) if data_dir is not None else None
         self.messages: list[ModelMessage] = []
         self.tool_trace: list[dict[str, Any]] = []
         self.last_provider: str | None = None
@@ -305,28 +331,42 @@ class OntologyAgent:
     def _tool_search_nodes(
         self, *, query: str, node_type: str | None = None, limit: int = 8
     ) -> dict[str, Any]:
-        cleaned = query.strip()
-        if not cleaned:
+        if not query.strip():
             return {"results": []}
         valid_types = ("entity", "event", "view", "theme")
-        nt: NodeType | None = None
-        if node_type:
-            if node_type not in valid_types:
-                return {"error": f"Invalid node_type {node_type!r}. Must be one of {valid_types}."}
-            nt = node_type  # type: ignore[assignment]
-
+        if node_type and node_type not in valid_types:
+            return {"error": f"Invalid node_type {node_type!r}. Must be one of {valid_types}."}
         limit = max(1, min(int(limit), 25))
-        seen: dict[str, dict[str, Any]] = {}
+        found = search_ontology(
+            self.db, self.llm, query, filters=SearchFilters.from_raw(node_type=node_type), limit=limit
+        )
+        return {"results": [self._format_hit(hit) for hit in found.ranked()[:limit]]}
 
-        vec = self.llm.embed_texts([cleaned])[0]
-        for node, dist in self.db.vector_search(vec, node_type=nt, limit=limit):
-            seen[node.id] = {**node_to_dict(node), "score_type": "vector", "distance": round(dist, 4)}
+    @staticmethod
+    def _format_hit(hit: SearchHit) -> dict[str, Any]:
+        item: dict[str, Any] = {
+            **node_to_dict(hit.node),
+            "match_reason": hit.match_reason,
+            "score": round(hit.score, 4),
+        }
+        if hit.distance is not None:
+            item["distance"] = hit.distance
+        if hit.via_relation:
+            item["via"] = {
+                "relation": hit.via_relation,
+                "node_id": hit.via_node_id,
+                "node_name": hit.via_node_name,
+            }
+        return item
 
-        for node in self.db.keyword_search(cleaned, node_type=nt, limit=limit):
-            if node.id not in seen:
-                seen[node.id] = {**node_to_dict(node), "score_type": "keyword"}
-
-        return {"results": list(seen.values())[:limit]}
+    def _tool_search_notes(self, *, query: str, limit: int = 20) -> dict[str, Any]:
+        if self.data_dir is None:
+            return {"error": "No research notes directory is configured for this agent."}
+        if not query.strip():
+            return {"passages": []}
+        limit = max(1, min(int(limit), 50))
+        scan = scan_notes(self.data_dir, [query], total=limit)
+        return {"passages": [p.to_dict() for p in scan.passages], "truncated": scan.truncated}
 
     def _tool_get_entity_overview(self, *, entity_name_or_id: str) -> dict[str, Any]:
         node = self._resolve_node(entity_name_or_id, "entity")
@@ -453,6 +493,7 @@ class OntologyAgent:
         """Dispatch a read-only ontology tool call."""
         handlers = {
             "search_nodes": lambda: self._tool_search_nodes(**args),
+            "search_notes": lambda: self._tool_search_notes(**args),
             "get_entity_overview": lambda: self._tool_get_entity_overview(**args),
             "query_entity_signals": lambda: self._tool_query_entity_signals(**args),
             "find_theme_companies": lambda: self._tool_find_theme_companies(**args),
@@ -471,7 +512,7 @@ class OntologyAgent:
         return result
 
     def _ontology_toolset(self) -> FunctionToolset[Any]:
-        """The seven read-only ontology tools, offered with their existing schemas."""
+        """The read-only ontology and note tools, offered with their `TOOL_SCHEMAS`."""
 
         def make_handler(name: str) -> Any:
             async def handler(**kwargs: Any) -> dict[str, Any]:

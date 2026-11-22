@@ -125,12 +125,12 @@ def _search(q: Mapping[str, str], _ctx: Mapping[str, Any]) -> NavState:
 
 def _entity(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
     owner = _COMPANIES if ctx.get("is_company") else _OTHER
-    name = str((ctx.get("entity") or {}).get("name", ""))
+    name = str(getattr(ctx.get("entity"), "name", ""))
     return NavState("research", "companies", "component", [_ROOT, _crumb(owner), Crumb(label=name)])
 
 
 def _theme(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
-    name = str((ctx.get("theme") or {}).get("name", ""))
+    name = str(getattr(ctx.get("theme"), "name", ""))
     return NavState("research", "themes", "component", [_ROOT, _crumb(_THEMES), Crumb(label=name)])
 
 

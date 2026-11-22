@@ -25,7 +25,7 @@ from stock_ontology.models import (
 from stock_ontology.pipeline import IngestionPipeline
 from stock_ontology.registry import create_minimal_registry, normalize_relation_name
 from stock_ontology.repair import repair_ontology
-from stock_ontology.web.viewmodels import run_hybrid_search
+from stock_ontology.search import SearchFilters, search_ontology
 
 DIM = 16
 
@@ -461,10 +461,14 @@ def test_agent_and_web_signal_filters_return_identical_items(tmp_path: Path) -> 
                     categories=[cat] if cat is not None else None,
                 )
                 agent_ids = {item["id"] for item in agent["items"]}
-                web = run_hybrid_search(
-                    db, None, "", entity_id="ent_acme", subtype=cat, sentiment=sent, limit=500
+                web = search_ontology(
+                    db,
+                    None,
+                    "",
+                    filters=SearchFilters.from_raw(entity_id="ent_acme", subtype=cat, sentiment=sent),
+                    limit=500,
                 )
-                web_ids = {r["id"] for r in web if r["node_type"] in ("event", "view")}
+                web_ids = {h.node.id for h in web.signals}
                 if agent_ids != web_ids:
                     mismatches.append((sent, cat, sorted(agent_ids), sorted(web_ids)))
         assert mismatches == []

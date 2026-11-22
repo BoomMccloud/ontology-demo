@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from collections import Counter
 from stock_ontology.audit import (
     AuditReport,
     classify_edge_against_registry,
+    node_type_label,
     run_ontology_audit,
 )
 from stock_ontology.db import OntologyDB, node_to_dict
@@ -21,19 +23,22 @@ from stock_ontology.i18n import (
     translate_facet_label,
 )
 from stock_ontology.llm import LLMClient
-from stock_ontology.models import VALID_SENTIMENTS, Node, NodeType, resolve_item_sentiment
+from stock_ontology.models import VALID_SENTIMENTS, Node, resolve_item_sentiment
 from stock_ontology.registry import (
     OntologyRegistry,
     normalize_name_key,
     normalize_relation_name,
 )
-from stock_ontology.vocab import (
-    matches_signal_filter,
+from stock_ontology.search import (
+    SearchFilters,
+    SearchHit,
+    node_date,
+    node_source_file,
     node_subtype,
-    parse_category_filter,
-    parse_sentiment_filter,
+    resolve_safe_note_path,
+    search_ontology,
 )
-from stock_ontology.web.catalog import format_source_citation, resolve_safe_note_path
+from stock_ontology.web.catalog import format_source_citation
 
 COMPANY_FACET_KEYS = (
     "ticker",
@@ -318,15 +323,341 @@ def _resolve_source_fields(
     return (fp or None), (label or None), exists
 
 
-def _attach_source_display(
-    items: list[dict[str, Any]], data_dir: Path | None
-) -> None:
-    for item in items:
-        src = item.get("facets", {}).get("source")
-        fp, label, exists = _resolve_source_fields(src, data_dir)
-        item["source_file"] = fp
-        item["source_label"] = label
-        item["source_exists"] = exists
+# ---------------------------------------------------------------------------
+# Presentation models
+#
+# Page templates read only these frozen dataclasses and prepared label/value pairs,
+# never raw ontology nodes, `facets`, or `edge_facets`. The mappers below are the one
+# place that knows how ontology records are shaped. Enum fields keep the raw code so
+# templates translate them with `t_enum` and pick badge classes; everything else is
+# display-ready. `tests/test_web.py::test_entity_page_templates_only_see_presentation_models`
+# and `::test_theme_page_templates_only_see_presentation_models` enforce this for the
+# entity and theme pages.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SourceCitation:
+    """Where an event or view came from, ready to cite."""
+
+    label: str | None = None
+    file: str | None = None
+    exists: bool = False
+    author: str | None = None
+    kind: str | None = None
+
+
+@dataclass(frozen=True)
+class EventRow:
+    """One row of the events section."""
+
+    id: str
+    name: str
+    summary: str
+    relation: str
+    date: str
+    event_type: str | None
+    status: str | None
+    sentiment: str | None
+    # None, "entity" (sentiment is this entity's impact), or "overall" (it differs from overall_sentiment).
+    impact_note: str | None
+    overall_sentiment: str | None
+    source: SourceCitation
+
+
+@dataclass(frozen=True)
+class ViewRow:
+    """One row of the views section."""
+
+    id: str
+    name: str
+    summary: str
+    stance: str | None
+    sentiment: str | None
+    support_strength: str | None
+    view_type: str | None
+    as_of: str | None
+    conviction: str | None
+    impact_note: str | None
+    overall_sentiment: str | None
+    source: SourceCitation
+
+
+@dataclass(frozen=True)
+class EntityHeader:
+    """Title block of an entity page."""
+
+    id: str
+    name: str
+    summary: str
+    aliases: tuple[str, ...]
+    ticker: str | None
+    entity_type: str
+
+
+@dataclass(frozen=True)
+class ConsensusSummary:
+    """The active house consensus card."""
+
+    name: str
+    summary: str
+    stance: str | None
+    support_strength: str | None
+    conviction: str | None
+    as_of: str | None
+    pillars: tuple[str, ...]
+    extra_facets: list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class PriorConsensusRow:
+    """One superseded consensus in the history list."""
+
+    stance: str
+    as_of: str
+    summary: str
+
+
+@dataclass(frozen=True)
+class ThemeLinkRow:
+    """One theme an entity is linked to."""
+
+    id: str
+    name: str
+    summary: str
+    stage: str | None
+    relation: str
+    direction: str
+    exposure_sentiment: str | None
+    via: str
+
+
+@dataclass(frozen=True)
+class RelationLink:
+    relation: str
+    direction: str
+
+
+@dataclass(frozen=True)
+class RelatedEntityRow:
+    """One peer entity and the relationships to it."""
+
+    id: str
+    name: str
+    summary: str
+    entity_type: str | None
+    relationships: tuple[RelationLink, ...]
+
+
+@dataclass(frozen=True)
+class ThemeHeader:
+    """Title block of a theme page."""
+
+    id: str
+    name: str
+    summary: str
+    aliases: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ExposureLink:
+    """How a first-order company is exposed to a theme: directly, or via an event or view."""
+
+    # "direct", or "<event|view>: <name>" for a link through an event or view.
+    via: str
+    relation: str | None
+    direction: str | None
+    sentiment: str | None
+    entity_relation: str | None
+    theme_relation: str | None
+    source: SourceCitation
+
+
+@dataclass(frozen=True)
+class AffectedCompanyRow:
+    """One company a theme affects, directly or through an event or view about it."""
+
+    company: EntityHeader
+    consensus_stance: str | None
+    links: tuple[ExposureLink, ...]
+
+
+def _text(value: Any) -> str | None:
+    """Return a non-empty facet value as text, or None."""
+    return str(value) if value else None
+
+
+def _source_citation(facets: dict[str, Any], data_dir: Path | None) -> SourceCitation:
+    src = facets.get("source")
+    fp, label, exists = _resolve_source_fields(src, data_dir)
+    src_map = src if isinstance(src, dict) else {}
+    return SourceCitation(
+        label=label,
+        file=fp,
+        exists=exists,
+        author=_text(src_map.get("author")),
+        kind=_text(src_map.get("kind")),
+    )
+
+
+def _sentiment_display(item: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    """Return (shown sentiment, impact note, overall sentiment) for an event or view row."""
+    node_sent = item.get("facets", {}).get("sentiment")
+    shown = item.get("effective_sentiment") or node_sent
+    if item.get("sentiment_source") != "edge":
+        return _text(shown), None, None
+    if node_sent and node_sent != shown:
+        return _text(shown), "overall", _text(node_sent)
+    return _text(shown), "entity", None
+
+
+def _event_row(item: dict[str, Any], data_dir: Path | None) -> EventRow:
+    facets = item.get("facets", {})
+    sentiment, note, overall = _sentiment_display(item)
+    event_type = facets.get("event_type", "event")
+    return EventRow(
+        id=str(item["id"]),
+        name=str(item.get("name", "")),
+        summary=str(item.get("summary", "")),
+        relation=str(item.get("relation", "")),
+        date=str(facets.get("event_date", "-")),
+        event_type=None if event_type is None else str(event_type),
+        status=_text(facets.get("status")),
+        sentiment=sentiment,
+        impact_note=note,
+        overall_sentiment=overall,
+        source=_source_citation(facets, data_dir),
+    )
+
+
+def _view_row(item: dict[str, Any], data_dir: Path | None) -> ViewRow:
+    facets = item.get("facets", {})
+    sentiment, note, overall = _sentiment_display(item)
+    view_type = facets.get("view_type", "view")
+    return ViewRow(
+        id=str(item["id"]),
+        name=str(item.get("name", "")),
+        summary=str(item.get("summary", "")),
+        stance=_text(facets.get("stance")),
+        sentiment=sentiment,
+        support_strength=_text(facets.get("support_strength")),
+        view_type=None if view_type is None else str(view_type),
+        as_of=_text(facets.get("as_of")),
+        conviction=_text(facets.get("conviction")),
+        impact_note=note,
+        overall_sentiment=overall,
+        source=_source_citation(facets, data_dir),
+    )
+
+
+def _entity_header(entity: dict[str, Any], entity_type: str) -> EntityHeader:
+    return EntityHeader(
+        id=str(entity["id"]),
+        name=str(entity.get("name", "")),
+        summary=str(entity.get("summary", "")),
+        aliases=tuple(str(a) for a in entity.get("aliases") or ()),
+        ticker=_text(entity.get("facets", {}).get("ticker")),
+        entity_type=entity_type,
+    )
+
+
+def _consensus_summary(cons: dict[str, Any], lang: str) -> ConsensusSummary:
+    cf = cons.get("facets", {})
+    extra_keys = [k for k in sorted(cf.keys()) if k not in CONSENSUS_CORE_KEYS]
+    pillars = cf.get("pillars") or ()
+    if not isinstance(pillars, (list, tuple)):
+        pillars = (pillars,)
+    return ConsensusSummary(
+        name=str(cons.get("name", "")),
+        summary=str(cons.get("summary", "")),
+        stance=_text(cf.get("stance")),
+        support_strength=_text(cf.get("support_strength")),
+        conviction=_text(cf.get("conviction")),
+        as_of=_text(cf.get("as_of")),
+        pillars=tuple(str(p) for p in pillars),
+        extra_facets=_format_facet_pairs(cf, extra_keys, lang=lang),
+    )
+
+
+def _prior_consensus_row(cons: dict[str, Any]) -> PriorConsensusRow:
+    cf = cons.get("facets", {})
+    return PriorConsensusRow(
+        stance=str(cf.get("stance", "unknown")),
+        as_of=str(cf.get("as_of", "")),
+        summary=str(cons.get("summary", "")),
+    )
+
+
+def _theme_link_row(thm: dict[str, Any]) -> ThemeLinkRow:
+    edge_facets = thm.get("edge_facets")
+    edge_sent = edge_facets.get("sentiment") if isinstance(edge_facets, dict) else None
+    return ThemeLinkRow(
+        id=str(thm["id"]),
+        name=str(thm.get("name", "")),
+        summary=str(thm.get("summary", "")),
+        stage=_text(thm.get("facets", {}).get("stage")),
+        relation=str(thm.get("relation", "")),
+        direction=str(thm.get("direction", "")),
+        exposure_sentiment=_text(thm.get("exposure_sentiment") or edge_sent),
+        via=str(thm.get("via", "")),
+    )
+
+
+def _related_entity_row(rel: dict[str, Any]) -> RelatedEntityRow:
+    links = rel.get("relationships") or [rel]
+    entity_type = rel.get("facets", {}).get("entity_type", "entity")
+    return RelatedEntityRow(
+        id=str(rel["id"]),
+        name=str(rel.get("name", "")),
+        summary=str(rel.get("summary", "")),
+        entity_type=None if entity_type is None else str(entity_type),
+        relationships=tuple(
+            RelationLink(relation=str(r.get("relation", "")), direction=str(r.get("direction", "")))
+            for r in links
+        ),
+    )
+
+
+def _theme_header(theme: dict[str, Any]) -> ThemeHeader:
+    return ThemeHeader(
+        id=str(theme["id"]),
+        name=str(theme.get("name", "")),
+        summary=str(theme.get("summary", "")),
+        aliases=tuple(str(a) for a in theme.get("aliases") or ()),
+    )
+
+
+def _exposure_link(link: dict[str, Any], data_dir: Path | None) -> ExposureLink:
+    via = str(link.get("via", ""))
+    if via == "direct":
+        facets = link.get("facets")
+        link_sent = facets.get("sentiment") if isinstance(facets, dict) else None
+        return ExposureLink(
+            via=via,
+            relation=str(link.get("relation", "")),
+            direction=str(link.get("direction", "outgoing")),
+            sentiment=_text(link.get("exposure_sentiment") or link_sent),
+            entity_relation=None,
+            theme_relation=None,
+            source=SourceCitation(),
+        )
+    return ExposureLink(
+        via=via,
+        relation=None,
+        direction=None,
+        sentiment=None,
+        entity_relation=str(link.get("entity_relation", "")),
+        theme_relation=str(link.get("theme_relation", "")),
+        source=_source_citation(link, data_dir),
+    )
+
+
+def _affected_company_row(row: dict[str, Any], data_dir: Path | None) -> AffectedCompanyRow:
+    return AffectedCompanyRow(
+        company=_entity_header(row["company"], "company"),
+        consensus_stance=_text(row.get("consensus_stance")),
+        links=tuple(_exposure_link(link, data_dir) for link in row.get("links", ())),
+    )
 
 
 def build_entity_context(
@@ -353,19 +684,7 @@ def build_entity_context(
     extra_facets = _format_facet_pairs(facets, extra_keys, lang=lang)
 
     cons_raw = overview["consensus"]
-    consensus: dict[str, Any] | None = None
-    if cons_raw is not None:
-        cf = cons_raw.get("facets", {})
-        extra_cons_keys = [k for k in sorted(cf.keys()) if k not in CONSENSUS_CORE_KEYS]
-        consensus = {
-            **cons_raw,
-            "stance": cf.get("stance", ""),
-            "support_strength": cf.get("support_strength", ""),
-            "conviction": cf.get("conviction", ""),
-            "as_of": cf.get("as_of", ""),
-            "pillars": cf.get("pillars", []),
-            "extra_facets": _format_facet_pairs(cf, extra_cons_keys, lang=lang),
-        }
+    consensus = _consensus_summary(cons_raw, lang) if cons_raw is not None else None
 
     events = sorted(
         overview["events"],
@@ -377,11 +696,9 @@ def build_entity_context(
         key=lambda vw: str(vw.get("facets", {}).get("as_of", "") or ""),
         reverse=True,
     )
-    _attach_source_display(events, data_dir)
-    _attach_source_display(views, data_dir)
 
     return {
-        "entity": entity,
+        "entity": _entity_header(entity, entity_type),
         "entity_type": entity_type,
         "is_company": entity_type == "company" or bool(company_facets),
         "is_person": entity_type == "person" or bool(person_facets),
@@ -389,12 +706,11 @@ def build_entity_context(
         "person_facets": person_facets,
         "extra_facets": extra_facets,
         "consensus": consensus,
-        "prior_consensuses": overview["prior_consensuses"],
-        "events": events,
-        "views": views,
-        "themes": overview["themes"],
-        "related_entities": overview["related_entities"],
-        "sentiment_summary": overview.get("sentiment_summary"),
+        "prior_consensuses": [_prior_consensus_row(c) for c in overview["prior_consensuses"]],
+        "events": [_event_row(ev, data_dir) for ev in events],
+        "views": [_view_row(vw, data_dir) for vw in views],
+        "themes": [_theme_link_row(thm) for thm in overview["themes"]],
+        "related_entities": [_related_entity_row(rel) for rel in overview["related_entities"]],
         "page_context": translate(
             "page_context.entity",
             lang=lang,
@@ -448,24 +764,14 @@ def build_theme_context(
             if nid not in views_by_id or rank > views_by_id[nid][0]:
                 views_by_id[nid] = (rank, entry)
 
-    events = [pair[1] for pair in events_by_id.values()]
-    views = [pair[1] for pair in views_by_id.values()]
-
-    _attach_source_display(events, data_dir)
-    _attach_source_display(views, data_dir)
-
-    for row in theme_data["companies"]:
-        for link in row["links"]:
-            fp, label, exists = _resolve_source_fields(link.get("source"), data_dir)
-            link["source_file"] = fp
-            link["source_label"] = label
-            link["source_exists"] = exists
+    events = [_event_row(pair[1], data_dir) for pair in events_by_id.values()]
+    views = [_view_row(pair[1], data_dir) for pair in views_by_id.values()]
 
     return {
-        "theme": theme,
+        "theme": _theme_header(theme),
         "stage": facets.get("stage", ""),
         "extra_facets": _format_facet_pairs(facets, extra_keys, lang=lang),
-        "companies": theme_data["companies"],
+        "companies": [_affected_company_row(row, data_dir) for row in theme_data["companies"]],
         "events": events,
         "views": views,
         "page_context": translate(
@@ -474,25 +780,6 @@ def build_theme_context(
             name=theme["name"],
         ),
     }
-
-
-def _node_subtype(node: Node) -> str:
-    return node_subtype(node.node_type, node.facets or {})
-
-
-def _node_date(node: Node) -> str:
-    facets = node.facets or {}
-    raw = facets.get("event_date") or facets.get("as_of")
-    if not raw and isinstance(facets.get("source"), dict):
-        raw = facets["source"].get("date")
-    return str(raw or "").strip()
-
-
-def _node_source_file(node: Node) -> str:
-    src = (node.facets or {}).get("source")
-    if isinstance(src, dict):
-        return str(src.get("file_path") or "").strip()
-    return ""
 
 
 def _merge_ordered(defaults: list[str], extra: set[str]) -> list[str]:
@@ -519,7 +806,7 @@ def build_search_filter_options(db: OntologyDB) -> dict[str, Any]:
     observed_stances: set[str] = set()
 
     for node in db.list_nodes(limit=5000):
-        sub = _node_subtype(node)
+        sub = node_subtype(node)
         if sub and node.node_type in observed_subtypes:
             observed_subtypes[node.node_type].add(sub)
         stance = str(node.facets.get("stance") or "")
@@ -589,170 +876,60 @@ def _resolve_result_href(db: OntologyDB, node: Node) -> str:
     return "/"
 
 
-def _format_search_result(
-    db: OntologyDB,
-    node: Node,
-    *,
-    score_type: str,
-    distance: float | None,
-    edge_facets: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    eff_sent, sent_src = resolve_item_sentiment(node.facets, edge_facets)
+def _format_search_hit(db: OntologyDB, hit: SearchHit, data_dir: Path) -> dict[str, Any]:
+    node = hit.node
+    eff_sent, sent_src = resolve_item_sentiment(node.facets, hit.edge_facets)
+    source_file = node_source_file(node) or None
+    source_label, source_exists = format_source_citation(source_file, data_dir)
     return {
         **node_to_dict(node),
-        "subtype": _node_subtype(node),
+        "subtype": node_subtype(node),
         "effective_sentiment": eff_sent,
         "sentiment_source": sent_src,
         "stance": str(node.facets.get("stance") or "") or None,
-        "date": _node_date(node) or None,
-        "source_file": _node_source_file(node) or None,
-        "score_type": score_type,
-        "distance": round(distance, 4) if distance is not None else None,
+        "date": node_date(node) or None,
+        "source_file": source_file,
+        "source_label": source_label or None,
+        "source_exists": source_exists,
+        "note_line": hit.note_line,
+        "match_reason": hit.match_reason,
+        "distance": hit.distance,
+        "via_relation": hit.via_relation,
+        "via_node_name": hit.via_node_name,
         "href": _resolve_result_href(db, node),
     }
 
 
-def run_hybrid_search(
+def build_search_results(
     db: OntologyDB,
     llm: LLMClient | None,
     query: str,
-    node_type: str | None = None,
-    limit: int = 20,
+    filters: SearchFilters,
+    data_dir: Path,
     *,
-    subtype: str | None = None,
-    sentiment: str | None = None,
-    stance: str | None = None,
-    entity_id: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    source_file: str | None = None,
-    search_mode: str = "hybrid",
-) -> list[dict[str, Any]]:
-    """Run vector + keyword search and structured facet filtering across the ontology."""
-    cleaned = query.strip()
-    valid_types = ("entity", "event", "view", "theme")
-    nt: NodeType | None = node_type if node_type in valid_types else None  # type: ignore[assignment]
-
-    norm_subtype = parse_category_filter(subtype)
-    norm_sentiment = parse_sentiment_filter(sentiment)
-
-    norm_stance = stance.strip().lower() if stance and stance.strip() else None
-    norm_entity_id = entity_id.strip() if entity_id and entity_id.strip() else None
-    norm_date_from = date_from.strip() if date_from and date_from.strip() else None
-    norm_date_to = date_to.strip() if date_to and date_to.strip() else None
-    norm_source_file = source_file.strip().casefold() if source_file and source_file.strip() else None
-    mode = "keyword" if search_mode.strip().lower() == "keyword" else "hybrid"
-
-    has_filters = any(
-        [
-            nt,
-            norm_subtype,
-            norm_sentiment,
-            norm_stance,
-            norm_entity_id,
-            norm_date_from,
-            norm_date_to,
-            norm_source_file,
-        ]
-    )
-    if not cleaned and not has_filters:
-        return []
-
-    connected_map: dict[str, dict[str, Any] | None] = {}
-    if norm_entity_id is not None:
-        if db.get_node(norm_entity_id) is None:
-            return []
-        connected_map = db.get_entity_connected_nodes(norm_entity_id)
-
-    def _matches_filters(node: Node) -> bool:
-        if nt is not None and node.node_type != nt:
-            return False
-        if norm_entity_id is not None and node.id not in connected_map:
-            return False
-        eff_sent: str | None = None
-        if norm_sentiment is not None:
-            edge_facets = connected_map.get(node.id) if norm_entity_id else None
-            eff_sent, _ = resolve_item_sentiment(node.facets, edge_facets)
-        if not matches_signal_filter(
-            node.node_type,
-            node.facets,
-            eff_sent,
-            categories={norm_subtype} if norm_subtype is not None else None,
-            sentiments={norm_sentiment} if norm_sentiment is not None else None,
-        ):
-            return False
-        if norm_stance is not None:
-            node_stance = str(node.facets.get("stance") or "")
-            if node_stance != norm_stance:
-                return False
-        if norm_date_from is not None or norm_date_to is not None:
-            node_date = _node_date(node)
-            if not node_date:
-                return False
-            if norm_date_from is not None and node_date < norm_date_from:
-                return False
-            if norm_date_to is not None and node_date > norm_date_to:
-                return False
-        if norm_source_file is not None:
-            if norm_source_file not in _node_source_file(node).casefold():
-                return False
-        return True
-
-    if not cleaned:
-        matched_nodes = [
-            node for node in db.list_nodes(node_type=nt, limit=5000) if _matches_filters(node)
-        ]
-        matched_nodes.sort(key=lambda n: n.name.casefold())
-        matched_nodes.sort(
-            key=lambda n: (_node_date(n) or "", n.updated_at.isoformat()),
-            reverse=True,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Run the shared entity-first search and shape it into the search page's card and sections."""
+    found = search_ontology(db, llm, query, filters=filters, data_dir=data_dir, limit=limit)
+    sections = [
+        {"key": key, "hits": [_format_search_hit(db, hit, data_dir) for hit in hits]}
+        for key, hits in (
+            ("entities", found.entities),
+            ("related", found.related),
+            ("signals", found.signals),
         )
-        return [
-            _format_search_result(
-                db,
-                node,
-                score_type="filter",
-                distance=None,
-                edge_facets=connected_map.get(node.id) if norm_entity_id else None,
-            )
-            for node in matched_nodes[:limit]
-        ]
-
-    seen: dict[str, dict[str, Any]] = {}
-    vec_limit = max(limit * 5, 100) if has_filters else limit
-    kw_limit = max(limit * 10, 500) if has_filters else limit
-
-    if mode != "keyword" and llm is not None:
-        try:
-            vec = llm.embed_texts([cleaned])[0]
-            for node, dist in db.vector_search(vec, node_type=nt, limit=vec_limit):
-                if not _matches_filters(node):
-                    continue
-                seen[node.id] = _format_search_result(
-                    db,
-                    node,
-                    score_type="semantic",
-                    distance=dist,
-                    edge_facets=connected_map.get(node.id) if norm_entity_id else None,
-                )
-        except Exception:  # noqa: BLE001
-            # Offline or missing API key gracefully degrades to keyword search.
-            pass
-
-    for node in db.keyword_search(cleaned, node_type=nt, limit=kw_limit):
-        if node.id in seen:
-            continue
-        if not _matches_filters(node):
-            continue
-        seen[node.id] = _format_search_result(
-            db,
-            node,
-            score_type="keyword",
-            distance=None,
-            edge_facets=connected_map.get(node.id) if norm_entity_id else None,
-        )
-
-    return list(seen.values())[:limit]
+    ]
+    passages = []
+    for p in found.passages:
+        label, exists = format_source_citation(p.file, data_dir)
+        passages.append({**p.to_dict(), "source_label": label or p.file, "source_exists": exists})
+    return {
+        "best_match": _format_search_hit(db, found.best_match, data_dir) if found.best_match else None,
+        "sections": [s for s in sections if s["hits"]],
+        "passages": passages,
+        "notes_truncated": found.notes_truncated,
+        "count": found.count,
+    }
 
 
 def _format_diagram_top_label(
@@ -808,12 +985,6 @@ def _build_diagram_links(
         "view_entity": _combine(["view->entity"], ("ABOUT", "AUTHORED_BY"), max_len=20),
         "event_theme": _combine(["event->theme"], ("SUPPORTS", "RELATES_TO"), max_len=20),
     }
-
-
-def _endpoint_label(node_type: str, entity_type: str | None) -> str:
-    if node_type == "entity" and entity_type:
-        return f"entity:{entity_type}"
-    return node_type
 
 
 def _build_registry_view(
@@ -1141,7 +1312,7 @@ def build_ontology_context(
         type_nodes = nodes_by_type[key]
         sub_counter: dict[str, int] = {}
         for n in type_nodes:
-            sub = _node_subtype(n) or "unspecified"
+            sub = node_subtype(n) or "unspecified"
             sub_counter[sub] = sub_counter.get(sub, 0) + 1
         sub_list = [
             {"name": name, "count": cnt}
@@ -1279,11 +1450,11 @@ def build_ontology_context(
                 {
                     "from_type": ft,
                     "from_entity_type": fet,
-                    "from_label": _endpoint_label(ft, fet),
+                    "from_label": node_type_label(ft, fet),
                     "relation": rel,
                     "to_type": tt,
                     "to_entity_type": tet,
-                    "to_label": _endpoint_label(tt, tet),
+                    "to_label": node_type_label(tt, tet),
                     "count": cnt,
                     "classification": cls_dict,
                     "suggestion_status": sug_status,
@@ -1313,8 +1484,8 @@ def build_ontology_context(
             edge_samples.append(
                 {
                     **e,
-                    "from_label": _endpoint_label(e["from_type"], e["from_entity_type"]),
-                    "to_label": _endpoint_label(e["to_type"], e["to_entity_type"]),
+                    "from_label": node_type_label(e["from_type"], e["from_entity_type"]),
+                    "to_label": node_type_label(e["to_type"], e["to_entity_type"]),
                     "from_href": from_href,
                     "to_href": to_href,
                     "classification": cls_dict,
@@ -1332,7 +1503,7 @@ def build_ontology_context(
         if active_subtype:
             candidates = [
                 n for n in candidates
-                if (_node_subtype(n) or "unspecified") == active_subtype
+                if (node_subtype(n) or "unspecified") == active_subtype
             ]
 
         if active_tab in ("entity", "theme"):
@@ -1343,7 +1514,7 @@ def build_ontology_context(
         else:
             candidates = sorted(
                 candidates,
-                key=lambda n: (_node_date(n) or "", n.updated_at.isoformat()),
+                key=lambda n: (node_date(n) or "", n.updated_at.isoformat()),
                 reverse=True,
             )
 
@@ -1360,7 +1531,7 @@ def build_ontology_context(
             "as_of",
         }
         for n in candidates:
-            subtype_val = _node_subtype(n) or "unspecified"
+            subtype_val = node_subtype(n) or "unspecified"
             registry_info: dict[str, Any] | None = None
             if registry is not None:
                 if n.node_type == "entity" and subtype_val == "company":
@@ -1417,7 +1588,7 @@ def build_ontology_context(
                     continue
 
             eff_sent, _ = resolve_item_sentiment(n.facets)
-            source_file = _node_source_file(n)
+            source_file = node_source_file(n)
             source_exists = (
                 resolve_safe_note_path(data_dir, source_file) is not None
                 if data_dir is not None and source_file
@@ -1444,7 +1615,7 @@ def build_ontology_context(
                     "effective_sentiment": eff_sent,
                     "stance": str(n.facets.get("stance") or "") or None,
                     "status": str(n.facets.get("status") or "") or None,
-                    "date": _node_date(n) or None,
+                    "date": node_date(n) or None,
                     "edge_count": edge_counts.get(n.id, 0),
                     "href": _resolve_result_href(db, n),
                     "source_file": source_file or None,

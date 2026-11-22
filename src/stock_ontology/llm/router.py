@@ -62,11 +62,6 @@ class LLMRouter:
         """Primary (highest-priority) chat provider."""
         return self.chat_providers[0]
 
-    def reset_cooldowns(self) -> None:
-        """Clear all active provider cooldown windows."""
-        with self._lock:
-            self._cooldown_until.clear()
-
     def _ordered_candidates(
         self, providers: Sequence[BaseLLMProvider]
     ) -> list[BaseLLMProvider]:

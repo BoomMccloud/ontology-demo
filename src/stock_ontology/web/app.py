@@ -33,7 +33,8 @@ from stock_ontology.i18n import (
 )
 from stock_ontology.llm import LLMClient, create_llm_client
 from stock_ontology.registry import OntologyRegistry, load_registry
-from stock_ontology.web.catalog import build_catalog_context, format_source_citation
+from stock_ontology.search import SearchFilters
+from stock_ontology.web.catalog import build_catalog_context
 from stock_ontology.web.navigation import LEFT_NAV, WORKFLOWS, resolve_nav
 from stock_ontology.web.viewmodels import (
     build_companies_context,
@@ -42,9 +43,9 @@ from stock_ontology.web.viewmodels import (
     build_ontology_context,
     build_rail_context,
     build_search_filter_options,
+    build_search_results,
     build_theme_context,
     build_themes_context,
-    run_hybrid_search,
 )
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -333,34 +334,28 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
         with _open_ro_db(lang) as db:
             rail = build_rail_context(db)
             search_options = build_search_filter_options(db)
-            results = run_hybrid_search(
+            search = build_search_results(
                 db,
                 active_llm,
-                query=q,
-                node_type=node_type or None,
-                limit=50,
-                subtype=filters["subtype"] or None,
-                sentiment=filters["sentiment"] or None,
-                stance=filters["stance"] or None,
-                entity_id=filters["entity_id"] or None,
-                date_from=filters["date_from"] or None,
-                date_to=filters["date_to"] or None,
-                source_file=filters["source_file"] or None,
-                search_mode=norm_mode,
+                q,
+                SearchFilters.from_raw(
+                    node_type=node_type,
+                    subtype=filters["subtype"],
+                    sentiment=filters["sentiment"],
+                    stance=filters["stance"],
+                    entity_id=filters["entity_id"],
+                    date_from=filters["date_from"],
+                    date_to=filters["date_to"],
+                    source_file=filters["source_file"],
+                    search_mode=norm_mode,
+                ),
+                settings.data_dir,
             )
             entity_label = filters["entity_id"]
             if filters["entity_id"]:
                 ent_node = db.get_node(filters["entity_id"])
                 if ent_node is not None:
                     entity_label = ent_node.name
-
-        for item in results:
-            sf = item.get("source_file")
-            label, exists = format_source_citation(
-                str(sf) if sf else None, settings.data_dir
-            )
-            item["source_label"] = label or None
-            item["source_exists"] = exists
 
         active_filters: list[tuple[str, str]] = []
         if node_type.strip():
@@ -419,7 +414,11 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
             "has_search_criteria": has_search_criteria,
             "search_options": search_options,
             "advanced_open": True,
-            "results": results,
+            "search": search,
+            "agent_query": q.strip(),
+            "agent_prompt": (
+                translate("search.agent_prompt", lang=lang, query=q.strip()) if q.strip() else ""
+            ),
             "page_context": (
                 translate("page_context.search_query", lang=lang, query=q)
                 if q.strip()
@@ -559,7 +558,7 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
         )
 
         with _open_ro_db(lang) as db:
-            agent = OntologyAgent(db, active_llm, language=lang)
+            agent = OntologyAgent(db, active_llm, language=lang, data_dir=settings.data_dir)
             try:
                 turn = agent.chat(prompt, history)
             except Exception as exc:  # noqa: BLE001

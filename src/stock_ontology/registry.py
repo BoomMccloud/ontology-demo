@@ -157,6 +157,19 @@ class ThemeSuggestion(BaseModel):
     first_seen_at: str = Field(default_factory=_utc_now_iso)
     last_seen_at: str = Field(default_factory=_utc_now_iso)
 
+def company_suggestion_sort_key(c: CompanySuggestion) -> tuple[int, int, str]:
+    """Order company suggestions: consensus first, then most signals, then name."""
+    return (0 if c.has_consensus else 1, -c.signal_count, c.name.casefold())
+
+
+def theme_suggestion_sort_key(t: ThemeSuggestion) -> tuple[float, str]:
+    """Order theme suggestions by distance to the nearest official theme, then name."""
+    return (
+        t.nearest_official.distance if t.nearest_official is not None else 9.9,
+        t.name.casefold(),
+    )
+
+
 
 class MergeSuggestion(BaseModel):
     """Two stored entities or themes that may be the same, queued for a human decision.
@@ -223,11 +236,7 @@ def matches_type_spec(
     """Return True when `(node_type, entity_type)` satisfies an allowed registry type list."""
     if not allowed:
         return True
-    if node_type in allowed:
-        return True
-    if entity_type and f"{node_type}:{entity_type}" in allowed:
-        return True
-    return False
+    return node_type in allowed or bool(entity_type and f"{node_type}:{entity_type}" in allowed)
 
 
 class CompanyMatch(BaseModel):
@@ -590,9 +599,7 @@ class OntologyRegistry(BaseModel):
                 co_by_key[key] = new_item
                 counts["added"] += 1
 
-        self.suggestions.companies.sort(
-            key=lambda c: (0 if c.has_consensus else 1, -c.signal_count, c.name.casefold())
-        )
+        self.suggestions.companies.sort(key=company_suggestion_sort_key)
 
         # 3. Themes
         thm_by_key: dict[str, ThemeSuggestion] = {
@@ -640,12 +647,7 @@ class OntologyRegistry(BaseModel):
                 thm_by_key[key] = new_item
                 counts["added"] += 1
 
-        self.suggestions.themes.sort(
-            key=lambda t: (
-                t.nearest_official.distance if t.nearest_official is not None else 9.9,
-                t.name.casefold(),
-            )
-        )
+        self.suggestions.themes.sort(key=theme_suggestion_sort_key)
 
         # 4. Merge candidates (near-duplicate pairs). Keyed by the unordered node-ID pair, so a
         #    decided pair is never queued again; pending pairs no longer reported are dropped.

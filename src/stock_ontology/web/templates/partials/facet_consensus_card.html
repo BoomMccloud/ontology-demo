@@ -55,8 +55,8 @@
       <ul class="u-m-6px-0-0 u-pl-20px u-fs-0p9rem">
         {% for old in prior_consensuses %}
           <li>
-            <span class="badge">{{ t_enum('stance', old.facets.get('stance', 'unknown')) }}</span>
-            <span class="mono">{{ old.facets.get('as_of', '') }}</span> &mdash; {{ old.summary }}
+            <span class="badge">{{ t_enum('stance', old.stance) }}</span>
+            <span class="mono">{{ old.as_of }}</span> &mdash; {{ old.summary }}
           </li>
         {% endfor %}
       </ul>

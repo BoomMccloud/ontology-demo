@@ -1,6 +1,6 @@
 # Architecture
 
-The app is nine modules. Each has its own page.
+The app is ten modules. Each has its own page.
 
 | Module | Files | Page |
 | --- | --- | --- |
@@ -8,6 +8,7 @@ The app is nine modules. Each has its own page.
 | Storage | `db/schema.py`, `db/storage.py` | [storage.md](storage.md) |
 | Data pipeline | `pipeline.py`, `llm/prompts.py` | [pipeline.md](pipeline.md) |
 | LLM layer | `llm/` | [llm.md](llm.md) |
+| Search | `search.py` | [search.md](search.md) |
 | Agent | `agent.py`, `llm/pydantic_ai_model.py` | [agent.md](agent.md) |
 | Web app | `web/` | [web.md](web.md) |
 | Governance | `audit.py`, `repair.py` | [governance.md](governance.md) |
@@ -34,9 +35,10 @@ Each layer may import from layers above it, never below.
 1. shared         config, i18n
 2. ontology       models, registry, vocab
 3. storage, llm   db/, llm/          (independent of each other)
-4. pipeline, agent, governance        (independent of each other)
-5. web app
-6. CLI            composition root, imports everything
+4. search         search.py          (shared by agent and web app)
+5. pipeline, agent, governance        (independent of each other)
+6. web app
+7. CLI            composition root, imports everything
 ```
 
 ## Isolation

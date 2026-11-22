@@ -40,8 +40,8 @@
           <tr>
             <td>
               <a href="/entity/{{ row.company.id }}"><strong>{{ row.company.name }}</strong></a>
-              {% if row.company.facets.get("ticker") %}
-                <span class="mono">({{ row.company.facets.get("ticker") }})</span>
+              {% if row.company.ticker %}
+                <span class="mono">({{ row.company.ticker }})</span>
               {% endif %}
             </td>
             <td>
@@ -56,16 +56,15 @@
                 {% for link in row.links %}
                   <li>
                     {% if link.via == "direct" %}
-                      {{ format_relation(link.relation, link.direction | default('outgoing')) }}
-                      {% set link_sent = link.exposure_sentiment or (link.facets.get("sentiment") if link.facets is mapping else None) %}
-                      {% if link_sent %}
-                        <span class="badge badge-{{ link_sent }}">{{ t_enum('sentiment', link_sent) }}</span>
+                      {{ format_relation(link.relation, link.direction) }}
+                      {% if link.sentiment %}
+                        <span class="badge badge-{{ link.sentiment }}">{{ t_enum('sentiment', link.sentiment) }}</span>
                       {% endif %}
                       <span class="source-cite">({{ t('theme.via_direct') }})</span>
                     {% else %}
                       <span class="mono">{{ t_enum('relation', link.entity_relation) }} &rarr; {{ format_via(link.via) }} &rarr; {{ t_enum('relation', link.theme_relation) }}</span>
-                      {% if link.source_label %}
-                        <span class="source-cite">[{% if link.source_exists %}<a href="/catalog?file={{ link.source_file | urlencode }}">{{ link.source_label }}</a>{% else %}{{ link.source_label }}{% endif %}]</span>
+                      {% if link.source.label %}
+                        <span class="source-cite">[{% if link.source.exists %}<a href="/catalog?file={{ link.source.file | urlencode }}">{{ link.source.label }}</a>{% else %}{{ link.source.label }}{% endif %}]</span>
                       {% endif %}
                     {% endif %}
                   </li>

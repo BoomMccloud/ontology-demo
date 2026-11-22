@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, TypeVar
 
 import httpx
@@ -201,7 +202,7 @@ class OpenAICompatibleProvider(HttpJsonClientMixin, BaseLLMProvider):
                                 "type": "function",
                                 "function": {
                                     "name": tc["name"],
-                                    "arguments": json_dumps_args(tc.get("args", {})),
+                                    "arguments": json.dumps(tc.get("args", {})),
                                 },
                             }
                         )
@@ -221,7 +222,7 @@ class OpenAICompatibleProvider(HttpJsonClientMixin, BaseLLMProvider):
                         {
                             "role": "tool",
                             "tool_call_id": resp.get("call_id") or fallback_cid,
-                            "content": json_dumps_args(resp["response"]),
+                            "content": json.dumps(resp["response"]),
                         }
                     )
 
@@ -270,15 +271,7 @@ class OpenAICompatibleProvider(HttpJsonClientMixin, BaseLLMProvider):
         )
 
 
-def json_dumps_args(value: Any) -> str:
-    import json
-
-    return json.dumps(value)
-
-
 def parse_tool_args(raw_args: Any) -> dict[str, Any]:
-    import json
-
     if isinstance(raw_args, dict):
         return dict(raw_args)
     if isinstance(raw_args, str):

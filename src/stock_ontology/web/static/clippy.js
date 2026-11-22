@@ -1,9 +1,13 @@
-/* Read-Only Reference Desk Assistant: the Ask Clippy dock rendered on every page by base.html */
+/* Read-Only Reference Desk Assistant: the Ask Clippy dock rendered on every page by base.html.
+   On the search page the same chat window is pinned in the agent side column, which can detach
+   into a floating window; the dock, the column, and the floating window share one session. */
 
 (function () {
   const STORAGE_KEY = "stock_ontology_clippy_session_v1";
   const HISTORY_KEY = "stock_ontology_refdesk_history_v1";
   const OPEN_KEY = "stock_ontology_clippy_open_v1";
+  const SEARCH_RUN_KEY = "stock_ontology_search_agent_run_v1";
+  const FLOAT_KEY = "stock_ontology_search_agent_floating_v1";
 
   const launcher = document.getElementById("clippy-launcher");
   const win = document.getElementById("clippy-window");
@@ -49,6 +53,9 @@
   // A context carried by /ask?context=... (rendered on the dock) wins over the page's own context.
   let pageContext = (win && win.dataset.context) || document.body.dataset.pageContext || "Reference Desk";
   const pageLang = document.body.dataset.lang || "en";
+  // Set while the chat window is pinned in the search page's agent column.
+  let pinned = false;
+  let onReply = null;
 
   function getSessionId() {
     return sessionStorage.getItem(STORAGE_KEY) || null;
@@ -140,6 +147,10 @@
 
   function setOpen(isOpen) {
     if (!launcher || !win) return;
+    if (pinned) {
+      if (isOpen) input.focus();
+      return;
+    }
     launcher.hidden = isOpen;
     win.hidden = !isOpen;
     sessionStorage.setItem(OPEN_KEY, isOpen ? "1" : "0");
@@ -150,7 +161,8 @@
 
   async function sendMessage(text) {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed) return false;
+    let ok = false;
 
     appendMessage("user", trimmed);
     input.value = "";
@@ -169,6 +181,7 @@
         }),
       });
       const data = await resp.json();
+      ok = resp.ok && !data.error;
       if (data.session_id) setSessionId(data.session_id);
       appendMessage("bot", data.reply || data.error || i18n.no_response, data.tools_used || [], {
         provider: data.provider,
@@ -180,8 +193,10 @@
     } finally {
       sendBtn.disabled = false;
       sendBtn.textContent = i18n.send_btn;
-      input.focus();
+      if (!pinned) input.focus();
     }
+    if (onReply) onReply(ok);
+    return ok;
   }
 
   if (openTrigger) {
@@ -257,7 +272,58 @@
     setOpen(true);
   });
 
-  if (launcher && win && (win.dataset.open === "1" || sessionStorage.getItem(OPEN_KEY) === "1")) {
+  // Search page: pin the chat window in the agent column and run the search word once.
+  const agentColumn = document.querySelector("[data-agent-column]");
+  const agentSlot = agentColumn && agentColumn.querySelector("[data-agent-slot]");
+  if (agentColumn && agentSlot && win) {
+    pinned = true;
+    agentSlot.appendChild(win);
+    win.hidden = false;
+    if (launcher) launcher.hidden = true;
+
+    const layout = agentColumn.closest("[data-search-layout]");
+    const detachBtn = agentColumn.querySelector("[data-agent-detach]");
+    const failedNote = agentColumn.querySelector("[data-agent-failed]");
+
+    const setAgentState = (state) => {
+      agentColumn.dataset.agentState = state;
+      if (failedNote) failedNote.hidden = state !== "failed";
+    };
+
+    const setFloating = (on) => {
+      agentColumn.classList.toggle("search-agent-column-floating", on);
+      if (layout) layout.classList.toggle("search-layout-detached", on);
+      if (detachBtn) {
+        detachBtn.textContent = on ? detachBtn.dataset.labelPin : detachBtn.dataset.labelDetach;
+        detachBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+      sessionStorage.setItem(FLOAT_KEY, on ? "1" : "0");
+    };
+
+    if (detachBtn) {
+      detachBtn.addEventListener("click", () => {
+        setFloating(!agentColumn.classList.contains("search-agent-column-floating"));
+      });
+    }
+    setFloating(sessionStorage.getItem(FLOAT_KEY) === "1");
+
+    onReply = (ok) => setAgentState(ok ? "done" : "failed");
+
+    const query = agentColumn.dataset.agentQuery || "";
+    const runKey = pageLang + "|" + query;
+    if (query && sessionStorage.getItem(SEARCH_RUN_KEY) !== runKey) {
+      sessionStorage.setItem(SEARCH_RUN_KEY, runKey);
+      setAgentState("running");
+      sendMessage(agentColumn.dataset.agentPrompt || query).then((ok) => {
+        // A failed run is retried on the next visit to this search.
+        if (!ok) sessionStorage.removeItem(SEARCH_RUN_KEY);
+      });
+    } else {
+      setAgentState(query ? "done" : "idle");
+    }
+  }
+
+  if (!pinned && launcher && win && (win.dataset.open === "1" || sessionStorage.getItem(OPEN_KEY) === "1")) {
     setOpen(true);
   }
 })();
