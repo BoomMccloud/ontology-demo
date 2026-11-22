@@ -1,8 +1,8 @@
 ---
 proposal_id: "search-ontology"
 state: FRAMED
-witness: builder
-candidate: "5aceabc @ worktree/claude/search-ontology-proposal-f78e10"
+witness: independent
+candidate: "11825e6 + ledger rebase @ worktree/claude/search-ontology-proposal-f78e10"
 ---
 
 # Proposal: Search driven by the ontology
@@ -47,64 +47,64 @@ None stated.
 
 ## Frame
 
-Candidate: `5aceabc @ worktree/claude/search-ontology-proposal-f78e10`
+Candidate: `11825e6 + ledger rebase @ worktree/claude/search-ontology-proposal-f78e10`
 
 ### Verified reality
-- `uv run pytest -q` before any change: 145 passed. Proves the suites judging this change start green; limit: measured on `5aceabc`, before `canonical-vocabulary` lands. Build must re-measure on the merged tree.
-- `docs/proposals/canonical-vocabulary.md` (main checkout, `state: FRAMED`, three open decisions) — proves the dependency. That proposal adds `src/stock_ontology/vocab.py` in the `ontology` layer as the one closed set per enum, moves `SIGNAL_CATEGORY_ALIASES` there, replaces the filter predicate in `run_hybrid_search` with a shared function, and leaves `/search` option generation to this proposal. Limit: `vocab.py` does not exist yet, so its API is assumed, not inspected. Its decision 2 (which enums are covered) and decision 3 (7 or 12 stances) decide which values this proposal's options show.
-- `web/viewmodels.py:507` `build_search_filter_options` — proves today's options are hand-kept defaults (`DEFAULT_SUBTYPES_BY_TYPE` and `CANONICAL_STANCES` at `viewmodels.py:52-70`, `VALID_SENTIMENTS`) merged by `_merge_ordered` with values observed in up to 5000 nodes. Any off-vocabulary stored value becomes an option. Entity options are DB instances, which is correct, since entities are data, not vocabulary.
-- `web/templates/partials/search_bar.html:16-22` — proves the `node_type` select is hardcoded. `search_bar.html:31-50` proves the subtype select is one flat value across four optgroups.
-- `viewmodels.py:469` `_node_subtype` and `viewmodels.py:660-675` — prove subtype matching compares a bare string, so `consensus` (a `view_type` and a theme `stage`) matches both groups. Limit: read from code, not reproduced in the UI.
-- `viewmodels.py:614` `run_hybrid_search` and `web/app.py:307-429` `search_page` — prove the accepted filters are `node_type`, `subtype`, `sentiment`, `stance`, `entity_id`, `date_from`, `date_to`, `source_file`, `search_mode`. There is no `status`, `support_strength`, `conviction` or `relation` filter. `app.py:363-410` builds the active-filter chips, one per filter.
-- `models.py:158-245` — proves the ontology's other enums and where they live: event `status` (occurred, upcoming, rumored), view `support_strength` (strong, moderate, weak), view `conviction` (high, medium, low). Consensus views also carry `status` (active, superseded). Limit: these are `Field` descriptions today; `canonical-vocabulary` makes them closed sets.
-- `ontology_registry.json` `relations` (11 names: ABOUT, AUTHORED_BY, SUPPORTS, CONTRADICTS, SUPERSEDES, RELATES_TO, BUY, COMPETE, OWNS, WORKS_AT, EXPOSED_TO) and `web/app.py:136` `_load_optional_registry` — prove relations are defined in the registry, not in code, and that the web app can already load it but treats it as optional.
-- `storage.py:1718` `get_entity_connected_nodes` — proves the entity filter walks incident edges and sees each edge's `relation`, but keeps only the best edge's facets per neighbor, not the relation.
-- `sqlite3 -readonly ontology.db` census (main checkout) — event status: occurred 41, upcoming 1. View status: active 22, unset 34. View support_strength and conviction: only canonical values. Edge relations: only the 10 registry names in use (SUPERSEDES unused). Limit: one local DB.
-- `locales/en.json` — has `enum.status.*`, `enum.support_strength.*`, `enum.conviction.*`, `enum.node_type.*` and `enum.relation.*` keys for every canonical value, so option labels need no new enum keys. New field labels (`search.status_label` and friends) are needed in all 6 locales.
-- `tests/test_web.py:443` `test_web_nav_and_advanced_search_filters` and `catalog.py:906` — prove existing callers use bare values (`subtype=rumor`, `stance=cautious`, `source_file=...`). No test asserts the option lists.
+- `uv run pytest -q` on the rebased tree before any change: 226 passed. Proves the suites judging this change start green; limit: measured once, on this worktree.
+- `canonical-vocabulary` (ACCEPTED) and `ontology-search` (ACCEPTED) are merged on `main` at `11825e6`. Proves the Proposal's Build constraint ("does not start Build until canonical-vocabulary is merged") is met, and that search now lives in `src/stock_ontology/search.py`. `run_hybrid_search` no longer exists.
+- `src/stock_ontology/vocab.py` — proves every closed set this needs exists as a `Vocabulary`: `ENTITY_TYPE`, `EVENT_TYPE`, `EVENT_STATUS`, `VIEW_TYPE`, `VIEW_STATUS`, `STANCE` (7 members), `SENTIMENT`, `SUPPORT_STRENGTH`, `CONVICTION`, `STAGE`. Also `SUBTYPE_FACET`, `SIGNAL_CATEGORY_ALIASES`, `SENTIMENT_FILTER_VALUES`, `parse_category_filter`, `parse_sentiment_filter` and `matches_signal_filter`. Limit: node types live in `models.NodeType` and `search.NODE_TYPES`, not in `vocab.py`.
+- `vocab.py:388` `matches_signal_filter` — proves the category rule compares the bare stored subtype, so `consensus` matches both a consensus view and a theme at stage `consensus`. The agent's `query_entity_signals` and web `SearchFilters.matches` share this rule, and `tests/test_canonical_vocabulary.py::test_agent_and_web_signal_filters_return_identical_items` guards their agreement. Limit: the ambiguity only shows on web search, because the agent's signal query collects events and views only.
+- `search.py:303` `SearchFilters` (`from_raw`, `matches`) — proves the accepted filters are `node_type`, `subtype`, `sentiment`, `stance`, `entity_id`, `date_from`, `date_to`, `source_file` and keyword mode, with no `status`, `support_strength`, `conviction` or `relation`. `agent.py:341` builds `SearchFilters.from_raw(node_type=...)` for `search_nodes`, so new fields that default to None leave the agent unchanged.
+- `web/app.py:309` `search_page` and `app.py:360` `active_filters` — prove the page takes the same params and builds one active-filter chip per filter.
+- `web/viewmodels.py:795` `build_search_filter_options` — proves options are still hand-kept: `DEFAULT_SUBTYPES_BY_TYPE` (`viewmodels.py:63`) and `CANONICAL_STANCES` (`viewmodels.py:70`, 12 stances, while `vocab.STANCE` has 7), merged by `_merge_ordered` with values observed in up to 5000 nodes. Entity options are DB instances, which is correct.
+- `web/templates/partials/search_bar.html:16-22` — proves the `node_type` select is hardcoded. `search_bar.html:34-50` proves the subtype select is one flat value across four optgroups.
+- `ontology_registry.json` `relations` (11 names) and `web/app.py:137` `_load_optional_registry` — prove relations are defined in the registry and that the web app loads it as optional.
+- `db/storage.py:1580` `get_entity_connected_nodes` — proves the entity filter keeps only the best edge's facets per neighbor, not the relation.
+- `sqlite3 -readonly ontology.db` census from canonical-vocabulary's Frame, unchanged by its 0-change `repair` — every stored enum value is canonical, and edge relations use 10 of the 11 registry names. Limit: one local DB.
+- `locales/en.json` — has `enum.*` keys for every vocab member (guarded by `tests/test_i18n.py::test_every_vocab_member_has_an_enum_key_in_every_locale`) and `enum.relation.*` keys. New field labels are needed in all 6 locales.
+- `tests/test_web.py:445` `test_web_nav_and_advanced_search_filters`, `tests/test_search.py:171` `test_filters_narrow_results_but_expansion_still_seeds_from_entity`, and `catalog.py` links — prove existing callers use bare values (`subtype=rumor`, `stance=cautious`). No test asserts the option lists.
 
 ### Final primary claim
-- Every advanced-search select on `/search` (node type, subtype, status, sentiment, stance, support strength, conviction, relation) lists exactly the values the ontology defines: the enum sets in `vocab.py` and the relation names in the registry. Choosing an option returns only items whose stored value is that value in that group. A value stored in the DB but outside the vocabulary is never offered.
+- Every advanced-search select on `/search` (node type, subtype, status, sentiment, stance, support strength, conviction, relation) lists exactly the values the ontology defines: the `vocab.py` sets and the registry's relation names. Choosing an option returns only items whose stored value is that value in that group. A value stored in the DB but outside the vocabulary is never offered.
 
 ### Routing
-- Witness: `builder`
-- Why: a read-only web surface. It changes which options render and how query params filter, but writes nothing, crosses no service boundary, and is reversible by revert.
+- Witness: `independent`
+- Why: the change extends `search.SearchFilters`, which the agent's `search_nodes` tool also uses, plus a storage read method and the web page. It crosses the storage, search and web components, though it writes nothing.
 - Human-owned irreversible action: merging the branch.
 
 ### Decisive witness
-- Layer: offline web integration tests through `TestClient` over a seeded temp DB with `FakeWebLLM`.
-- Permanent owner: `tests/test_web.py`, next to `test_web_nav_and_advanced_search_filters`.
-- Witness: render `/search`, collect each select's option values, and assert each equals its `vocab.py` set (relation equals the registry's names) with nothing added from the DB, using a fixture that stores an off-vocabulary stance and relation. Then assert `status=event:upcoming`, `support_strength=weak`, `conviction=high` and `relation=ABOUT` each return exactly the seeded matches, and that `subtype=theme:consensus` and `subtype=view:consensus` return disjoint sets.
+- Layer: offline web integration tests through `TestClient` over a seeded temp DB with `FakeWebLLM`, plus `search_ontology` calls for filter semantics.
+- Permanent owner: `tests/test_web.py`, next to `test_web_nav_and_advanced_search_filters`, and `tests/test_search.py` for `SearchFilters`.
+- Witness: render `/search`, collect each select's option values, and assert each equals its `vocab.py` set (relation equals the registry's names) with nothing added from the DB. Use a fixture that stores an off-vocabulary stance and relation. Then assert `status=event:upcoming`, `support_strength=weak`, `conviction=high` and `relation=ABOUT` each return exactly the seeded matches, and that `subtype=theme:consensus` and `subtype=view:consensus` return disjoint sets.
 
 ### Guardrail claims
-- Every URL accepted today returns the same results, including bare `subtype=rumor` (the cross-type rumor rule and category aliases), `stance`, `sentiment`, `entity_id`, dates, `source_file`, `search_mode`, and the `catalog.py:906` link.
-- `/search` still opens the DB read-only and the agent's `query_entity_signals` behavior is unchanged.
-- With no registry file, `/search` still renders and works; only the relation filter is hidden.
+- Every URL accepted today returns the same results, including bare `subtype=rumor` (the cross-type rumor rule and category aliases), `stance`, `sentiment`, `entity_id`, dates, `source_file` and keyword mode.
+- The agent's `search_nodes` and `query_entity_signals` return the same results as today, and the agent and web signal-filter parity test stays green with `vocab.matches_signal_filter` unchanged.
+- With no registry file, `/search` still renders and works, and only the relation filter is hidden.
 
 ### Supporting obligations
 - `build_search_filter_options` builds every enum option list from `vocab.py`, and the relation list from the loaded registry. Delete `DEFAULT_SUBTYPES_BY_TYPE`, `CANONICAL_STANCES` and `_merge_ordered`, and drop the observed-value scan except for entity options.
-- Render the `node_type` select from the vocabulary's node types instead of hardcoded options.
-- Group-qualify the values of the subtype and status selects as `<node_type>:<value>`. `run_hybrid_search` accepts a qualified value (match that node type and value) or a bare value (today's behavior). Unit-test the parser.
-- Add `status`, `support_strength`, `conviction` and `relation` params to `search_page` and `run_hybrid_search`, each with an active-filter chip. `support_strength` and `conviction` match view facets. Relation matches a result with at least one incident edge of that relation; with an entity selected, the edge must connect the result to that entity. Extend `get_entity_connected_nodes` or add a read method in `OntologyDB` to return relations per neighbor.
+- Render the `node_type` select from `search.NODE_TYPES` instead of hardcoded options.
+- Group-qualify the values of the subtype and status selects as `<node_type>:<value>`. `SearchFilters.from_raw` parses a qualified value into a node-type restriction plus the bare value, and passes the bare value to `matches_signal_filter` unchanged. A bare value keeps today's behavior. Unit-test the parser in `tests/test_search.py`.
+- Add `status`, `support_strength`, `conviction` and `relation` to `SearchFilters` (default None) and `search_page`, each with an active-filter chip. `support_strength` and `conviction` match view facets. Relation matches a result with at least one incident edge of that relation; with an entity selected, the edge must connect the result to that entity. Add a read method in `OntologyDB`, or a read-only extension of `get_entity_connected_nodes`, to return relations per neighbor.
 - Add the new field labels to all 6 `locales/*.json`.
-- Before Build, re-verify every citation above against the merged `canonical-vocabulary` tree. If `vocab.py` lacks a set this needs (for example `conviction`, if decision 2 excludes it), rerun Frame rather than adding the set here.
 
 ### Allowed scope
-- Reuse: `build_search_filter_options` and `run_hybrid_search` (extended, not replaced), the shared signal-filter function and `vocab.py` from `canonical-vocabulary`, `registry.load_registry` via `_load_optional_registry`, existing `enum.*` locale keys and `translate_enum`/`translate_subtype`, and `test_web_nav_and_advanced_search_filters`'s fixture pattern.
-- Cheaper alternative: option (a), generating today's filters from `vocab.py` and adding none. Rejected because the human chose (b) at approval. Within (b), Frame took the cheapest semantics on this `builder` route: relation matches any incident edge (scoped to the selected entity when one is set), and new filters are single-value selects with no multi-select.
-- Include: `web/viewmodels.py`, `web/app.py`, `web/templates/partials/search_bar.html`, `db/storage.py` (one read method or a read-only extension of `get_entity_connected_nodes`), `locales/*.json` (new `search.*` labels only), `tests/test_web.py`, `docs/architecture/web.md` (one line on where options come from).
-- Exclude/protect: `vocab.py` contents, `models.py`, ingestion, `repair`, `ontology_registry.json` contents and schema, the agent and its tool schema, the shared signal-filter function's rules, hybrid ranking and vector search, CSS class renames, the `/ontology` page.
+- Reuse: `search.SearchFilters` and `search_ontology` (extended, not replaced), `build_search_filter_options` (rewritten in place), `vocab.py`'s sets and parse functions, `registry.load_registry` via `_load_optional_registry`, the existing `enum.*` locale keys with `translate_enum`/`translate_subtype`, and the fixture patterns in `test_web_nav_and_advanced_search_filters` and `tests/test_search.py`.
+- Cheaper alternative: option (a), generating today's filters from `vocab.py` and adding none. Rejected because the human chose (b) at approval. Within (b), Frame takes the cheapest semantics: relation matches any incident edge (scoped to the selected entity when one is set), and new filters are single-value selects with no multi-select.
+- Include: `search.py`, `web/viewmodels.py`, `web/app.py`, `web/templates/partials/search_bar.html`, `db/storage.py` (one read method), `locales/*.json` (new `search.*` labels only), `tests/test_web.py`, `tests/test_search.py`, `docs/architecture/search.md` and `web.md` (where options come from).
+- Exclude/protect: `vocab.py` contents including `matches_signal_filter`, `models.py`, ingestion, `repair`, `ontology_registry.json` contents and schema, the agent and its tool schema, search ranking, expansion, note grep and vector search, CSS class renames, the `/ontology` page.
 
 ### Invariants changed
-- None. No README entry or test states today's option lists. `DEFAULT_SUBTYPES_BY_TYPE` and `CANONICAL_STANCES` are code rules this change removes.
+- None. No README entry or test states today's option lists. `DEFAULT_SUBTYPES_BY_TYPE` and `CANONICAL_STANCES` are code rules this change removes. Removing `CANONICAL_STANCES` drops `outperform`, `overweight`, `underperform`, `underweight` and `unknown` from the stance select, as canonical-vocabulary decision 3 already set.
 
 ### Decisions required
-- None.
+- None. Nothing in the approved Proposal is contradicted by `main`. Its "Why now" and Build constraint referred to canonical-vocabulary being unbuilt. That is now met, and the Proposal text is left as approved.
 
 ## Proof
 
-Builder route. The witness is builder-owned and deferred to Build. Build does not
-start until `canonical-vocabulary` is merged (Proposal constraint).
+<!-- Replaced only by proposal-prove. Independent route: Proof must be authored in a
+context that did not write this Frame, before Build. -->
 
 ## Build
 
