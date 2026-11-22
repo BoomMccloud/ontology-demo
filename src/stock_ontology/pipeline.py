@@ -25,7 +25,6 @@ from stock_ontology.models import (
     normalize_sentiment,
 )
 
-CANONICAL_DISTANCE_THRESHOLD = 0.15
 # Most recently updated entities and themes listed in the extraction catalog (each type),
 # in addition to every entity/theme the note names.
 CATALOG_RECENT_BUDGET = 500
@@ -168,21 +167,17 @@ class IngestionPipeline:
         aliases: list[str],
         facets: dict[str, Any],
         prefix: str,
-        probe_vec: list[float] | None = None,
+        needs_embedding: list[Node],
     ) -> tuple[Node, bool]:
-        """Resolve an entity/theme by exact name/alias or vector distance; upsert if new/merged."""
-        existing = self._find_exact(node_type=node_type, temp_id=temp_id, name=name, aliases=aliases)
+        """Reuse an entity/theme only on an exact or registry match; otherwise create it.
 
-        candidate_vec: list[float] | None = None
-        if existing is None:
-            candidate_vec = (
-                probe_vec
-                if probe_vec is not None
-                else self.llm.embed_texts([_probe_text(node_type, name, summary)])[0]
-            )
-            matches = self.db.vector_search(candidate_vec, node_type=node_type, limit=1)
-            if matches and matches[0][1] < CANONICAL_DISTANCE_THRESHOLD:
-                existing = matches[0][0]
+        Embedding similarity never merges nodes: near-duplicates are proposed by `audit` as
+        registry merge suggestions for a human to approve. Nodes whose embedding text changed
+        are appended to `needs_embedding` so the caller can embed them in one batch.
+        """
+        existing = self._find_exact(
+            node_type=node_type, temp_id=temp_id, name=name, aliases=aliases, facets=facets
+        )
 
         now = datetime.now(UTC)
         if existing is not None:
@@ -207,8 +202,8 @@ class IngestionPipeline:
                 if not existing.summary and summary:
                     existing.summary = summary
                 existing.updated_at = now
-                vec = self.llm.embed_texts([node_embedding_text(existing)])[0]
-                self.db.upsert_node(existing, embedding=vec)
+                self.db.upsert_node(existing)
+                needs_embedding.append(existing)
             return existing, changed
 
         cleaned_aliases = [
@@ -227,13 +222,20 @@ class IngestionPipeline:
             created_at=now,
             updated_at=now,
         )
-        vec = candidate_vec if candidate_vec is not None else self.llm.embed_texts([node_embedding_text(node)])[0]
-        self.db.upsert_node(node, embedding=vec)
+        self.db.upsert_node(node)
+        needs_embedding.append(node)
         return node, True
 
     def _find_exact(
-        self, *, node_type: NodeType, temp_id: str, name: str, aliases: list[str]
+        self,
+        *,
+        node_type: NodeType,
+        temp_id: str,
+        name: str,
+        aliases: list[str],
+        facets: dict[str, Any] | None = None,
     ) -> Node | None:
+        """Existing node by ID, exact name/alias, or the registry's official name/aliases."""
         # If the LLM returned an already-existing DB ID in `temp_id`, reuse it.
         existing = self.db.get_node(temp_id)
         if existing is not None and existing.node_type == node_type:
@@ -242,21 +244,34 @@ class IngestionPipeline:
             found = self.db.find_by_name_or_alias(label, node_type=node_type)
             if found is not None:
                 return found
-        return None
+        return self._find_by_registry(node_type=node_type, name=name, aliases=aliases, facets=facets or {})
 
-    def _batch_probe_vectors(self, extraction: Any) -> dict[tuple[str, str], list[float]]:
-        """Embed probes for extracted entities/themes with no exact match, in one call."""
-        pending: list[tuple[tuple[str, str], str]] = []
-        for node_type, items in (("entity", extraction.entities), ("theme", extraction.themes)):
-            for item in items:
-                if self._find_exact(
-                    node_type=node_type, temp_id=item.temp_id, name=item.name, aliases=item.aliases
-                ) is None:
-                    pending.append(((node_type, item.temp_id), _probe_text(node_type, item.name, item.summary)))
-        if not pending:
-            return {}
-        vectors = self.llm.embed_texts([text for _, text in pending])
-        return {key: vec for (key, _), vec in zip(pending, vectors, strict=True)}
+    def _find_by_registry(
+        self, *, node_type: NodeType, name: str, aliases: list[str], facets: dict[str, Any]
+    ) -> Node | None:
+        """Map a registry company/theme match to the stored node carrying any of its labels."""
+        labels: list[str] = []
+        if node_type == "entity" and str(facets.get("entity_type", "")).strip().lower() == "company":
+            ticker = facets.get("ticker")
+            company = self.registry.resolve_company(
+                name, ticker=str(ticker) if ticker else None, aliases=aliases
+            )
+            if company is not None:
+                labels = [company.spec.name, *company.spec.aliases]
+                if company.spec.ticker:
+                    labels.append(company.spec.ticker)
+        elif node_type == "theme":
+            theme = self.registry.resolve_theme(name, aliases=aliases)
+            if theme is not None:
+                labels = [theme.spec.name, *theme.spec.aliases]
+        for label in labels:
+            found = self.db.find_by_name_or_alias(label, node_type=node_type)
+            if found is None:
+                continue
+            if node_type == "entity" and str(found.facets.get("entity_type", "")).strip().lower() != "company":
+                continue
+            return found
+        return None
 
     def _resolve_node_ref(self, ref: str, ref_map: dict[str, str]) -> str | None:
         if ref in ref_map:
@@ -365,7 +380,7 @@ class IngestionPipeline:
         edges_written = 0
         ref_map: dict[str, str] = {}
         local_nodes: dict[str, Node] = {}
-        probes = self._batch_probe_vectors(extraction)
+        needs_embedding: list[Node] = []
 
         # 1. Resolve canonical entities & themes.
         for ent in extraction.entities:
@@ -379,7 +394,7 @@ class IngestionPipeline:
                 aliases=ent.aliases,
                 facets=ent_facets,
                 prefix="ent",
-                probe_vec=probes.get(("entity", ent.temp_id)),
+                needs_embedding=needs_embedding,
             )
             ref_map[ent.temp_id] = node.id
             local_nodes[node.id] = node
@@ -399,12 +414,20 @@ class IngestionPipeline:
                 aliases=thm.aliases,
                 facets=thm_facets,
                 prefix="thm",
-                probe_vec=probes.get(("theme", thm.temp_id)),
+                needs_embedding=needs_embedding,
             )
             ref_map[thm.temp_id] = node.id
             local_nodes[node.id] = node
             if updated:
                 nodes_written += 1
+
+        # New or changed canonical nodes are embedded in one call per note.
+        unique_embed = list({n.id: n for n in needs_embedding}.values())
+        if unique_embed:
+            vectors = self.llm.embed_texts([node_embedding_text(n) for n in unique_embed])
+            self.db.replace_node_embeddings(
+                {n.id: v for n, v in zip(unique_embed, vectors, strict=True)}, prune_orphans=False
+            )
 
         # 2. Build doc-scoped events and views.
         doc_nodes: list[Node] = []
@@ -703,10 +726,6 @@ def reembed_all_nodes(db: OntologyDB, llm: LLMClient) -> ReembedReport:
         model=model_name,
         embedding_dim=db.embedding_dim,
     )
-
-
-def _probe_text(node_type: str, name: str, summary: str) -> str:
-    return f"{node_type}: {name}\n{summary}"
 
 
 def _new_doc_id(rel_path: str, used: set[str]) -> str:

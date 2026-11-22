@@ -997,3 +997,75 @@ def test_node_lookup_backfills_when_table_exists_but_misses_nodes(tmp_path: Path
         assert db.find_by_name_or_alias("Alpha Inc").id == "ent_alpha"
         assert db.find_by_name_or_alias("alp").id == "ent_alpha"
         assert db.find_by_name_or_alias("beta co").id == "ent_beta2"
+
+
+# ---------------------------------------------------------------------------
+# exact-entity-merge: supporting unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_sync_merge_suggestions_drops_stale_pending_and_counts() -> None:
+    from types import SimpleNamespace
+
+    reg = create_minimal_registry()
+
+    def pair(a: str, b: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            node_type="company", node_a_id=a, node_a_name=a.upper(), node_b_id=b,
+            node_b_name=b.upper(), reason="vector_similarity", distance=0.1,
+        )
+
+    s1 = reg.sync_suggestions([], [], [], merge_candidates=[pair("x", "y"), pair("y", "x"), pair("p", "q")])
+    assert s1.pending_merges == 2 and len(reg.suggestions.merges) == 2
+    reg.suggestions.merges[[m.pair_key for m in reg.suggestions.merges].index(frozenset({"p", "q"}))].status = "rejected"
+
+    # Neither pair reported again: pending x/y is dropped, rejected p/q is kept.
+    s2 = reg.sync_suggestions([], [], [], merge_candidates=[])
+    assert s2.pending_merges == 0
+    assert [(set(m.pair_key), m.status) for m in reg.suggestions.merges] == [({"p", "q"}, "rejected")]
+
+
+class _RegistryResolveLLM:
+    def __init__(self, result: ExtractionResult) -> None:
+        self.result = result
+        self.embed_calls = 0
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        self.embed_calls += 1
+        return [_wiring_vec(sum(map(ord, t))) for t in texts]
+
+    def extract_document(self, **_: Any) -> ExtractionResult:
+        return self.result
+
+
+def test_registry_resolves_company_by_ticker_and_theme_by_alias(tmp_path: Path) -> None:
+    from stock_ontology.models import ExtractedTheme
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "n.md").write_text("Note.", encoding="utf-8")
+    with OntologyDB(tmp_path / "r.db", embedding_dim=WIRING_DIM, read_only=False) as db:
+        db.upsert_node(_company("ent_vrt", "Vertiv"))
+        db.upsert_node(Node(id="thm_power", node_type="theme", name="AI Data Center Power & Cooling", summary="t"))
+        db.upsert_node(Node(id="ent_vrt_person", node_type="entity", name="VRT Desk", summary="p",
+                            facets={"entity_type": "person"}))
+        llm = _RegistryResolveLLM(
+            ExtractionResult(
+                entities=[
+                    # Different name, registry ticker VRT -> the stored Vertiv company.
+                    ExtractedEntity(temp_id="e1", name="Vertiv Corp", summary="s", entity_type="company",
+                                    facets=[{"key": "ticker", "value": "VRT"}]),
+                    # A person is never resolved through the company registry.
+                    ExtractedEntity(temp_id="p1", name="Vertiv Holdings Co. Analyst", summary="s",
+                                    entity_type="person"),
+                ],
+                themes=[ExtractedTheme(temp_id="t1", name="AI Data Center Power Bottleneck", summary="s")],
+            )
+        )
+        IngestionPipeline(db, llm, data_dir).run()
+        companies = [n for n in db.list_all_nodes() if n.facets.get("entity_type") == "company"]
+        assert [c.id for c in companies] == ["ent_vrt"]
+        assert "Vertiv Corp" in companies[0].aliases
+        themes = [n for n in db.list_all_nodes() if n.node_type == "theme"]
+        assert [t.id for t in themes] == ["thm_power"]
+        assert "AI Data Center Power Bottleneck" in themes[0].aliases

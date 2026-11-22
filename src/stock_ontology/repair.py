@@ -26,6 +26,8 @@ class RepairReport:
     duplicate_edges_deleted: int = 0
     nodes_merged: int = 0
     self_loops_deleted: int = 0
+    # Registry merge suggestions a human approved and repair applied (`suggestions.merges`).
+    approved_merges_applied: int = 0
     # Survivors of merges keep a stale embedding until `reembed_nodes` recomputes it.
     merged_survivor_ids: list[str] = field(default_factory=list)
 
@@ -49,6 +51,7 @@ def repair_ontology(db: OntologyDB, registry: OntologyRegistry) -> RepairReport:
     report = RepairReport()
     with db.transaction():
         _delete_orphan_artifacts(db, report)
+        _apply_approved_merges(db, registry, report)
         _merge_exact_duplicates(db, report)
         _canonicalize_relations(db, registry, report)
         _delete_duplicate_edges(db, report)
@@ -100,6 +103,18 @@ def _canonicalize_relations(
 def _merge_key(node: Node) -> tuple[str, str]:
     entity_type = str(node.facets.get("entity_type", "")).strip().casefold()
     return node.node_type, entity_type if node.node_type == "entity" else ""
+
+
+def _apply_approved_merges(db: OntologyDB, registry: OntologyRegistry, report: RepairReport) -> None:
+    """Merge the node pairs of registry merge suggestions a human approved; skip all others."""
+    for suggestion in registry.suggestions.merges:
+        if suggestion.status != "approved":
+            continue
+        nodes = db.get_nodes([suggestion.node_a_id, suggestion.node_b_id])
+        if len(nodes) != 2 or nodes[0].node_type != nodes[1].node_type:
+            continue  # Already merged by an earlier run, deleted, or not a mergeable pair.
+        _merge_cluster(db, nodes, report)
+        report.approved_merges_applied += 1
 
 
 def _merge_exact_duplicates(db: OntologyDB, report: RepairReport) -> None:

@@ -93,6 +93,9 @@ uv run stock-ontology repair
 uv run stock-ontology repair --json
 # After repair merges duplicates, recompute the survivors' embeddings (needs LLM API keys).
 uv run stock-ontology repair --reembed
+#     Near-duplicate companies/themes are proposed under `suggestions.merges` in
+#     ontology_registry.json. Set a pair's status to "approved" (or "rejected"),
+#     then run `repair` to apply approved merges.
 
 # 3. Periodically watch data/ for new or updated notes
 uv run stock-ontology watch --interval 60
@@ -110,6 +113,9 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
 
 ## Ingestion Constraints
 
+- Merge an extracted entity or theme into an existing node only on an exact ID, name, or alias match, or when the registry maps both to the same official company or theme. Never merge on embedding similarity; propose the pair as a registry merge suggestion instead.
+  **Why:** a 0.15 cosine threshold merged competitors (AMD into NVIDIA at 0.114, nVent into Vertiv at 0.106) during the 2026-11-22 rebuild (proposal `exact-entity-merge`).
+  **Guarded by:** `tests/test_pipeline.py::test_pipeline_does_not_merge_distinct_company_by_embedding_distance`.
 - Write every note's rows inside one `OntologyDB.transaction()` that first clears that note's prior artifacts, and never let individual writes commit on their own.
   **Why:** a note that failed partway left partial rows and no log entry, and the next run wrote a second copy (proposal `ingestion-write-integrity`, 2026-11-22).
   **Guarded by:** `tests/test_pipeline.py::test_pipeline_mid_note_failure_leaves_no_rows_and_rerun_yields_one_copy`.

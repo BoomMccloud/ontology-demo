@@ -481,7 +481,7 @@ def test_pipeline_ingest_idempotent_edit_delete_and_resolution(tmp_path: Path) -
         assert llm.extract_calls == []
         assert llm.consensus_calls == []
 
-        # 3. Vector-distance merge: a note referring to "Nvidia Corporation" (not in aliases yet) merges into NVIDIA.
+        # 3. Registry-alias merge: "Nvidia Corporation" (an official registry alias, not yet a node alias) merges into NVIDIA.
         custom_note = data_copy / "_general" / "2026-11-20_alias_merge.md"
         custom_note.write_text("Nvidia Corporation sees strong inference demand.", encoding="utf-8")
         r3 = pipeline.run()

@@ -16,13 +16,18 @@ cases with one right answer.
 near-duplicate entities, suspicious aliases, facet alias hits, and
 contradictory reciprocal edges. The `audit` command also adds unmapped items
 to the registry file as `pending` suggestions for a human to review (on by
-default, off with `--no-sync-suggestions`).
+default, off with `--no-sync-suggestions`). Near-duplicate company and theme
+pairs become `suggestions.merges` entries; a reviewer sets each to `approved`
+or `rejected`, decisions survive later syncs, and a pending pair that audit no
+longer reports is dropped.
 
 ## Repair
 
 `repair_ontology(db, registry)` writes to the DB. It deletes rows from notes
 no longer in the ingestion log, renames registered alias and inverse relations,
-and merges exact name or alias duplicates. Judgment calls are left to `audit`.
+merges the pairs of `approved` merge suggestions (never pending or rejected
+ones), and merges exact name or alias duplicates. Judgment calls are left to
+`audit`.
 Merge survivors keep a stale embedding. `RepairReport.merged_survivor_ids`
 lists them, and the CLI `repair` command passes them to the pipeline's
 `reembed_nodes`.

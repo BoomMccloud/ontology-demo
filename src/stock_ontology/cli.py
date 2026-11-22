@@ -638,7 +638,7 @@ def _render_audit_report(
         f"added={sync_summary.added}, updated={sync_summary.updated}, "
         f"auto_resolved={sync_summary.auto_resolved}, preserved_decided={sync_summary.preserved_decided} "
         f"(pending: rel={sync_summary.pending_relations}, co={sync_summary.pending_companies}, "
-        f"thm={sync_summary.pending_themes})"
+        f"thm={sync_summary.pending_themes}, merge={sync_summary.pending_merges})"
         if sync_summary is not None
         else "\nSuggestions sync skipped (--no-sync-suggestions)."
     )
@@ -821,6 +821,7 @@ def audit(
             report.unmapped_relations,
             report.unmapped_companies,
             report.unmapped_themes,
+            merge_candidates=[*report.duplicate_company_candidates, *report.near_duplicate_themes],
         )
         save_registry(reg, settings.registry_path)
 

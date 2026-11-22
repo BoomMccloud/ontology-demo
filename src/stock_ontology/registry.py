@@ -7,6 +7,7 @@ import re
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -157,12 +158,37 @@ class ThemeSuggestion(BaseModel):
     last_seen_at: str = Field(default_factory=_utc_now_iso)
 
 
+class MergeSuggestion(BaseModel):
+    """Two stored entities or themes that may be the same, queued for a human decision.
+
+    `repair` merges a pair only after a reviewer sets `status` to `approved`.
+    """
+
+    id: str
+    node_type: str
+    node_a_id: str
+    node_a_name: str
+    node_b_id: str
+    node_b_name: str
+    reason: str
+    distance: float | None = None
+    status: SuggestionStatus = "pending"
+    reviewer_note: str | None = None
+    first_seen_at: str = Field(default_factory=_utc_now_iso)
+    last_seen_at: str = Field(default_factory=_utc_now_iso)
+
+    @property
+    def pair_key(self) -> frozenset[str]:
+        return frozenset({self.node_a_id, self.node_b_id})
+
+
 class RegistrySuggestions(BaseModel):
     """Pending and historical ontology extension suggestions discovered by audit."""
 
     relations: list[RelationSuggestion] = Field(default_factory=list)
     companies: list[CompanySuggestion] = Field(default_factory=list)
     themes: list[ThemeSuggestion] = Field(default_factory=list)
+    merges: list[MergeSuggestion] = Field(default_factory=list)
 
 
 class RelationMatch(BaseModel):
@@ -228,6 +254,7 @@ class SuggestionSyncSummary(BaseModel):
     pending_relations: int = 0
     pending_companies: int = 0
     pending_themes: int = 0
+    pending_merges: int = 0
 
 
 def _ensure_unique_id(candidate: str, used_ids: set[str]) -> str:
@@ -461,6 +488,7 @@ class OntologyRegistry(BaseModel):
         unmapped_companies: list[CompanySuggestion],
         unmapped_themes: list[ThemeSuggestion],
         *,
+        merge_candidates: Iterable[Any] = (),
         now_iso: str | None = None,
     ) -> SuggestionSyncSummary:
         """Merge newly audited unmapped items into `suggestions` while preserving admin decisions."""
@@ -619,6 +647,52 @@ class OntologyRegistry(BaseModel):
             )
         )
 
+        # 4. Merge candidates (near-duplicate pairs). Keyed by the unordered node-ID pair, so a
+        #    decided pair is never queued again; pending pairs no longer reported are dropped.
+        reported: dict[frozenset[str], Any] = {}
+        for cand in merge_candidates:
+            key = frozenset({cand.node_a_id, cand.node_b_id})
+            if len(key) == 2 and key not in reported:
+                reported[key] = cand
+        merge_ids = {s.id for s in self.suggestions.merges}
+        kept: list[MergeSuggestion] = []
+        for existing in self.suggestions.merges:
+            if existing.pair_key in reported:
+                cand = reported.pop(existing.pair_key)
+                existing.last_seen_at = ts
+                if existing.status == "pending":
+                    existing.reason = cand.reason
+                    existing.distance = cand.distance
+                    counts["updated"] += 1
+                else:
+                    counts["preserved_decided"] += 1
+                kept.append(existing)
+            elif existing.status == "pending":
+                counts["auto_resolved"] += 1
+            else:
+                kept.append(existing)
+                counts["preserved_decided"] += 1
+        for key, cand in reported.items():
+            a_id, b_id = sorted(key)
+            names = {cand.node_a_id: cand.node_a_name, cand.node_b_id: cand.node_b_name}
+            kept.append(
+                MergeSuggestion(
+                    id=_ensure_unique_id(make_suggestion_id("merge", f"{a_id}__{b_id}"), merge_ids),
+                    node_type=str(cand.node_type),
+                    node_a_id=a_id,
+                    node_a_name=names[a_id],
+                    node_b_id=b_id,
+                    node_b_name=names[b_id],
+                    reason=str(cand.reason),
+                    distance=cand.distance,
+                    first_seen_at=ts,
+                    last_seen_at=ts,
+                )
+            )
+            counts["added"] += 1
+        kept.sort(key=lambda m: (m.status != "pending", m.distance if m.distance is not None else 0.0, m.id))
+        self.suggestions.merges = kept
+
         return SuggestionSyncSummary(
             added=counts["added"],
             updated=counts["updated"],
@@ -631,6 +705,7 @@ class OntologyRegistry(BaseModel):
                 1 for s in self.suggestions.companies if s.status == "pending"
             ),
             pending_themes=sum(1 for s in self.suggestions.themes if s.status == "pending"),
+            pending_merges=sum(1 for s in self.suggestions.merges if s.status == "pending"),
         )
 
 

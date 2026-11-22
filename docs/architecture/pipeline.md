@@ -23,8 +23,11 @@ Turns research notes into graph rows. It's the main writer to `ontology.db`.
    catalog of existing nodes, getting back an `ExtractionResult`. The catalog
    lists nodes named in the note first (`find_nodes_mentioned_in`), then
    recent ones.
-4. Resolve each extracted node to an existing one by name, alias, or embedding
-   distance under `CANONICAL_DISTANCE_THRESHOLD` (0.15), or create a new one.
+4. Resolve each extracted entity or theme to an existing node only by exact
+   ID, name, or alias, or by the registry mapping it to the same official
+   company (ticker, name, alias) or theme; otherwise create a new node.
+   Embedding similarity never merges nodes. New and changed nodes are embedded
+   in one batch per note.
 5. Canonicalize edges through the registry and write nodes, edges, and
    embeddings inside one transaction per document.
 6. Rebuild the `consensus` view for every company the note touched, through
