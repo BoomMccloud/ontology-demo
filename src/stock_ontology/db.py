@@ -20,24 +20,24 @@ from stock_ontology.models import (
     Edge,
     Node,
     NodeType,
+    Sentiment,
     normalize_sentiment,
     resolve_item_sentiment,
 )
+from stock_ontology.registry import (
+    CanonicalEdgeResult,
+    OntologyRegistry,
+    create_minimal_registry,
+)
 
 SECOND_ORDER_ENTITY_RELATIONS = {
-    "SUPPLIES_TO",
-    "CUSTOMER_OF",
-    "COMPETES_WITH",
-    "PARTNERS_WITH",
-    "SUBSIDIARY_OF",
+    "BUY",
+    "COMPETE",
     "OWNS",
 }
 
 THEME_EXPOSURE_RELATIONS = {
-    "BENEFITS_FROM",
-    "HURT_BY",
     "EXPOSED_TO",
-    "RELATES_TO",
 }
 
 SIGNAL_CATEGORY_ALIASES: dict[str, str] = {
@@ -70,6 +70,48 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def reconcile_sentiment(existing: Any, incoming: Any) -> Sentiment | None:
+    """Combine two optional sentiment polarities without losing opposing signals."""
+    s1 = normalize_sentiment(existing)
+    s2 = normalize_sentiment(incoming)
+    if s1 is None:
+        return s2
+    if s2 is None:
+        return s1
+    if s1 == s2:
+        return s1
+    if s1 == "neutral":
+        return s2
+    if s2 == "neutral":
+        return s1
+    return "mixed"
+
+
+def merge_edge_facets(
+    existing: dict[str, Any] | None,
+    incoming: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Merge two edge facet dicts, preserving non-empty keys and reconciling sentiment."""
+    merged: dict[str, Any] = dict(existing or {})
+    for k, v in (incoming or {}).items():
+        if k == "sentiment":
+            combined = reconcile_sentiment(merged.get("sentiment"), v)
+            if combined is not None:
+                merged["sentiment"] = combined
+            continue
+        if k not in merged or merged[k] in (None, "", []):
+            merged[k] = v
+    return merged
+
+
+def _node_meta(node: Node | dict[str, Any]) -> tuple[str, str, str | None]:
+    if isinstance(node, Node):
+        et = node.facets.get("entity_type")
+        return node.id, node.node_type, str(et).strip().lower() if et else None
+    et = node["facets"].get("entity_type")
+    return str(node["id"]), str(node["node_type"]), str(et).strip().lower() if et else None
+
+
 def _node_to_dict(node: Node) -> dict[str, Any]:
     return {
         "id": node.id,
@@ -92,10 +134,14 @@ class OntologyDB:
         db_path: str | Path,
         embedding_dim: int = 768,
         read_only: bool = False,
+        registry: OntologyRegistry | None = None,
     ) -> None:
         self.db_path = str(db_path)
         self.embedding_dim = embedding_dim
         self.read_only = read_only
+        self.registry: OntologyRegistry = (
+            registry if registry is not None else create_minimal_registry()
+        )
         self._tx_depth = 0
 
         if self.read_only and self.db_path != ":memory:" and not Path(self.db_path).exists():
@@ -277,15 +323,17 @@ class OntologyDB:
         with self.transaction():
             existing = self.conn.execute(
                 """
-                SELECT id FROM edges
+                SELECT id, facets_json FROM edges
                 WHERE from_id = ? AND to_id = ? AND relation = ? AND source_doc_id IS ?
                 """,
                 (edge.from_id, edge.to_id, norm_rel, edge.source_doc_id),
             ).fetchone()
             if existing is not None:
+                existing_facets = json.loads(existing["facets_json"])
+                merged_facets = merge_edge_facets(existing_facets, edge.facets)
                 self.conn.execute(
                     "UPDATE edges SET facets_json = ? WHERE id = ?",
-                    (json.dumps(edge.facets), existing["id"]),
+                    (json.dumps(merged_facets), existing["id"]),
                 )
                 return str(existing["id"])
 
@@ -810,6 +858,37 @@ class OntologyDB:
         ).fetchall()
         return self._row_to_node(rows[0]) if rows else None
 
+    def _canonicalize_incident_edge(
+        self, focus_node: Node | dict[str, Any], item: dict[str, Any]
+    ) -> tuple[CanonicalEdgeResult, str]:
+        """Project a raw incident edge onto its canonical relation and focus-relative direction."""
+        fid, ftype, fet = _node_meta(focus_node)
+        nid, ntype, net = _node_meta(item["neighbor"])
+        if item["direction"] == "outgoing":
+            raw_from = (fid, ftype, fet)
+            raw_to = (nid, ntype, net)
+        else:
+            raw_from = (nid, ntype, net)
+            raw_to = (fid, ftype, fet)
+
+        res = self.registry.canonicalize_edge(
+            item["relation"],
+            from_id=raw_from[0],
+            from_type=raw_from[1],
+            from_entity_type=raw_from[2],
+            to_id=raw_to[0],
+            to_type=raw_to[1],
+            to_entity_type=raw_to[2],
+            facets=item["facets"],
+        )
+        if res.symmetric:
+            direction = "mutual"
+        elif res.from_id == fid:
+            direction = "outgoing"
+        else:
+            direction = "incoming"
+        return res, direction
+
     def get_entity_overview(self, entity_id: str) -> dict[str, Any]:
         """Return full ontology context for an entity: consensus, events, views, themes, peers."""
         entity = self.get_node(entity_id)
@@ -819,15 +898,16 @@ class OntologyDB:
         consensus = self.get_entity_consensus(entity_id)
         incident = self.get_incident_edges(entity_id)
 
-        events: list[dict[str, Any]] = []
-        views: list[dict[str, Any]] = []
-        prior_consensuses: list[dict[str, Any]] = []
-        themes: list[dict[str, Any]] = []
-        related_entities: list[dict[str, Any]] = []
+        events_by_id: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
+        views_by_id: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
+        prior_by_id: dict[str, dict[str, Any]] = {}
+        direct_themes_map: dict[str, dict[str, Any]] = {}
+        related_map: dict[str, dict[str, Any]] = {}
         seen_theme_ids: set[str] = set()
 
         for item in incident:
             neighbor = item["neighbor"]
+            nid = str(neighbor["id"])
             ntype = neighbor["node_type"]
             edge_info = {
                 "relation": item["relation"],
@@ -835,37 +915,146 @@ class OntologyDB:
                 "edge_facets": item["facets"],
             }
             if ntype == "event":
-                eff_sent, sent_src = resolve_item_sentiment(neighbor["facets"], item["facets"])
-                events.append(
-                    {
-                        **neighbor,
-                        **edge_info,
-                        "effective_sentiment": eff_sent,
-                        "sentiment_source": sent_src,
-                    }
+                rel = str(item["relation"]).strip().upper()
+                rank = (
+                    1 if normalize_sentiment(item["facets"].get("sentiment")) is not None else 0,
+                    1 if rel == "ABOUT" else 0,
                 )
-            elif ntype == "view":
-                vtype = neighbor["facets"].get("view_type")
-                status = neighbor["facets"].get("status", "active")
-                if vtype == "consensus":
-                    if consensus is None or neighbor["id"] != consensus.id:
-                        if status == "superseded":
-                            prior_consensuses.append({**neighbor, **edge_info})
-                else:
+                if nid not in events_by_id or rank > events_by_id[nid][0]:
                     eff_sent, sent_src = resolve_item_sentiment(neighbor["facets"], item["facets"])
-                    views.append(
+                    events_by_id[nid] = (
+                        rank,
                         {
                             **neighbor,
                             **edge_info,
                             "effective_sentiment": eff_sent,
                             "sentiment_source": sent_src,
-                        }
+                        },
                     )
+            elif ntype == "view":
+                vtype = neighbor["facets"].get("view_type")
+                status = neighbor["facets"].get("status", "active")
+                if vtype == "consensus":
+                    if consensus is None or nid != consensus.id:
+                        if status == "superseded" and nid not in prior_by_id:
+                            prior_by_id[nid] = {**neighbor, **edge_info}
+                else:
+                    rel = str(item["relation"]).strip().upper()
+                    rank = (
+                        1 if normalize_sentiment(item["facets"].get("sentiment")) is not None else 0,
+                        1 if rel == "ABOUT" else 0,
+                    )
+                    if nid not in views_by_id or rank > views_by_id[nid][0]:
+                        eff_sent, sent_src = resolve_item_sentiment(
+                            neighbor["facets"], item["facets"]
+                        )
+                        views_by_id[nid] = (
+                            rank,
+                            {
+                                **neighbor,
+                                **edge_info,
+                                "effective_sentiment": eff_sent,
+                                "sentiment_source": sent_src,
+                            },
+                        )
             elif ntype == "theme":
-                seen_theme_ids.add(neighbor["id"])
-                themes.append({**neighbor, **edge_info, "via": "direct"})
+                res, direction = self._canonicalize_incident_edge(entity, item)
+                seen_theme_ids.add(nid)
+                link_entry = {
+                    "relation": res.relation,
+                    "direction": direction,
+                    "facets": dict(res.facets),
+                    "matched": res.matched,
+                }
+                rank = (1 if res.matched else 0, 1 if direction == "outgoing" else 0)
+                existing_theme = direct_themes_map.get(nid)
+                if existing_theme is None:
+                    merged_facets = merge_edge_facets({}, res.facets)
+                    exp_sent = normalize_sentiment(merged_facets.get("sentiment"))
+                    if exp_sent is not None:
+                        merged_facets["sentiment"] = exp_sent
+                    direct_themes_map[nid] = {
+                        **neighbor,
+                        "relation": res.relation,
+                        "direction": direction,
+                        "edge_facets": merged_facets,
+                        "exposure_sentiment": exp_sent,
+                        "via": "direct",
+                        "links": [link_entry],
+                        "_best_rank": rank,
+                    }
+                else:
+                    merged_facets = merge_edge_facets(existing_theme["edge_facets"], res.facets)
+                    exp_sent = normalize_sentiment(merged_facets.get("sentiment"))
+                    if exp_sent is not None:
+                        merged_facets["sentiment"] = exp_sent
+                    existing_theme["edge_facets"] = merged_facets
+                    existing_theme["exposure_sentiment"] = exp_sent
+                    if rank > existing_theme["_best_rank"]:
+                        existing_theme["_best_rank"] = rank
+                        existing_theme["relation"] = res.relation
+                        existing_theme["direction"] = direction
+                    dup_lk = next(
+                        (
+                            lk
+                            for lk in existing_theme["links"]
+                            if lk["relation"] == res.relation and lk["direction"] == direction
+                        ),
+                        None,
+                    )
+                    if dup_lk is None:
+                        existing_theme["links"].append(link_entry)
+                    else:
+                        dup_lk["facets"] = merge_edge_facets(dup_lk["facets"], res.facets)
             elif ntype == "entity":
-                related_entities.append({**neighbor, **edge_info})
+                res, direction = self._canonicalize_incident_edge(entity, item)
+                rel_entry = {
+                    "relation": res.relation,
+                    "direction": direction,
+                    "symmetric": res.symmetric,
+                    "matched": res.matched,
+                    "facets": dict(res.facets),
+                }
+                existing_peer = related_map.get(nid)
+                if existing_peer is None:
+                    related_map[nid] = {
+                        **neighbor,
+                        "relation": res.relation,
+                        "direction": direction,
+                        "symmetric": res.symmetric,
+                        "edge_facets": dict(res.facets),
+                        "relationships": [rel_entry],
+                    }
+                else:
+                    dup_rel = next(
+                        (
+                            r
+                            for r in existing_peer["relationships"]
+                            if r["relation"] == res.relation and r["direction"] == direction
+                        ),
+                        None,
+                    )
+                    if dup_rel is None:
+                        existing_peer["relationships"].append(rel_entry)
+                    else:
+                        dup_rel["facets"] = merge_edge_facets(dup_rel["facets"], res.facets)
+                    existing_peer["relationships"].sort(
+                        key=lambda r: (0 if r["matched"] else 1, r["relation"], r["direction"])
+                    )
+                    headline = existing_peer["relationships"][0]
+                    existing_peer["relation"] = headline["relation"]
+                    existing_peer["direction"] = headline["direction"]
+                    existing_peer["symmetric"] = headline["symmetric"]
+                    existing_peer["edge_facets"] = headline["facets"]
+
+        events = [pair[1] for pair in events_by_id.values()]
+        views = [pair[1] for pair in views_by_id.values()]
+        prior_consensuses = list(prior_by_id.values())
+        themes: list[dict[str, Any]] = []
+        for thm_entry in direct_themes_map.values():
+            thm_entry.pop("_best_rank", None)
+            themes.append(thm_entry)
+        related_entities = list(related_map.values())
 
         # Also surface themes connected 1-hop through this entity's events or views.
         for linked_item in events + views:
@@ -873,12 +1062,16 @@ class OntologyDB:
                 sub_nb = sub["neighbor"]
                 if sub_nb["node_type"] == "theme" and sub_nb["id"] not in seen_theme_ids:
                     seen_theme_ids.add(sub_nb["id"])
+                    sub_res, sub_dir = self._canonicalize_incident_edge(linked_item, sub)
+                    sub_facets = dict(sub_res.facets)
+                    exp_sent = normalize_sentiment(sub_facets.get("sentiment"))
                     themes.append(
                         {
                             **sub_nb,
-                            "relation": sub["relation"],
-                            "direction": sub["direction"],
-                            "edge_facets": sub["facets"],
+                            "relation": sub_res.relation,
+                            "direction": sub_dir,
+                            "edge_facets": sub_facets,
+                            "exposure_sentiment": exp_sent,
                             "via": f"{linked_item['node_type']}: {linked_item['name']}",
                         }
                     )
@@ -1125,36 +1318,45 @@ class OntologyDB:
 
         rel_filter = {r.strip().upper() for r in relations} if relations else None
         visited_hops: dict[str, int] = {start.id: 0}
-        nodes_out: list[dict[str, Any]] = [{**_node_to_dict(start), "hop": 0}]
+        nodes_by_id: dict[str, dict[str, Any]] = {start.id: {**_node_to_dict(start), "hop": 0}}
+        nodes_out: list[dict[str, Any]] = [nodes_by_id[start.id]]
         edges_out: list[dict[str, Any]] = []
-        seen_edge_ids: set[str] = set()
+        edges_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
 
         queue: deque[tuple[str, int]] = deque([(start.id, 0)])
         while queue and len(nodes_out) < limit:
             curr_id, hop = queue.popleft()
             if hop >= max_hops:
                 continue
+            curr_node = nodes_by_id.get(curr_id) or self.get_node(curr_id)
+            if curr_node is None:
+                continue
             for item in self.get_incident_edges(curr_id):
-                rel = item["relation"].upper()
+                res, _ = self._canonicalize_incident_edge(curr_node, item)
+                rel = res.relation.upper()
                 if rel_filter is not None and rel not in rel_filter:
                     continue
                 nb = item["neighbor"]
-                if item["edge_id"] not in seen_edge_ids:
-                    seen_edge_ids.add(item["edge_id"])
-                    from_id = curr_id if item["direction"] == "outgoing" else nb["id"]
-                    to_id = nb["id"] if item["direction"] == "outgoing" else curr_id
-                    edges_out.append(
-                        {
-                            "edge_id": item["edge_id"],
-                            "from_id": from_id,
-                            "to_id": to_id,
-                            "relation": rel,
-                            "facets": item["facets"],
-                        }
+                edge_key = (res.from_id, res.to_id, rel)
+                if edge_key not in edges_by_key:
+                    edge_entry = {
+                        "edge_id": item["edge_id"],
+                        "from_id": res.from_id,
+                        "to_id": res.to_id,
+                        "relation": rel,
+                        "facets": dict(res.facets),
+                    }
+                    edges_by_key[edge_key] = edge_entry
+                    edges_out.append(edge_entry)
+                else:
+                    edges_by_key[edge_key]["facets"] = merge_edge_facets(
+                        edges_by_key[edge_key]["facets"], res.facets
                     )
                 if nb["id"] not in visited_hops and len(nodes_out) < limit:
                     visited_hops[nb["id"]] = hop + 1
-                    nodes_out.append({**nb, "hop": hop + 1})
+                    node_entry = {**nb, "hop": hop + 1}
+                    nodes_by_id[nb["id"]] = node_entry
+                    nodes_out.append(node_entry)
                     queue.append((nb["id"], hop + 1))
 
         return {
@@ -1172,6 +1374,8 @@ class OntologyDB:
             raise KeyError(f"Theme not found: {theme_id}")  # noqa: TRY003
 
         first_order_map: dict[str, dict[str, Any]] = {}
+        direct_links_by_company: dict[str, dict[str, dict[str, Any]]] = {}
+        indirect_seen_by_company: dict[str, set[tuple[str, str, str]]] = {}
 
         def _ensure_company_entry(company_dict: dict[str, Any]) -> dict[str, Any]:
             cid = company_dict["id"]
@@ -1183,6 +1387,8 @@ class OntologyDB:
                     "consensus_summary": consensus.summary if consensus else None,
                     "links": [],
                 }
+                direct_links_by_company[cid] = {}
+                indirect_seen_by_company[cid] = set()
             return first_order_map[cid]
 
         def _is_company(node_dict: dict[str, Any]) -> bool:
@@ -1193,44 +1399,77 @@ class OntologyDB:
 
         for item in self.get_incident_edges(theme.id):
             nb = item["neighbor"]
+            item_res, _ = self._canonicalize_incident_edge(theme, item)
             if _is_company(nb):
                 entry = _ensure_company_entry(nb)
-                entry["links"].append(
-                    {
+                cid = nb["id"]
+                by_rel = direct_links_by_company[cid]
+                existing_lk = by_rel.get(item_res.relation)
+                if existing_lk is None:
+                    merged_facets = merge_edge_facets({}, item_res.facets)
+                    exp_sent = normalize_sentiment(merged_facets.get("sentiment"))
+                    if exp_sent is not None:
+                        merged_facets["sentiment"] = exp_sent
+                    link_obj = {
                         "via": "direct",
-                        "relation": item["relation"],
-                        "direction": item["direction"],
-                        "facets": item["facets"],
+                        "relation": item_res.relation,
+                        "direction": "outgoing" if item_res.from_id == cid else "incoming",
+                        "facets": merged_facets,
+                        "exposure_sentiment": exp_sent,
                     }
-                )
+                    by_rel[item_res.relation] = link_obj
+                    entry["links"].append(link_obj)
+                else:
+                    merged_facets = merge_edge_facets(existing_lk["facets"], item_res.facets)
+                    exp_sent = normalize_sentiment(merged_facets.get("sentiment"))
+                    if exp_sent is not None:
+                        merged_facets["sentiment"] = exp_sent
+                    existing_lk["facets"] = merged_facets
+                    existing_lk["exposure_sentiment"] = exp_sent
             elif nb["node_type"] in ("event", "view"):
                 for sub in self.get_incident_edges(nb["id"]):
                     sub_nb = sub["neighbor"]
                     if _is_company(sub_nb):
                         entry = _ensure_company_entry(sub_nb)
+                        sub_res, _ = self._canonicalize_incident_edge(nb, sub)
+                        ind_key = (nb["id"], sub_res.relation, item_res.relation)
+                        if ind_key in indirect_seen_by_company[sub_nb["id"]]:
+                            continue
+                        indirect_seen_by_company[sub_nb["id"]].add(ind_key)
                         entry["links"].append(
                             {
                                 "via": f"{nb['node_type']}: {nb['name']}",
                                 "via_node_id": nb["id"],
-                                "theme_relation": item["relation"],
-                                "entity_relation": sub["relation"],
+                                "theme_relation": item_res.relation,
+                                "entity_relation": sub_res.relation,
                                 "source": nb["facets"].get("source"),
                                 "facets": nb["facets"],
                             }
                         )
 
+        second_order_rels = (
+            self.registry.get_relations_by_group("second_order_entity")
+            or SECOND_ORDER_ENTITY_RELATIONS
+        )
         second_order_map: dict[str, dict[str, Any]] = {}
+        second_order_paths_seen: dict[str, dict[tuple[str, str, str], dict[str, Any]]] = {}
         if include_second_order:
             for cid, entry in first_order_map.items():
-                first_name = entry["company"]["name"]
+                first_comp = entry["company"]
+                first_name = first_comp["name"]
                 for rel_item in self.get_incident_edges(cid):
                     nb = rel_item["neighbor"]
-                    if (
-                        _is_company(nb)
-                        and nb["id"] not in first_order_map
-                        and rel_item["relation"].upper() in SECOND_ORDER_ENTITY_RELATIONS
-                    ):
+                    if _is_company(nb) and nb["id"] not in first_order_map:
+                        res, _ = self._canonicalize_incident_edge(first_comp, rel_item)
+                        if res.relation not in second_order_rels:
+                            continue
                         sid = nb["id"]
+                        if res.symmetric:
+                            path_dir = "mutual"
+                        elif res.from_id == sid:
+                            path_dir = "outgoing"
+                        else:
+                            path_dir = "incoming"
                         if sid not in second_order_map:
                             consensus = self.get_entity_consensus(sid)
                             second_order_map[sid] = {
@@ -1240,15 +1479,24 @@ class OntologyDB:
                                 ),
                                 "paths": [],
                             }
-                        second_order_map[sid]["paths"].append(
-                            {
+                            second_order_paths_seen[sid] = {}
+                        path_key = (cid, res.relation, path_dir)
+                        existing_path = second_order_paths_seen[sid].get(path_key)
+                        if existing_path is None:
+                            path_obj = {
                                 "connected_to": first_name,
                                 "connected_to_id": cid,
-                                "relation": rel_item["relation"],
-                                "direction": rel_item["direction"],
-                                "facets": rel_item["facets"],
+                                "relation": res.relation,
+                                "direction": path_dir,
+                                "symmetric": res.symmetric,
+                                "facets": dict(res.facets),
                             }
-                        )
+                            second_order_paths_seen[sid][path_key] = path_obj
+                            second_order_map[sid]["paths"].append(path_obj)
+                        else:
+                            existing_path["facets"] = merge_edge_facets(
+                                existing_path["facets"], res.facets
+                            )
 
         return {
             "theme": _node_to_dict(theme),

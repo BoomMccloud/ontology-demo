@@ -6,10 +6,12 @@ near-duplicate entities) are queued as pending registry suggestions by `audit --
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
 
-from stock_ontology.db import OntologyDB
+from stock_ontology.db import OntologyDB, merge_edge_facets
 from stock_ontology.models import Node
 from stock_ontology.registry import OntologyRegistry
 
@@ -42,8 +44,8 @@ def repair_ontology(db: OntologyDB, registry: OntologyRegistry) -> RepairReport:
     report = RepairReport()
     with db.transaction():
         _delete_orphan_artifacts(db, report)
-        _canonicalize_relations(db, registry, report)
         _merge_exact_duplicates(db, report)
+        _canonicalize_relations(db, registry, report)
         _delete_duplicate_edges(db, report)
     return report
 
@@ -79,20 +81,42 @@ def _delete_orphan_artifacts(db: OntologyDB, report: RepairReport) -> None:
 def _canonicalize_relations(
     db: OntologyDB, registry: OntologyRegistry, report: RepairReport
 ) -> None:
-    """Rename registered alias relations and flip registered inverse relations."""
-    rows = db.conn.execute("SELECT id, from_id, to_id, relation FROM edges").fetchall()
+    """Canonicalize relation names, alias facets, direction, and symmetry against `registry`."""
+    rows = db.conn.execute(
+        """
+        SELECT
+            e.id, e.from_id, e.to_id, e.relation, e.facets_json,
+            nf.node_type AS from_type,
+            json_extract(nf.facets_json, '$.entity_type') AS from_entity_type,
+            nt.node_type AS to_type,
+            json_extract(nt.facets_json, '$.entity_type') AS to_entity_type
+        FROM edges e
+        JOIN nodes nf ON nf.id = e.from_id
+        JOIN nodes nt ON nt.id = e.to_id
+        """
+    ).fetchall()
     for row in rows:
-        match = registry.resolve_relation(row["relation"])
-        if match is None:
-            continue
-        from_id, to_id = row["from_id"], row["to_id"]
-        if match.flip_direction:
-            from_id, to_id = to_id, from_id
-        if match.canonical == row["relation"] and from_id == row["from_id"]:
+        raw_facets = json.loads(row["facets_json"])
+        canon = registry.canonicalize_edge(
+            row["relation"],
+            from_id=row["from_id"],
+            from_type=row["from_type"],
+            from_entity_type=row["from_entity_type"],
+            to_id=row["to_id"],
+            to_type=row["to_type"],
+            to_entity_type=row["to_entity_type"],
+            facets=raw_facets,
+        )
+        if (
+            canon.relation == row["relation"]
+            and canon.from_id == row["from_id"]
+            and canon.to_id == row["to_id"]
+            and canon.facets == raw_facets
+        ):
             continue
         db.conn.execute(
-            "UPDATE edges SET relation = ?, from_id = ?, to_id = ? WHERE id = ?",
-            (match.canonical, from_id, to_id, row["id"]),
+            "UPDATE edges SET relation = ?, from_id = ?, to_id = ?, facets_json = ? WHERE id = ?",
+            (canon.relation, canon.from_id, canon.to_id, json.dumps(canon.facets), row["id"]),
         )
         report.edges_canonicalized += 1
 
@@ -172,14 +196,37 @@ def _merge_cluster(db: OntologyDB, cluster: list[Node], report: RepairReport) ->
 
 
 def _delete_duplicate_edges(db: OntologyDB, report: RepairReport) -> None:
-    """Keep one edge per (from, to, relation, source doc) after renames and merges."""
-    cur = db.conn.execute(
-        """
-        DELETE FROM edges
-        WHERE id NOT IN (
-            SELECT MIN(id) FROM edges
-            GROUP BY from_id, to_id, relation, IFNULL(source_doc_id, '')
+    """Merge facets and keep one edge per (from, to, relation, source doc) after renames and merges."""
+    rows = db.conn.execute(
+        "SELECT id, from_id, to_id, relation, facets_json, source_doc_id FROM edges ORDER BY id ASC"
+    ).fetchall()
+    groups: dict[tuple[str, str, str, str], list[sqlite3.Row]] = defaultdict(list)
+    for row in rows:
+        key = (
+            str(row["from_id"]),
+            str(row["to_id"]),
+            str(row["relation"]),
+            str(row["source_doc_id"] or ""),
         )
-        """
-    )
-    report.duplicate_edges_deleted += cur.rowcount
+        groups[key].append(row)
+
+    for group in groups.values():
+        if len(group) <= 1:
+            continue
+        survivor = group[0]
+        merged = json.loads(survivor["facets_json"])
+        for extra in group[1:]:
+            merged = merge_edge_facets(merged, json.loads(extra["facets_json"]))
+        merged_json = json.dumps(merged)
+        if merged_json != survivor["facets_json"]:
+            db.conn.execute(
+                "UPDATE edges SET facets_json = ? WHERE id = ?",
+                (merged_json, survivor["id"]),
+            )
+        extra_ids = [str(extra["id"]) for extra in group[1:]]
+        placeholders = ", ".join("?" for _ in extra_ids)
+        cur = db.conn.execute(
+            f"DELETE FROM edges WHERE id IN ({placeholders})",
+            extra_ids,
+        )
+        report.duplicate_edges_deleted += cur.rowcount

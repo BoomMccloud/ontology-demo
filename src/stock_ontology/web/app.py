@@ -21,6 +21,7 @@ from stock_ontology.i18n import (
     LANG_COOKIE_NAME,
     SUPPORTED_LANGUAGE_CODES,
     SUPPORTED_LANGUAGES,
+    format_relation_label,
     format_via_label,
     get_clippy_i18n,
     get_language_spec,
@@ -114,11 +115,13 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
         )
 
     def _open_ro_db(lang: str = DEFAULT_LANGUAGE) -> OntologyDB:
+        reg, _ = _load_optional_registry()
         try:
             return OntologyDB(
                 settings.db_path,
                 embedding_dim=settings.embedding_dim,
                 read_only=True,
+                registry=reg,
             )
         except FileNotFoundError as exc:
             raise HTTPException(
@@ -165,6 +168,9 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
                 value, lang=lang, node_type=node_type
             ),
             "format_via": lambda via: format_via_label(via, lang=lang),
+            "format_relation": lambda rel, direction=None: format_relation_label(
+                rel, direction=direction, lang=lang
+            ),
             "clippy_i18n": get_clippy_i18n(lang),
         }
         resp = templates.TemplateResponse(request, template_name, full_ctx)

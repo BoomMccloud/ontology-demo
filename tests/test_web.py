@@ -1097,7 +1097,7 @@ def test_web_ontology_view_connected_to_registry_and_audit(tmp_path: Path) -> No
             Edge(id="ed1", from_id="evt_q3", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1"),
             Edge(id="ed2", from_id="vw_note", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1"),
             Edge(id="ed3", from_id="ent_vrt", to_id="ent_nvda", relation="SUPPLIES_TO"),
-            Edge(id="ed4", from_id="ent_vrt", to_id="ent_nvda", relation="PARTNER_WITH"),
+            Edge(id="ed4", from_id="ent_vrt", to_id="ent_nvda", relation="COMPETES_WITH"),
             Edge(id="ed5", from_id="ent_nvda", to_id="ent_kenji", relation="HAS_EMPLOYEE"),
             Edge(id="ed6", from_id="ent_nvda", to_id="ent_kenji", relation="WORKS_AT"),
             Edge(id="ed7", from_id="thm_power", to_id="ent_vrt", relation="BENEFITS_FROM"),
@@ -1132,7 +1132,7 @@ def test_web_ontology_view_connected_to_registry_and_audit(tmp_path: Path) -> No
     assert r_health.status_code == 200
     health_reg = r_health.json()["registry"]
     assert health_reg["loaded"] is True
-    assert health_reg["official_relations"] == 16
+    assert health_reg["official_relations"] == 11
     assert health_reg["pending_suggestions"] == {"relations": 1, "companies": 2, "themes": 1}
 
     # 2. /ontology renders Registry overview KPIs, badges, and bidirectional SVG entity<->theme count.
@@ -1167,15 +1167,15 @@ def test_web_ontology_view_connected_to_registry_and_audit(tmp_path: Path) -> No
     assert r_edges.status_code == 200
     for badge_text in ("OFFICIAL", "ALIAS", "INVERSE", "REVERSED", "UNMAPPED"):
         assert badge_text in r_edges.text
-    assert "PARTNER_WITH" in r_edges.text
+    assert "COMPETES_WITH" in r_edges.text
     assert "HAS_EMPLOYEE" in r_edges.text
     assert "PRODUCES" in r_edges.text
 
     # 6. Official Registry tab lists official definitions + live DB match links.
     r_reg = client.get("/ontology", params={"tab": "registry"})
     assert r_reg.status_code == 200
-    assert "Official Edge Relations (16)" in r_reg.text
-    assert "SUPPLIES_TO" in r_reg.text
+    assert "Official Edge Relations (11)" in r_reg.text
+    assert "BUY" in r_reg.text
     assert "WORKS_AT" in r_reg.text
     assert "/entity/ent_nvda" in r_reg.text
     assert "/entity/ent_vrt" in r_reg.text

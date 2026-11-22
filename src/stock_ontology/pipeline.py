@@ -137,13 +137,14 @@ class IngestionPipeline:
             )
             aliases = f" aliases={node.aliases}" if node.aliases else ""
             lines.append(f"- [{node.id}] ({node.node_type}:{subtype}) {node.name}{aliases}")
-        relation_names = [spec.name for spec in self.registry.relations]
-        if relation_names:
+        if self.registry.relations:
             lines.append("")
-            lines.append(
-                "Canonical edge relations (use these exact names when one fits): "
-                + ", ".join(relation_names)
-            )
+            lines.append("Canonical edge relations (use exact name and direction):")
+            for spec in self.registry.relations:
+                from_sig = "|".join(spec.from_types) or "*"
+                to_sig = "|".join(spec.to_types) or "*"
+                arrow = "<->" if spec.symmetric else "->"
+                lines.append(f"- {spec.name} ({from_sig} {arrow} {to_sig})")
         return "\n".join(lines)
 
     def _resolve_canonical_node(
@@ -234,15 +235,14 @@ class IngestionPipeline:
                 return found.id
         return None
 
-    def _canonical_relation(self, raw: str, from_id: str, to_id: str) -> tuple[str, str, str]:
-        """Map a raw relation to its registry name, flipping endpoints for inverse aliases."""
-        rel = raw.strip().upper().replace(" ", "_")
-        match = self.registry.resolve_relation(raw)
-        if match is None:
-            return rel, from_id, to_id
-        if match.flip_direction:
-            return match.canonical, to_id, from_id
-        return match.canonical, from_id, to_id
+    def _node_endpoint_meta(
+        self, node_id: str, local_nodes: dict[str, Node]
+    ) -> tuple[str, str | None]:
+        node = local_nodes.get(node_id) or self.db.get_node(node_id)
+        if node is None:
+            return "entity", None
+        et = node.facets.get("entity_type")
+        return node.node_type, str(et).strip().lower() if et else None
 
     def _process_document(
         self,
@@ -319,6 +319,7 @@ class IngestionPipeline:
         nodes_written = 0
         edges_written = 0
         ref_map: dict[str, str] = {}
+        local_nodes: dict[str, Node] = {}
 
         # 1. Resolve canonical entities & themes.
         for ent in extraction.entities:
@@ -334,6 +335,7 @@ class IngestionPipeline:
                 prefix="ent",
             )
             ref_map[ent.temp_id] = node.id
+            local_nodes[node.id] = node
             if updated:
                 nodes_written += 1
             if str(node.facets.get("entity_type", "")).lower() == "company":
@@ -352,6 +354,7 @@ class IngestionPipeline:
                 prefix="thm",
             )
             ref_map[thm.temp_id] = node.id
+            local_nodes[node.id] = node
             if updated:
                 nodes_written += 1
 
@@ -387,6 +390,7 @@ class IngestionPipeline:
                 updated_at=now,
             )
             ref_map[ev.temp_id] = node.id
+            local_nodes[node.id] = node
             doc_nodes.append(node)
 
         for vw in extraction.views:
@@ -419,6 +423,7 @@ class IngestionPipeline:
                 updated_at=now,
             )
             ref_map[vw.temp_id] = node.id
+            local_nodes[node.id] = node
             doc_nodes.append(node)
 
         if doc_nodes:
@@ -434,20 +439,32 @@ class IngestionPipeline:
             if from_id is None or to_id is None or from_id == to_id:
                 continue
             edge_facets = facets_list_to_dict(ex_edge.facets)
-            if "sentiment" in edge_facets:
-                norm_edge_sent = normalize_sentiment(edge_facets["sentiment"])
+            from_type, from_et = self._node_endpoint_meta(from_id, local_nodes)
+            to_type, to_et = self._node_endpoint_meta(to_id, local_nodes)
+            canon = self.registry.canonicalize_edge(
+                ex_edge.relation,
+                from_id=from_id,
+                from_type=from_type,
+                from_entity_type=from_et,
+                to_id=to_id,
+                to_type=to_type,
+                to_entity_type=to_et,
+                facets=edge_facets,
+            )
+            canon_facets = dict(canon.facets)
+            if "sentiment" in canon_facets:
+                norm_edge_sent = normalize_sentiment(canon_facets["sentiment"])
                 if norm_edge_sent is not None:
-                    edge_facets["sentiment"] = norm_edge_sent
+                    canon_facets["sentiment"] = norm_edge_sent
                 else:
-                    edge_facets.pop("sentiment", None)
-            rel, from_id, to_id = self._canonical_relation(ex_edge.relation, from_id, to_id)
+                    canon_facets.pop("sentiment", None)
             self.db.upsert_edge(
                 Edge(
                     id=f"edge_{uuid.uuid4().hex[:12]}",
-                    from_id=from_id,
-                    to_id=to_id,
-                    relation=rel,
-                    facets=edge_facets,
+                    from_id=canon.from_id,
+                    to_id=canon.to_id,
+                    relation=canon.relation,
+                    facets=canon_facets,
                     source_doc_id=doc_id,
                     created_at=now,
                 )

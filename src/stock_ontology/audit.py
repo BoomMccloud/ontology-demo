@@ -21,6 +21,7 @@ from stock_ontology.registry import (
     SampleEdge,
     ThemeSuggestion,
     make_suggestion_id,
+    matches_type_spec,
     normalize_relation_name,
     normalize_ticker,
 )
@@ -54,6 +55,7 @@ class AuditSummary(BaseModel):
     unmapped_edges: int = 0
     distinct_unmapped_relations: int = 0
     direction_issue_edges: int = 0
+    reciprocal_contradiction_pairs: int = 0
     total_companies: int = 0
     mapped_companies: int = 0
     unmapped_companies: int = 0
@@ -153,12 +155,25 @@ class FacetAliasHit(BaseModel):
     count: int
 
 
+class ReciprocalContradiction(BaseModel):
+    """Asymmetric official relation observed in opposing directions between the same pair."""
+
+    relation: str
+    node_a_id: str
+    node_a_name: str
+    node_b_id: str
+    node_b_name: str
+    forward_count: int
+    reverse_count: int
+
+
 class AuditReport(BaseModel):
     """Full structured output of a read-only ontology audit."""
 
     summary: AuditSummary
     relation_normalization_hits: list[RelationNormalizationHit] = Field(default_factory=list)
     direction_issues: list[DirectionIssue] = Field(default_factory=list)
+    reciprocal_contradictions: list[ReciprocalContradiction] = Field(default_factory=list)
     mapped_companies: list[MappedCompanyRecord] = Field(default_factory=list)
     mapped_themes: list[MappedThemeRecord] = Field(default_factory=list)
     unmapped_relations: list[RelationSuggestion] = Field(default_factory=list)
@@ -205,18 +220,6 @@ def _node_type_label(node_type: str, entity_type: str | None) -> str:
     return node_type
 
 
-def _matches_type_spec(
-    node_type: str, entity_type: str | None, allowed: list[str]
-) -> bool:
-    if not allowed:
-        return True
-    if node_type in allowed:
-        return True
-    if entity_type and f"{node_type}:{entity_type}" in allowed:
-        return True
-    return False
-
-
 def classify_edge_against_registry(
     registry: OntologyRegistry,
     raw_relation: str,
@@ -234,9 +237,9 @@ def classify_edge_against_registry(
     eff_from = (to_type, to_entity_type) if match.flip_direction else (from_type, from_entity_type)
     eff_to = (from_type, from_entity_type) if match.flip_direction else (to_type, to_entity_type)
 
-    forward_ok = _matches_type_spec(
+    forward_ok = matches_type_spec(
         eff_from[0], eff_from[1], match.spec.from_types
-    ) and _matches_type_spec(eff_to[0], eff_to[1], match.spec.to_types)
+    ) and matches_type_spec(eff_to[0], eff_to[1], match.spec.to_types)
 
     if forward_ok:
         status: EdgeRegistryStatus = (
@@ -249,9 +252,9 @@ def classify_edge_against_registry(
             flip_direction=match.flip_direction,
         )
 
-    swapped_ok = _matches_type_spec(
+    swapped_ok = matches_type_spec(
         eff_to[0], eff_to[1], match.spec.from_types
-    ) and _matches_type_spec(eff_from[0], eff_from[1], match.spec.to_types)
+    ) and matches_type_spec(eff_from[0], eff_from[1], match.spec.to_types)
     issue_type: Literal["reversed_direction", "domain_range_mismatch"] = (
         "reversed_direction" if swapped_ok else "domain_range_mismatch"
     )
@@ -411,6 +414,7 @@ def run_ontology_audit(
     unmapped_rel_counts: dict[str, int] = defaultdict(int)
     unmapped_rel_sigs: dict[str, Counter[tuple[str, str]]] = defaultdict(Counter)
     unmapped_rel_samples: dict[str, list[SampleEdge]] = defaultdict(list)
+    asym_pair_dirs: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     for edge in edges:
         raw_rel = edge["relation"]
@@ -469,6 +473,53 @@ def run_ontology_audit(
             if len(dir_issue_samples[key]) < 3:
                 dir_issue_samples[key].append(sample)
             direction_issue_edges += 1
+
+        canon = registry.canonicalize_edge(
+            raw_rel,
+            from_id=edge["from_id"],
+            from_type=from_type,
+            from_entity_type=from_et,
+            to_id=edge["to_id"],
+            to_type=to_type,
+            to_entity_type=to_et,
+            facets=edge["facets"],
+        )
+        if canon.matched and not canon.symmetric and canon.from_id != canon.to_id:
+            if canon.from_id < canon.to_id:
+                pair_key = (canon.relation, canon.from_id, canon.to_id)
+                a_name = edge["from_name"] if canon.from_id == edge["from_id"] else edge["to_name"]
+                b_name = edge["to_name"] if canon.to_id == edge["to_id"] else edge["from_name"]
+                is_fwd = True
+            else:
+                pair_key = (canon.relation, canon.to_id, canon.from_id)
+                a_name = edge["to_name"] if canon.to_id == edge["to_id"] else edge["from_name"]
+                b_name = edge["from_name"] if canon.from_id == edge["from_id"] else edge["to_name"]
+                is_fwd = False
+            bucket = asym_pair_dirs.setdefault(
+                pair_key,
+                {"a_name": a_name, "b_name": b_name, "fwd": 0, "rev": 0},
+            )
+            if is_fwd:
+                bucket["fwd"] += 1
+            else:
+                bucket["rev"] += 1
+
+    reciprocal_contradictions = [
+        ReciprocalContradiction(
+            relation=rel,
+            node_a_id=a_id,
+            node_a_name=info["a_name"],
+            node_b_id=b_id,
+            node_b_name=info["b_name"],
+            forward_count=info["fwd"],
+            reverse_count=info["rev"],
+        )
+        for (rel, a_id, b_id), info in sorted(
+            asym_pair_dirs.items(),
+            key=lambda kv: (kv[0][0], kv[1]["a_name"].casefold(), kv[1]["b_name"].casefold()),
+        )
+        if info["fwd"] > 0 and info["rev"] > 0
+    ]
 
     relation_normalization_hits = [
         RelationNormalizationHit(
@@ -815,6 +866,7 @@ def run_ontology_audit(
         unmapped_edges=unmapped_edges,
         distinct_unmapped_relations=len(unmapped_relations),
         direction_issue_edges=direction_issue_edges,
+        reciprocal_contradiction_pairs=len(reciprocal_contradictions),
         total_companies=len(companies),
         mapped_companies=len(mapped_companies),
         unmapped_companies=len(unmapped_companies),
@@ -836,6 +888,7 @@ def run_ontology_audit(
         summary=summary,
         relation_normalization_hits=relation_normalization_hits,
         direction_issues=direction_issues,
+        reciprocal_contradictions=reciprocal_contradictions,
         mapped_companies=mapped_companies,
         mapped_themes=mapped_themes,
         unmapped_relations=unmapped_relations,

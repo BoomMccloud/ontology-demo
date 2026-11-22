@@ -137,14 +137,15 @@ def _looks_numeric_json(raw: str) -> bool:
         return False
     try:
         float(raw)
+    except ValueError:
+        return False
+    else:
         # Preserve identifiers like "005930" as strings.
         if len(raw) > 1 and raw[0] == "0" and raw[1].isdigit():
             return False
         if len(raw) > 2 and raw.startswith("-0") and raw[2].isdigit():
             return False
         return True
-    except ValueError:
-        return False
 
 
 class ExtractedEntity(BaseModel):
@@ -253,17 +254,18 @@ class ExtractedEdge(BaseModel):
     to_ref: str = Field(description="Existing node ID from catalog OR a temp_id from this extraction.")
     relation: str = Field(
         description=(
-            "Uppercase relation name, e.g., WORKS_AT, SUPPLIES_TO, CUSTOMER_OF, COMPETES_WITH, "
-            "ABOUT, AUTHORED_BY, SUPPORTS, CONTRADICTS, CORROBORATES, BENEFITS_FROM, HURT_BY, "
-            "EXPOSED_TO, RELATES_TO."
+            "Uppercase canonical relation name (`from_ref -> to_ref`): "
+            "BUY (buyer -> seller), COMPETE (company <-> company), OWNS (parent -> child), "
+            "WORKS_AT (person -> company/institution), EXPOSED_TO (entity -> theme with sentiment facet), "
+            "ABOUT, AUTHORED_BY, SUPPORTS, CONTRADICTS, RELATES_TO (event/view -> theme)."
         )
     )
     facets: list[FacetKV] = Field(
         default_factory=list,
         description=(
             "Optional edge facets such as rationale, confidence, order, as_of, "
-            "or sentiment (positive|negative|neutral|mixed on ABOUT edges when a "
-            "multi-company event/view impacts entities differently)."
+            "or sentiment (positive|negative|neutral|mixed on EXPOSED_TO entity->theme edges "
+            "and on ABOUT edges when a multi-company event/view impacts entities differently)."
         ),
     )
 

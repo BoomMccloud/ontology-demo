@@ -678,7 +678,7 @@ class _AnalystFolderFakeLLM(FakePipelineLLM):
                 edges=[ExtractedEdge(from_ref="ev_flat", to_ref="e_nvda", relation="ABOUT")],
             )
 
-        raise AssertionError(f"Unexpected file path in test: {rel_path}")
+        raise AssertionError(f"Unexpected file path in test: {rel_path}")  # noqa: TRY003
 
 
 def test_pipeline_decouples_folders_from_companies(tmp_path: Path) -> None:
@@ -765,7 +765,7 @@ class _FailingDocFakeLLM(FakePipelineLLM):
         known_facets: dict[str, list[str]],
     ) -> ExtractionResult:
         if "2026-11-12_liquid_cooling_brief" in source_meta["file_path"]:
-            raise RuntimeError("Simulated DashScope data_inspection_failed")
+            raise RuntimeError("Simulated DashScope data_inspection_failed")  # noqa: TRY003
         return super().extract_document(
             text=text,
             source_meta=source_meta,
@@ -1137,7 +1137,7 @@ def test_pipeline_mid_note_failure_leaves_no_rows_and_rerun_yields_one_copy(tmp_
 
 
 class _RelationAliasFakeLLM(FakePipelineLLM):
-    """Emits a registered inverse (HAS_EMPLOYEE) and a registered alias (PARTNER_WITH)."""
+    """Emits a registered inverse (HAS_EMPLOYEE) and a registered alias (COMPETES_WITH)."""
 
     def extract_document(
         self,
@@ -1156,7 +1156,7 @@ class _RelationAliasFakeLLM(FakePipelineLLM):
             ],
             edges=[
                 ExtractedEdge(from_ref="e_acme", to_ref="p_jane", relation="HAS_EMPLOYEE"),
-                ExtractedEdge(from_ref="e_acme", to_ref="e_beta", relation="partner with"),
+                ExtractedEdge(from_ref="e_acme", to_ref="e_beta", relation="competes with"),
             ],
         )
 
@@ -1179,9 +1179,9 @@ def test_pipeline_stores_registered_alias_and_inverse_relations_canonically(tmp_
         }
         # HAS_EMPLOYEE (company -> person) is the registered inverse of WORKS_AT: flipped.
         assert (jane.id, "WORKS_AT", acme.id) in edges
-        # PARTNER_WITH is a registered alias of PARTNERS_WITH: same direction.
-        assert (acme.id, "PARTNERS_WITH", beta.id) in edges
-        assert {rel for _, rel, _ in edges}.isdisjoint({"HAS_EMPLOYEE", "PARTNER_WITH"})
+        # COMPETES_WITH is a registered alias of COMPETE (canonical symmetric order).
+        assert (acme.id, "COMPETE", beta.id) in edges
+        assert {rel for _, rel, _ in edges}.isdisjoint({"HAS_EMPLOYEE", "COMPETES_WITH"})
 
 
 class _LegacyRefFakeLLM(FakePipelineLLM):
@@ -1301,7 +1301,7 @@ def test_pipeline_watch_continues_after_a_run_raises(tmp_path: Path, monkeypatch
         def flaky_run(*args: Any, **kwargs: Any) -> Any:
             calls.append(1)
             if len(calls) == 1:
-                raise RuntimeError("transient failure in tick 1")
+                raise RuntimeError("transient failure in tick 1")  # noqa: TRY003
             raise _StopWatch
 
         monkeypatch.setattr(pipeline, "run", flaky_run)

@@ -811,7 +811,7 @@ def load_registry(path: Path | str) -> OntologyRegistry:
     """Load and validate an official ontology registry JSON file."""
     reg_path = Path(path)
     if not reg_path.exists():
-        raise FileNotFoundError(
+        raise FileNotFoundError(  # noqa: TRY003
             f"Ontology registry not found at {reg_path}. "
             "Create it or pass `--registry` with a valid ontology_registry.json path."
         )

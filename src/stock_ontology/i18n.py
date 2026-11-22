@@ -317,6 +317,32 @@ def translate_subtype(
     return str(value)
 
 
+def format_relation_label(
+    relation: str,
+    direction: str | None = None,
+    lang: str = DEFAULT_LANGUAGE,
+) -> str:
+    """Format a relation (and optional focus-relative direction) into a natural localized label."""
+    norm_rel = str(relation or "").strip().upper()
+    if not norm_rel:
+        return ""
+    resolved = normalize_language(lang) or DEFAULT_LANGUAGE
+    catalogs = load_catalogs()
+    norm_dir = str(direction or "").strip().lower()
+    if norm_dir:
+        dir_key = f"enum.relation_dir.{norm_rel}.{norm_dir}"
+        translated = catalogs.get(resolved, {}).get(dir_key)
+        if translated is None:
+            translated = catalogs.get(DEFAULT_LANGUAGE, {}).get(dir_key)
+        if translated is not None:
+            return translated
+    rel_label = translate_enum("relation", norm_rel, lang=lang)
+    if norm_dir in ("outgoing", "incoming", "mutual"):
+        dir_label = translate_enum("direction", norm_dir, lang=lang)
+        return f"{rel_label} ({dir_label})"
+    return rel_label
+
+
 def format_via_label(via: str, lang: str = DEFAULT_LANGUAGE) -> str:
     """Format theme exposure `via` metadata (`direct`, `via <type> <id>`, or `<type>: <name>`)."""
     if not via:

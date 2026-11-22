@@ -250,7 +250,7 @@ def _seed_audit_db(db_path: Path) -> None:
                 id="ed_partner",
                 from_id="ent_vrt",
                 to_id="ent_nvda",
-                relation="PARTNER_WITH",
+                relation="COMPETES_WITH",
             ),
             Edge(
                 id="ed_has_emp",
@@ -294,7 +294,7 @@ def test_minimal_registry_save_load_and_resolution(tmp_path: Path) -> None:
     loaded = load_registry(reg_path)
 
     assert loaded.version == 1
-    assert len(loaded.relations) == 16
+    assert len(loaded.relations) == 11
     assert len(loaded.companies) == 5
     assert len(loaded.themes) == 5
 
@@ -310,11 +310,43 @@ def test_minimal_registry_save_load_and_resolution(tmp_path: Path) -> None:
     assert exact_rel.match_kind == "exact"
     assert exact_rel.flip_direction is False
 
-    alias_rel = loaded.resolve_relation("partner_with")
+    alias_rel = loaded.resolve_relation("competes_with")
     assert alias_rel is not None
-    assert alias_rel.canonical == "PARTNERS_WITH"
+    assert alias_rel.canonical == "COMPETE"
     assert alias_rel.match_kind == "alias"
     assert alias_rel.flip_direction is False
+
+    sup_rel = loaded.resolve_relation("SUPPLIES_TO")
+    assert sup_rel is not None
+    assert sup_rel.canonical == "BUY"
+    assert sup_rel.match_kind == "inverse"
+    assert sup_rel.flip_direction is True
+
+    cust_rel = loaded.resolve_relation("CUSTOMER_OF")
+    assert cust_rel is not None
+    assert cust_rel.canonical == "BUY"
+    assert cust_rel.match_kind == "alias"
+    assert cust_rel.flip_direction is False
+
+    ben_rel = loaded.resolve_relation("BENEFITS_FROM")
+    assert ben_rel is not None
+    assert ben_rel.canonical == "EXPOSED_TO"
+    assert ben_rel.match_kind == "alias"
+    assert ben_rel.flip_direction is False
+    assert ben_rel.default_facets == {"sentiment": "positive"}
+
+    hurt_rel = loaded.resolve_relation("HURT_BY")
+    assert hurt_rel is not None
+    assert hurt_rel.canonical == "EXPOSED_TO"
+    assert hurt_rel.match_kind == "alias"
+    assert hurt_rel.flip_direction is False
+    assert hurt_rel.default_facets == {"sentiment": "negative"}
+
+    sub_rel = loaded.resolve_relation("SUBSIDIARY_OF")
+    assert sub_rel is not None
+    assert sub_rel.canonical == "OWNS"
+    assert sub_rel.match_kind == "inverse"
+    assert sub_rel.flip_direction is True
 
     inv_rel = loaded.resolve_relation("HAS_EMPLOYEE")
     assert inv_rel is not None
@@ -322,7 +354,60 @@ def test_minimal_registry_save_load_and_resolution(tmp_path: Path) -> None:
     assert inv_rel.match_kind == "inverse"
     assert inv_rel.flip_direction is True
 
+    assert loaded.resolve_relation("PARTNER_WITH") is None
     assert loaded.resolve_relation("PRODUCES") is None
+
+    canon_sup = loaded.canonicalize_edge(
+        "SUPPLIES_TO",
+        from_id="ent_vrt",
+        from_type="entity",
+        from_entity_type="company",
+        to_id="ent_nvda",
+        to_type="entity",
+        to_entity_type="company",
+    )
+    assert canon_sup.relation == "BUY"
+    assert canon_sup.from_id == "ent_nvda"
+    assert canon_sup.to_id == "ent_vrt"
+    assert canon_sup.flipped is True
+    assert canon_sup.matched is True
+
+    canon_comp = loaded.canonicalize_edge(
+        "COMPETES_WITH",
+        from_id="ent_z",
+        from_type="entity",
+        from_entity_type="company",
+        to_id="ent_a",
+        to_type="entity",
+        to_entity_type="company",
+    )
+    assert canon_comp.relation == "COMPETE"
+    assert canon_comp.symmetric is True
+    assert (canon_comp.from_id, canon_comp.to_id) == ("ent_a", "ent_z")
+
+    canon_ben = loaded.canonicalize_edge(
+        "BENEFITS_FROM",
+        from_id="thm_ai",
+        from_type="theme",
+        to_id="ent_vrt",
+        to_type="entity",
+        to_entity_type="company",
+    )
+    assert canon_ben.relation == "EXPOSED_TO"
+    assert (canon_ben.from_id, canon_ben.to_id) == ("ent_vrt", "thm_ai")
+    assert canon_ben.facets["sentiment"] == "positive"
+
+    canon_oov = loaded.canonicalize_edge(
+        "PRODUCES",
+        from_id="ent_nvda",
+        from_type="entity",
+        from_entity_type="company",
+        to_id="ent_blackwell",
+        to_type="entity",
+        to_entity_type="product",
+    )
+    assert canon_oov.matched is False
+    assert canon_oov.relation == "PRODUCES"
 
     by_ticker = loaded.resolve_company("Vertiv Holdings Co.", ticker="NYSE: VRT")
     assert by_ticker is not None
@@ -365,8 +450,8 @@ def test_audit_detects_unmapped_drift_direction_and_false_merges(tmp_path: Path)
 
     s = report.summary
     assert s.total_edges == 8
-    assert s.mapped_exact_edges == 5
-    assert s.mapped_alias_edges == 1
+    assert s.mapped_exact_edges == 4
+    assert s.mapped_alias_edges == 2
     assert s.mapped_inverse_edges == 1
     assert s.unmapped_edges == 1
     assert s.distinct_unmapped_relations == 1
@@ -423,6 +508,33 @@ def test_audit_detects_unmapped_drift_direction_and_false_merges(tmp_path: Path)
     assert s.total_events == 2
     assert s.views_missing_sentiment == 1
     assert s.total_views == 1
+
+
+def test_audit_detects_owns_reciprocal_contradiction(tmp_path: Path) -> None:
+    db_path = tmp_path / "reciprocal_owns.db"
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        db.upsert_node(
+            Node(id="ent_a", node_type="entity", name="Alpha", summary="a", facets={"entity_type": "company"}),
+            embedding=_unit_vec(0),
+        )
+        db.upsert_node(
+            Node(id="ent_b", node_type="entity", name="Beta", summary="b", facets={"entity_type": "company"}),
+            embedding=_unit_vec(1),
+        )
+        db.upsert_edge(Edge(id="ed_1", from_id="ent_a", to_id="ent_b", relation="OWNS", source_doc_id="doc_1"))
+        db.upsert_edge(Edge(id="ed_2", from_id="ent_b", to_id="ent_a", relation="OWNS", source_doc_id="doc_2"))
+
+    reg = create_minimal_registry()
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True, registry=reg) as ro_db:
+        report = run_ontology_audit(ro_db, reg)
+
+    assert report.summary.reciprocal_contradiction_pairs == 1
+    assert len(report.reciprocal_contradictions) == 1
+    rc = report.reciprocal_contradictions[0]
+    assert rc.relation == "OWNS"
+    assert {rc.node_a_id, rc.node_b_id} == {"ent_a", "ent_b"}
+    assert rc.forward_count == 1
+    assert rc.reverse_count == 1
 
 
 def test_sync_suggestions_idempotent_and_preserves_admin_decisions(tmp_path: Path) -> None:

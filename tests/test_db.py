@@ -634,7 +634,7 @@ def test_transaction_rolls_back_every_nested_write_and_commits_once(tmp_path: Pa
                 with db.transaction():
                     db.upsert_node(b, embedding=vec)
                     db.upsert_edge(edge)
-                raise RuntimeError("fail after inner scope exits")
+                raise RuntimeError("fail after inner scope exits")  # noqa: TRY003
         assert db.get_node("n_a") is None
         assert db.get_node("n_b") is None
         assert db.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 0
@@ -700,7 +700,7 @@ def test_extraction_catalog_lists_registry_relation_names(tmp_path: Path) -> Non
 
     assert len(llm.catalogs) == 1
     assert "Canonical edge relations" in llm.catalogs[0]
-    for name in ("ABOUT", "WORKS_AT", "PARTNERS_WITH"):
+    for name in ("ABOUT", "BUY", "COMPETE", "OWNS", "WORKS_AT", "EXPOSED_TO"):
         assert name in llm.catalogs[0]
 
 
@@ -729,7 +729,7 @@ def test_cli_repair_reports_changes_then_zero_on_rerun(
             Node(id="evt_orphan", node_type="event", name="Orphan", summary="o", source_doc_id="doc_gone"),
             embedding=_wiring_vec(2),
         )
-        db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation="PARTNER_WITH"))
+        db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation="COMPETES_WITH"))
         db.upsert_edge(Edge(id="e2", from_id="evt_orphan", to_id="ent_a", relation="ABOUT", source_doc_id="doc_gone"))
     save_registry(create_minimal_registry(), reg_path)
     args = ["repair", "--db", str(db_path), "--registry", str(reg_path), "--json"]

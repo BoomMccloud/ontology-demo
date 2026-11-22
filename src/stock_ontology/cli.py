@@ -19,6 +19,7 @@ from stock_ontology.config import VALID_PROVIDERS, Settings
 from stock_ontology.db import OntologyDB
 from stock_ontology.i18n import (
     SUPPORTED_LANGUAGE_CODES,
+    format_relation_label,
     get_language_spec,
     normalize_language,
     translate,
@@ -78,9 +79,15 @@ def _load_ingest_registry(settings: Settings) -> OntologyRegistry:
 
 
 def _open_readonly_db(settings: Settings) -> OntologyDB:
+    reg: OntologyRegistry | None = None
+    if Path(settings.registry_path).exists():
+        try:
+            reg = load_registry(settings.registry_path)
+        except Exception:  # noqa: BLE001
+            reg = None
     try:
         return OntologyDB(
-            settings.db_path, embedding_dim=settings.embedding_dim, read_only=True
+            settings.db_path, embedding_dim=settings.embedding_dim, read_only=True, registry=reg
         )
     except FileNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
@@ -393,11 +400,11 @@ def inspect(
                     title=translate("cli.entity_overview_title", lang=resolved_lang),
                 )
             )
-            for section, items, show_sentiment in (
-                (translate("cli.section_events", lang=resolved_lang), ov["events"], True),
-                (translate("cli.section_views", lang=resolved_lang), ov["views"], True),
-                (translate("cli.section_themes", lang=resolved_lang), ov["themes"], False),
-                (translate("cli.section_related", lang=resolved_lang), ov["related_entities"], False),
+            for section, items, show_sentiment, use_rel_dir in (
+                (translate("cli.section_events", lang=resolved_lang), ov["events"], True, False),
+                (translate("cli.section_views", lang=resolved_lang), ov["views"], True, False),
+                (translate("cli.section_themes", lang=resolved_lang), ov["themes"], False, True),
+                (translate("cli.section_related", lang=resolved_lang), ov["related_entities"], False, True),
             ):
                 if not items:
                     continue
@@ -409,7 +416,26 @@ def inspect(
                 t.add_column(translate("cli.col_name", lang=resolved_lang), style="bold")
                 t.add_column(translate("cli.col_summary", lang=resolved_lang))
                 for item in items:
-                    rel_label = translate_enum("relation", item["relation"], lang=resolved_lang)
+                    if use_rel_dir:
+                        rels = item.get("relationships")
+                        if rels:
+                            rel_label = ", ".join(
+                                format_relation_label(
+                                    r["relation"], r.get("direction"), lang=resolved_lang
+                                )
+                                for r in rels
+                            )
+                        else:
+                            rel_label = format_relation_label(
+                                item["relation"], item.get("direction"), lang=resolved_lang
+                            )
+                            exp_sent = item.get("exposure_sentiment")
+                            if exp_sent:
+                                rel_label = (
+                                    f"{rel_label} [{translate_enum('sentiment', exp_sent, lang=resolved_lang)}]"
+                                )
+                    else:
+                        rel_label = translate_enum("relation", item["relation"], lang=resolved_lang)
                     if show_sentiment:
                         eff_s = item.get("effective_sentiment")
                         s_label = translate_enum("sentiment", eff_s, lang=resolved_lang) if eff_s else "-"
@@ -616,7 +642,8 @@ def _render_audit_report(
         Panel(
             f"Edges: {s.total_edges} (exact={s.mapped_exact_edges}, alias={s.mapped_alias_edges}, "
             f"inverse={s.mapped_inverse_edges}, unmapped={s.unmapped_edges} across "
-            f"{s.distinct_unmapped_relations} relations, direction_issues={s.direction_issue_edges})\n"
+            f"{s.distinct_unmapped_relations} relations, direction_issues={s.direction_issue_edges}, "
+            f"contradictions={s.reciprocal_contradiction_pairs})\n"
             f"Companies: {s.total_companies} (mapped={s.mapped_companies}, unmapped={s.unmapped_companies}, "
             f"dup_candidates={s.duplicate_company_candidate_pairs}, ticker_issues={s.ticker_normalization_issue_count})\n"
             f"Themes: {s.total_themes} (mapped={s.mapped_themes}, unmapped={s.unmapped_themes}, "
@@ -629,7 +656,7 @@ def _render_audit_report(
         )
     )
 
-    if report.relation_normalization_hits or report.direction_issues:
+    if report.relation_normalization_hits or report.direction_issues or report.reciprocal_contradictions:
         t = Table(title="Relation Alias / Inverse & Direction Issues")
         t.add_column("Kind", style="cyan")
         t.add_column("Relation", style="bold")
@@ -651,6 +678,14 @@ def _render_audit_report(
                 iss.canonical_relation,
                 str(iss.count),
                 f"observed={iss.observed_signature}; expected={iss.expected_signature}{sample}",
+            )
+        for rc in report.reciprocal_contradictions:
+            t.add_row(
+                "reciprocal_contradiction",
+                rc.relation,
+                rc.relation,
+                f"{rc.forward_count}/{rc.reverse_count}",
+                f"{rc.node_a_name} <-> {rc.node_b_name}",
             )
         console.print(t)
 

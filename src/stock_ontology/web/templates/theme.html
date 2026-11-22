@@ -56,7 +56,12 @@
                 {% for link in row.links %}
                   <li>
                     {% if link.via == "direct" %}
-                      <span class="mono">{{ t_enum('relation', link.relation) }}</span> ({{ t('theme.via_direct') }})
+                      {{ format_relation(link.relation, link.direction | default('outgoing')) }}
+                      {% set link_sent = link.exposure_sentiment or (link.facets.get("sentiment") if link.facets is mapping else None) %}
+                      {% if link_sent %}
+                        <span class="badge badge-{{ link_sent | lower }}">{{ t_enum('sentiment', link_sent) }}</span>
+                      {% endif %}
+                      <span class="source-cite">({{ t('theme.via_direct') }})</span>
                     {% else %}
                       <span class="mono">{{ t_enum('relation', link.entity_relation) }} &rarr; {{ format_via(link.via) }} &rarr; {{ t_enum('relation', link.theme_relation) }}</span>
                       {% if link.source_label %}
@@ -105,8 +110,8 @@
             </td>
             <td>
               {% for path in row.paths %}
-                <div class="mono">
-                  {{ t_enum('relation', path.relation) }} ({{ t_enum('direction', path.direction) }}) &rarr;
+                <div>
+                  {{ format_relation(path.relation, path.direction) }} &rarr;
                   <a href="/entity/{{ path.connected_to_id }}">{{ path.connected_to }}</a>
                 </div>
               {% endfor %}

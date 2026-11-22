@@ -67,7 +67,7 @@ def _seed(db: OntologyDB) -> None:
     for edge in [
         _edge("e_live_about", "evt_live", "ABOUT", "ent_acme", "doc_live"),
         _edge("e_orphan_about", "evt_orphan", "ABOUT", "ent_beta", "doc_orphan"),
-        _edge("e_partner", "ent_acme", "PARTNER_WITH", "ent_beta", "doc_live"),
+        _edge("e_partner", "ent_acme", "COMPETES_WITH", "ent_beta", "doc_live"),
         _edge("e_employee", "ent_acme", "HAS_EMPLOYEE", "ent_jane", "doc_live"),
     ]:
         db.upsert_edge(edge)
@@ -103,7 +103,7 @@ def _snapshot(db: OntologyDB) -> tuple[Any, ...]:
 def test_repair_removes_orphan_artifacts_and_canonicalizes_edges(tmp_path: Path) -> None:
     with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
         _seed(db)
-        assert ("ent_acme", "PARTNER_WITH", "ent_beta") in _edges(db)
+        assert ("ent_acme", "COMPETES_WITH", "ent_beta") in _edges(db)
         repair_ontology = _load_repair_ontology()
         repair_ontology(db, create_minimal_registry())
 
@@ -119,9 +119,9 @@ def test_repair_removes_orphan_artifacts_and_canonicalizes_edges(tmp_path: Path)
 
         edges = _edges(db)
         assert ("evt_live", "ABOUT", "ent_acme") in edges
-        assert ("ent_acme", "PARTNERS_WITH", "ent_beta") in edges
+        assert ("ent_acme", "COMPETE", "ent_beta") in edges
         assert ("ent_jane", "WORKS_AT", "ent_acme") in edges
-        assert {rel for _, rel, _ in edges}.isdisjoint({"PARTNER_WITH", "HAS_EMPLOYEE"})
+        assert {rel for _, rel, _ in edges}.isdisjoint({"COMPETES_WITH", "HAS_EMPLOYEE"})
 
 
 def test_repair_merges_exact_duplicates_within_same_type_only(tmp_path: Path) -> None:

@@ -21,7 +21,14 @@
               {{ t('common.none') }}
             {% endif %}
           </td>
-          <td class="mono">{{ t_enum('relation', thm.relation) }} ({{ format_via(thm.via) }})</td>
+          <td>
+            {{ format_relation(thm.relation, thm.direction) }}
+            {% set exp_sent = thm.exposure_sentiment or (thm.edge_facets.get("sentiment") if thm.edge_facets is mapping else None) %}
+            {% if exp_sent %}
+              <span class="badge badge-{{ exp_sent | lower }}">{{ t_enum('sentiment', exp_sent) }}</span>
+            {% endif %}
+            <span class="source-cite">({{ format_via(thm.via) }})</span>
+          </td>
           <td>{{ thm.summary }}</td>
         </tr>
       {% endfor %}

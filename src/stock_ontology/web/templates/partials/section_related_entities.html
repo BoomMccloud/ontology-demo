@@ -15,7 +15,12 @@
         <tr>
           <td><a href="/entity/{{ rel.id }}"><strong>{{ rel.name }}</strong></a></td>
           <td class="mono">{{ t_enum('entity_type', rel.facets.get("entity_type", "entity")) }}</td>
-          <td class="mono">{{ t_enum('relation', rel.relation) }} ({{ t_enum('direction', rel.direction) }})</td>
+          <td>
+            {% set rel_items = rel.relationships if rel.relationships is defined and rel.relationships else [rel] %}
+            {% for r in rel_items %}
+              <span>{{ format_relation(r.relation, r.direction) }}</span>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+          </td>
           <td>{{ rel.summary }}</td>
         </tr>
       {% endfor %}

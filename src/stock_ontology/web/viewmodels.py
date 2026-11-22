@@ -347,7 +347,7 @@ def build_entity_context(
     overview = db.get_entity_overview(entity_id)
     entity = overview["entity"]
     if entity["node_type"] != "entity":
-        raise KeyError(f"Node {entity_id} is a {entity['node_type']}, not an entity")
+        raise KeyError(f"Node {entity_id} is a {entity['node_type']}, not an entity")  # noqa: TRY003
 
     facets: dict[str, Any] = entity.get("facets", {})
     entity_type = str(facets.get("entity_type", "entity")).lower()
@@ -425,23 +425,35 @@ def build_theme_context(
     facets = theme.get("facets", {})
     extra_keys = [k for k in sorted(facets.keys()) if k != "stage"]
 
-    events: list[dict[str, Any]] = []
-    views: list[dict[str, Any]] = []
+    events_by_id: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
+    views_by_id: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
     for item in db.get_incident_edges(theme_id):
         nb = item["neighbor"]
-        eff_sent, sent_src = resolve_item_sentiment(nb.get("facets", {}), item.get("facets"))
+        nid = str(nb["id"])
+        rel = str(item["relation"]).strip().upper()
+        edge_facets = item.get("facets") or {}
+        eff_sent, sent_src = resolve_item_sentiment(nb.get("facets", {}), edge_facets)
+        rank = (
+            1 if edge_facets.get("sentiment") else 0,
+            1 if rel in ("SUPPORTS", "CONTRADICTS", "ABOUT") else 0,
+        )
         entry = {
             **nb,
             "relation": item["relation"],
             "direction": item["direction"],
-            "edge_facets": item.get("facets", {}),
+            "edge_facets": edge_facets,
             "effective_sentiment": eff_sent,
             "sentiment_source": sent_src,
         }
         if nb["node_type"] == "event":
-            events.append(entry)
+            if nid not in events_by_id or rank > events_by_id[nid][0]:
+                events_by_id[nid] = (rank, entry)
         elif nb["node_type"] == "view":
-            views.append(entry)
+            if nid not in views_by_id or rank > views_by_id[nid][0]:
+                views_by_id[nid] = (rank, entry)
+
+    events = [pair[1] for pair in events_by_id.values()]
+    views = [pair[1] for pair in views_by_id.values()]
 
     _attach_source_display(events, data_dir)
     _attach_source_display(views, data_dir)
@@ -807,7 +819,7 @@ def _build_diagram_links(
         }
 
     entity_theme = _combine(
-        ["entity->theme", "theme->entity"], ("EXPOSED_TO", "BENEFITS_FROM"), max_len=28
+        ["entity->theme", "theme->entity"], ("EXPOSED_TO",), max_len=28
     )
     entity_theme["reversed_count"] = int(diagram_pairs.get("theme->entity", {}).get("count", 0))
 
@@ -817,7 +829,7 @@ def _build_diagram_links(
     view_theme["reversed_count"] = int(diagram_pairs.get("theme->view", {}).get("count", 0))
 
     return {
-        "entity_entity": _combine(["entity->entity"], ("SUPPLIES_TO", "WORKS_AT"), max_len=26),
+        "entity_entity": _combine(["entity->entity"], ("BUY", "WORKS_AT"), max_len=26),
         "view_view": _combine(["view->view"], ("SUPPORTS", "SUPERSEDES"), max_len=26),
         "entity_theme": entity_theme,
         "event_entity": _combine(["event->entity"], ("ABOUT", "AUTHORED_BY"), max_len=24),

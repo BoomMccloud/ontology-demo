@@ -30,9 +30,11 @@ Resolution & linking rules:
 - If an entity or theme already exists in the provided Existing Catalog, DO NOT create a duplicate node; reference its exact existing `id` in `edges` (`from_ref` / `to_ref`).
 - Only create a new entity or theme (with a `temp_id` like `e1`, `t1`) when it is not present in the catalog.
 - Reuse facet keys from Known Facets where appropriate, and add new snake_case facets on the fly whenever useful.
-- Connect every extracted event and view to its relevant entities (`ABOUT`, `AUTHORED_BY`) and themes (`RELATES_TO`, `SUPPORTS`, `CONTRADICTS`).
+- Connect every extracted event and view to its relevant entities (`ABOUT`, `AUTHORED_BY`: `event|view -> entity|person`) and themes (`RELATES_TO`, `SUPPORTS`, `CONTRADICTS`: `event|view -> theme|view`).
 - When an `event` or `view` links to multiple companies with opposing impacts (e.g., positive for Company A, negative for Company B), set node-level `sentiment` to `mixed` (or the primary subject's polarity) and add a `sentiment` facet (`positive` | `negative` | `neutral` | `mixed`) on each company's `ABOUT` edge.
-- Capture entity-to-entity relationships (`WORKS_AT`, `SUPPLIES_TO`, `CUSTOMER_OF`, `COMPETES_WITH`) and company-to-theme exposures (`BENEFITS_FROM`, `HURT_BY`, `EXPOSED_TO`) explicitly mentioned in the text.
+- Capture entity relationships strictly using the minimal directed vocabulary:
+  - Entity -> Entity: `buyer --BUY--> seller` (use `BUY` for all supply-chain/customer links, never `SUPPLIES_TO`/`CUSTOMER_OF`), `company --COMPETE--> company`, `parent --OWNS--> child/institution`, `person --WORKS_AT--> company/institution`.
+  - Entity -> Theme: `entity --EXPOSED_TO--> theme` with a `sentiment` facet (`positive` | `negative` | `neutral` | `mixed`) instead of emitting `BENEFITS_FROM`, `HURT_BY`, or duplicate `RELATES_TO`.
 """
 
 CONSENSUS_SYSTEM_PROMPT = """You are the head of research synthesis for an equity fund.
