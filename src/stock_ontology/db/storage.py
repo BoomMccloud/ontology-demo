@@ -1,4 +1,8 @@
-"""SQLite + sqlite-vec storage layer for the 4-node stock ontology."""
+"""Storage layer: the `OntologyDB` connection, writes, and read queries.
+
+Table definitions, row mapping, and facet merge rules live in
+`stock_ontology.db.schema`. This module owns how rows are read and written.
+"""
 
 from __future__ import annotations
 
@@ -16,12 +20,23 @@ from typing import Any
 
 import sqlite_vec
 
+from stock_ontology.db.schema import (
+    SECOND_ORDER_ENTITY_RELATIONS,
+    SIGNAL_CATEGORY_ALIASES,
+    init_schema,
+    merge_edge_facets,
+    node_meta,
+    node_to_dict,
+    now_iso,
+    row_to_edge,
+    row_to_node,
+    sql_casefold,
+)
 from stock_ontology.models import (
     VALID_SENTIMENTS,
     Edge,
     Node,
     NodeType,
-    Sentiment,
     normalize_sentiment,
     resolve_item_sentiment,
 )
@@ -30,101 +45,6 @@ from stock_ontology.registry import (
     OntologyRegistry,
     create_minimal_registry,
 )
-
-SECOND_ORDER_ENTITY_RELATIONS = {
-    "BUY",
-    "COMPETE",
-    "OWNS",
-}
-
-THEME_EXPOSURE_RELATIONS = {
-    "EXPOSED_TO",
-}
-
-SIGNAL_CATEGORY_ALIASES: dict[str, str] = {
-    "rumor": "rumor",
-    "rumors": "rumor",
-    "news": "news",
-    "fact": "fact",
-    "facts": "fact",
-    "earnings": "earnings",
-    "catalyst": "catalyst",
-    "catalysts": "catalyst",
-    "meeting": "meeting",
-    "meetings": "meeting",
-    "analyst_report": "analyst_report",
-    "analyst_reports": "analyst_report",
-    "pm_view": "pm_view",
-    "pm_views": "pm_view",
-    "channel_check": "channel_check",
-    "channel_checks": "channel_check",
-    "consensus": "consensus",
-}
-
-
-def _sql_casefold(value: Any) -> str | None:
-    """SQL helper matching Python `str.strip().casefold()` for name/alias lookups."""
-    return value.strip().casefold() if isinstance(value, str) else None
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def reconcile_sentiment(existing: Any, incoming: Any) -> Sentiment | None:
-    """Combine two optional sentiment polarities without losing opposing signals."""
-    s1 = normalize_sentiment(existing)
-    s2 = normalize_sentiment(incoming)
-    if s1 is None:
-        return s2
-    if s2 is None:
-        return s1
-    if s1 == s2:
-        return s1
-    if s1 == "neutral":
-        return s2
-    if s2 == "neutral":
-        return s1
-    return "mixed"
-
-
-def merge_edge_facets(
-    existing: dict[str, Any] | None,
-    incoming: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Merge two edge facet dicts, preserving non-empty keys and reconciling sentiment."""
-    merged: dict[str, Any] = dict(existing or {})
-    for k, v in (incoming or {}).items():
-        if k == "sentiment":
-            combined = reconcile_sentiment(merged.get("sentiment"), v)
-            if combined is not None:
-                merged["sentiment"] = combined
-            continue
-        if k not in merged or merged[k] in (None, "", []):
-            merged[k] = v
-    return merged
-
-
-def _node_meta(node: Node | dict[str, Any]) -> tuple[str, str, str | None]:
-    if isinstance(node, Node):
-        et = node.facets.get("entity_type")
-        return node.id, node.node_type, str(et).strip().lower() if et else None
-    et = node["facets"].get("entity_type")
-    return str(node["id"]), str(node["node_type"]), str(et).strip().lower() if et else None
-
-
-def _node_to_dict(node: Node) -> dict[str, Any]:
-    return {
-        "id": node.id,
-        "node_type": node.node_type,
-        "name": node.name,
-        "summary": node.summary,
-        "aliases": node.aliases,
-        "facets": node.facets,
-        "source_doc_id": node.source_doc_id,
-        "created_at": node.created_at.isoformat(),
-        "updated_at": node.updated_at.isoformat(),
-    }
 
 
 class OntologyDB:
@@ -158,7 +78,7 @@ class OntologyDB:
         self.conn.enable_load_extension(True)
         sqlite_vec.load(self.conn)
         self.conn.enable_load_extension(False)
-        self.conn.create_function("so_casefold", 1, _sql_casefold, deterministic=True)
+        self.conn.create_function("so_casefold", 1, sql_casefold, deterministic=True)
 
         self.conn.execute("PRAGMA foreign_keys = ON;")
         if self.read_only:
@@ -196,75 +116,15 @@ class OntologyDB:
 
     def _init_schema(self) -> None:
         lookup_existed = self._has_node_lookup()
-        with self.conn:
-            self.conn.executescript(
-                f"""
-                CREATE TABLE IF NOT EXISTS nodes (
-                    id TEXT PRIMARY KEY,
-                    node_type TEXT NOT NULL CHECK(node_type IN ('entity', 'event', 'view', 'theme')),
-                    name TEXT NOT NULL,
-                    summary TEXT NOT NULL,
-                    aliases_json TEXT NOT NULL DEFAULT '[]',
-                    facets_json TEXT NOT NULL DEFAULT '{{}}',
-                    source_doc_id TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS edges (
-                    id TEXT PRIMARY KEY,
-                    from_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-                    to_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-                    relation TEXT NOT NULL,
-                    facets_json TEXT NOT NULL DEFAULT '{{}}',
-                    source_doc_id TEXT,
-                    created_at TEXT NOT NULL
-                );
-
-                CREATE VIRTUAL TABLE IF NOT EXISTS node_vectors USING vec0(
-                    node_id TEXT PRIMARY KEY,
-                    embedding float[{self.embedding_dim}] distance_metric=cosine
-                );
-
-                CREATE TABLE IF NOT EXISTS ingestion_log (
-                    file_path TEXT PRIMARY KEY,
-                    doc_id TEXT NOT NULL UNIQUE,
-                    content_hash TEXT NOT NULL,
-                    ingested_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS db_metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(node_type);
-                CREATE INDEX IF NOT EXISTS idx_nodes_doc ON nodes(source_doc_id);
-                CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
-                CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
-                CREATE INDEX IF NOT EXISTS idx_edges_relation ON edges(relation);
-                CREATE INDEX IF NOT EXISTS idx_edges_doc ON edges(source_doc_id);
-
-                CREATE TABLE IF NOT EXISTS node_lookup (
-                    key TEXT NOT NULL,
-                    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-                    node_type TEXT NOT NULL,
-                    PRIMARY KEY (key, node_id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_node_lookup_key_type ON node_lookup(key, node_type);
-                CREATE INDEX IF NOT EXISTS idx_node_lookup_node ON node_lookup(node_id);
-                """
-            )
+        init_schema(self.conn, self.embedding_dim)
         self._migrate_schema(backfill_lookup=not lookup_existed)
 
     def _migrate_schema(self, *, backfill_lookup: bool) -> None:
-        """Apply additive migrations to databases created by older versions."""
-        log_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(ingestion_log)")}
+        """Backfill derived data for databases created by older versions.
+
+        Column additions are schema changes and live in `schema.init_schema`.
+        """
         with self.transaction():
-            if "size" not in log_cols:
-                self.conn.execute("ALTER TABLE ingestion_log ADD COLUMN size INTEGER")
-            if "mtime_ns" not in log_cols:
-                self.conn.execute("ALTER TABLE ingestion_log ADD COLUMN mtime_ns INTEGER")
             # Rebuild when the table is new, or when any node has no lookup row (an interrupted
             # first backfill, or nodes written by code that predates `node_lookup`).
             missing = self.conn.execute(
@@ -284,7 +144,7 @@ class OntologyDB:
 
     def _write_node_lookup(self, node_id: str, node_type: str, name: str, aliases: list[str]) -> None:
         self.conn.execute("DELETE FROM node_lookup WHERE node_id = ?", (node_id,))
-        keys = {k for k in (_sql_casefold(label) for label in [name, *aliases]) if k}
+        keys = {k for k in (sql_casefold(label) for label in [name, *aliases]) if k}
         self.conn.executemany(
             "INSERT OR IGNORE INTO node_lookup (key, node_id, node_type) VALUES (?, ?, ?)",
             [(key, node_id, node_type) for key in sorted(keys)],
@@ -301,31 +161,9 @@ class OntologyDB:
                 )
             return int(self.conn.execute("SELECT COUNT(*) FROM node_lookup").fetchone()[0])
 
-    @staticmethod
-    def _row_to_node(row: sqlite3.Row) -> Node:
-        return Node(
-            id=row["id"],
-            node_type=row["node_type"],
-            name=row["name"],
-            summary=row["summary"],
-            aliases=json.loads(row["aliases_json"]),
-            facets=json.loads(row["facets_json"]),
-            source_doc_id=row["source_doc_id"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-        )
 
-    @staticmethod
-    def _row_to_edge(row: sqlite3.Row) -> Edge:
-        return Edge(
-            id=row["id"],
-            from_id=row["from_id"],
-            to_id=row["to_id"],
-            relation=row["relation"],
-            facets=json.loads(row["facets_json"]),
-            source_doc_id=row["source_doc_id"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-        )
+    _row_to_node = staticmethod(row_to_node)
+    _row_to_edge = staticmethod(row_to_edge)
 
     # ------------------------------------------------------------------
     # Write Operations (Pipeline only; blocked by SQLite when read_only)
@@ -459,6 +297,73 @@ class OntologyDB:
             )
             self.conn.execute("DELETE FROM nodes WHERE source_doc_id = ?", (doc_id,))
 
+    def list_artifact_doc_ids(self) -> set[str]:
+        """Return every `source_doc_id` referenced by a node or an edge."""
+        rows = self.conn.execute(
+            "SELECT source_doc_id FROM nodes WHERE source_doc_id IS NOT NULL "
+            "UNION SELECT source_doc_id FROM edges WHERE source_doc_id IS NOT NULL"
+        ).fetchall()
+        return {str(r["source_doc_id"]) for r in rows}
+
+    def count_document_artifacts(self, doc_id: str) -> tuple[int, int]:
+        """Return (nodes, edges) that `delete_document_artifacts(doc_id)` would remove."""
+        nodes = self.conn.execute(
+            "SELECT COUNT(*) FROM nodes WHERE source_doc_id = ?", (doc_id,)
+        ).fetchone()[0]
+        edges = self.conn.execute(
+            """
+            SELECT COUNT(*) FROM edges
+            WHERE source_doc_id = ?
+               OR from_id IN (SELECT id FROM nodes WHERE source_doc_id = ?)
+               OR to_id IN (SELECT id FROM nodes WHERE source_doc_id = ?)
+            """,
+            (doc_id, doc_id, doc_id),
+        ).fetchone()[0]
+        return int(nodes), int(edges)
+
+    def update_edge(
+        self,
+        edge_id: str,
+        *,
+        relation: str,
+        from_id: str,
+        to_id: str,
+        facets: dict[str, Any],
+    ) -> None:
+        """Overwrite an edge's relation, endpoints, and facets in place."""
+        with self.transaction():
+            self.conn.execute(
+                "UPDATE edges SET relation = ?, from_id = ?, to_id = ?, facets_json = ? WHERE id = ?",
+                (relation, from_id, to_id, json.dumps(facets), edge_id),
+            )
+
+    def merge_node_into(self, loser_id: str, survivor_id: str) -> int:
+        """Repoint the loser's edges to the survivor, then delete the loser and its vector.
+
+        Self-loops on the survivor created by the repoint are dropped; returns how many. Copying the loser's
+        names and facets onto the survivor is the caller's job (`upsert_node`).
+        """
+        with self.transaction():
+            self.conn.execute(
+                "UPDATE edges SET from_id = ? WHERE from_id = ?", (survivor_id, loser_id)
+            )
+            self.conn.execute("UPDATE edges SET to_id = ? WHERE to_id = ?", (survivor_id, loser_id))
+            self.conn.execute("DELETE FROM node_vectors WHERE node_id = ?", (loser_id,))
+            self.conn.execute("DELETE FROM nodes WHERE id = ?", (loser_id,))
+            cur = self.conn.execute(
+                "DELETE FROM edges WHERE from_id = to_id AND from_id = ?", (survivor_id,)
+            )
+        return max(cur.rowcount, 0)
+
+    def delete_edges(self, edge_ids: list[str]) -> int:
+        """Delete edges by id and return how many rows were removed."""
+        if not edge_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in edge_ids)
+        with self.transaction():
+            cur = self.conn.execute(f"DELETE FROM edges WHERE id IN ({placeholders})", edge_ids)
+        return cur.rowcount
+
     def upsert_consensus_view(
         self,
         company_id: str,
@@ -571,7 +476,7 @@ class OntologyDB:
         mtime_ns: int | None = None,
     ) -> None:
         """Record or update ingestion state for a source file."""
-        ts = ingested_at or _now_iso()
+        ts = ingested_at or now_iso()
         with self.transaction():
             self.conn.execute(
                 """
@@ -709,7 +614,7 @@ class OntologyDB:
     def get_node(self, node_id: str) -> Node | None:
         """Fetch a single node by ID."""
         row = self.conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
-        return self._row_to_node(row) if row is not None else None
+        return row_to_node(row) if row is not None else None
 
     def get_nodes(self, node_ids: list[str]) -> list[Node]:
         """Fetch nodes by ID in one query, preserving input order and skipping missing IDs."""
@@ -720,7 +625,7 @@ class OntologyDB:
         rows = self.conn.execute(
             f"SELECT * FROM nodes WHERE id IN ({placeholders})", unique  # noqa: S608
         ).fetchall()
-        by_id = {str(r["id"]): self._row_to_node(r) for r in rows}
+        by_id = {str(r["id"]): row_to_node(r) for r in rows}
         return [by_id[i] for i in unique if i in by_id]
 
     def find_nodes_mentioned_in(self, text: str, node_types: tuple[str, ...]) -> list[Node]:
@@ -761,7 +666,7 @@ class OntologyDB:
                 params_l["node_type"] = node_type
             sql += " ORDER BY n.updated_at DESC LIMIT 1"
             row = self.conn.execute(sql, params_l).fetchone()
-            return self._row_to_node(row) if row is not None else None
+            return row_to_node(row) if row is not None else None
         # Older read-only databases without `node_lookup`: scan names and aliases.
         sql = """
             SELECT * FROM nodes n
@@ -779,7 +684,7 @@ class OntologyDB:
             params["node_type"] = node_type
         sql += " ORDER BY n.updated_at DESC LIMIT 1"
         row = self.conn.execute(sql, params).fetchone()
-        return self._row_to_node(row) if row is not None else None
+        return row_to_node(row) if row is not None else None
 
     def list_nodes(self, node_type: NodeType | None = None, limit: int = 100) -> list[Node]:
         """List nodes, optionally filtered by `node_type`."""
@@ -793,12 +698,12 @@ class OntologyDB:
                 "SELECT * FROM nodes ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-        return [self._row_to_node(r) for r in rows]
+        return [row_to_node(r) for r in rows]
 
     def list_all_nodes(self) -> list[Node]:
         """Return every node in the database ordered by ID."""
         rows = self.conn.execute("SELECT * FROM nodes ORDER BY id ASC").fetchall()
-        return [self._row_to_node(r) for r in rows]
+        return [row_to_node(r) for r in rows]
 
     def vector_search(
         self,
@@ -874,7 +779,7 @@ class OntologyDB:
             """
         _ = params  # unused placeholder avoided
         rows = self.conn.execute(sql, params_query).fetchall()
-        return [self._row_to_node(r) for r in rows]
+        return [row_to_node(r) for r in rows]
 
     def get_incident_edges(self, node_id: str) -> list[dict[str, Any]]:
         """Return all outgoing and incoming edges for `node_id` with neighbor metadata."""
@@ -1016,14 +921,14 @@ class OntologyDB:
             """,
             (entity_id,),
         ).fetchall()
-        return self._row_to_node(rows[0]) if rows else None
+        return row_to_node(rows[0]) if rows else None
 
     def _canonicalize_incident_edge(
         self, focus_node: Node | dict[str, Any], item: dict[str, Any]
     ) -> tuple[CanonicalEdgeResult, str]:
         """Project a raw incident edge onto its canonical relation and focus-relative direction."""
-        fid, ftype, fet = _node_meta(focus_node)
-        nid, ntype, net = _node_meta(item["neighbor"])
+        fid, ftype, fet = node_meta(focus_node)
+        nid, ntype, net = node_meta(item["neighbor"])
         if item["direction"] == "outgoing":
             raw_from = (fid, ftype, fet)
             raw_to = (nid, ntype, net)
@@ -1250,8 +1155,8 @@ class OntologyDB:
         }
 
         return {
-            "entity": _node_to_dict(entity),
-            "consensus": _node_to_dict(consensus) if consensus is not None else None,
+            "entity": node_to_dict(entity),
+            "consensus": node_to_dict(consensus) if consensus is not None else None,
             "prior_consensuses": prior_consensuses,
             "events": events,
             "views": views,
@@ -1444,7 +1349,7 @@ class OntologyDB:
                 rumored_event_count += 1
 
         return {
-            "entity": _node_to_dict(entity),
+            "entity": node_to_dict(entity),
             "filters": {
                 "sentiments": sorted(norm_sentiments) if norm_sentiments is not None else None,
                 "node_types": sorted(norm_node_types) if norm_node_types is not None else None,
@@ -1478,7 +1383,7 @@ class OntologyDB:
 
         rel_filter = {r.strip().upper() for r in relations} if relations else None
         visited_hops: dict[str, int] = {start.id: 0}
-        nodes_by_id: dict[str, dict[str, Any]] = {start.id: {**_node_to_dict(start), "hop": 0}}
+        nodes_by_id: dict[str, dict[str, Any]] = {start.id: {**node_to_dict(start), "hop": 0}}
         nodes_out: list[dict[str, Any]] = [nodes_by_id[start.id]]
         edges_out: list[dict[str, Any]] = []
         edges_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -1520,7 +1425,7 @@ class OntologyDB:
                     queue.append((nb["id"], hop + 1))
 
         return {
-            "start_node": _node_to_dict(start),
+            "start_node": node_to_dict(start),
             "nodes": nodes_out,
             "edges": edges_out,
         }
@@ -1659,7 +1564,7 @@ class OntologyDB:
                             )
 
         return {
-            "theme": _node_to_dict(theme),
+            "theme": node_to_dict(theme),
             "first_order": list(first_order_map.values()),
             "second_order": list(second_order_map.values()),
         }

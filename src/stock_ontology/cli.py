@@ -27,7 +27,7 @@ from stock_ontology.i18n import (
     translate_enum,
 )
 from stock_ontology.llm import create_llm_client
-from stock_ontology.pipeline import IngestionPipeline, reembed_all_nodes
+from stock_ontology.pipeline import IngestionPipeline, reembed_all_nodes, reembed_nodes
 from stock_ontology.registry import (
     OntologyRegistry,
     SuggestionSyncSummary,
@@ -35,7 +35,7 @@ from stock_ontology.registry import (
     load_registry,
     save_registry,
 )
-from stock_ontology.repair import reembed_nodes, repair_ontology
+from stock_ontology.repair import repair_ontology
 
 app = typer.Typer(
     name="stock-ontology",

@@ -1,13 +1,12 @@
 """Deterministic repair of stored ontology data: orphans, relation names, exact duplicates.
 
 Only fixes with a single right answer live here. Judgment calls (unknown relations,
-near-duplicate entities) are queued as pending registry suggestions by `audit --sync`.
+near-duplicate entities) are queued as pending registry suggestions by `audit`.
+All reads and writes go through `OntologyDB`; this module issues no SQL.
 """
 
 from __future__ import annotations
 
-import json
-import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,19 +41,6 @@ class RepairReport:
         )
 
 
-def reembed_nodes(db: OntologyDB, llm: Any, node_ids: list[str]) -> int:
-    """Recompute and store embeddings for `node_ids` (e.g. merge survivors); returns the count."""
-    from stock_ontology.pipeline import node_embedding_text
-
-    if db.read_only:
-        raise ValueError("reembed_nodes requires a writable OntologyDB.")  # noqa: TRY003
-    nodes = db.get_nodes(node_ids)
-    if not nodes:
-        return 0
-    vectors = llm.embed_texts([node_embedding_text(node) for node in nodes])
-    mapping = {node.id: vec for node, vec in zip(nodes, vectors, strict=True)}
-    return db.replace_node_embeddings(mapping, prune_orphans=False)
-
 
 def repair_ontology(db: OntologyDB, registry: OntologyRegistry) -> RepairReport:
     """Apply deterministic repairs to `db` in one transaction and report what changed."""
@@ -72,70 +58,41 @@ def repair_ontology(db: OntologyDB, registry: OntologyRegistry) -> RepairReport:
 def _delete_orphan_artifacts(db: OntologyDB, report: RepairReport) -> None:
     """Remove doc-scoped nodes and edges whose document has no ingestion log entry."""
     logged = {entry["doc_id"] for entry in db.get_ingestion_log().values()}
-    doc_ids = {
-        str(r["source_doc_id"])
-        for r in db.conn.execute(
-            "SELECT source_doc_id FROM nodes WHERE source_doc_id IS NOT NULL "
-            "UNION SELECT source_doc_id FROM edges WHERE source_doc_id IS NOT NULL"
-        ).fetchall()
-    }
-    for doc_id in sorted(doc_ids - logged):
-        nodes = db.conn.execute(
-            "SELECT COUNT(*) FROM nodes WHERE source_doc_id = ?", (doc_id,)
-        ).fetchone()[0]
-        edges = db.conn.execute(
-            """
-            SELECT COUNT(*) FROM edges
-            WHERE source_doc_id = ?
-               OR from_id IN (SELECT id FROM nodes WHERE source_doc_id = ?)
-               OR to_id IN (SELECT id FROM nodes WHERE source_doc_id = ?)
-            """,
-            (doc_id, doc_id, doc_id),
-        ).fetchone()[0]
+    for doc_id in sorted(db.list_artifact_doc_ids() - logged):
+        nodes, edges = db.count_document_artifacts(doc_id)
         db.delete_document_artifacts(doc_id)
-        report.orphan_nodes_deleted += int(nodes)
-        report.orphan_edges_deleted += int(edges)
+        report.orphan_nodes_deleted += nodes
+        report.orphan_edges_deleted += edges
 
 
 def _canonicalize_relations(
     db: OntologyDB, registry: OntologyRegistry, report: RepairReport
 ) -> None:
     """Canonicalize relation names, alias facets, direction, and symmetry against `registry`."""
-    rows = db.conn.execute(
-        """
-        SELECT
-            e.id, e.from_id, e.to_id, e.relation, e.facets_json,
-            nf.node_type AS from_type,
-            json_extract(nf.facets_json, '$.entity_type') AS from_entity_type,
-            nt.node_type AS to_type,
-            json_extract(nt.facets_json, '$.entity_type') AS to_entity_type
-        FROM edges e
-        JOIN nodes nf ON nf.id = e.from_id
-        JOIN nodes nt ON nt.id = e.to_id
-        """
-    ).fetchall()
-    for row in rows:
-        raw_facets = json.loads(row["facets_json"])
+    for edge in db.list_edges_with_endpoints():
         canon = registry.canonicalize_edge(
-            row["relation"],
-            from_id=row["from_id"],
-            from_type=row["from_type"],
-            from_entity_type=row["from_entity_type"],
-            to_id=row["to_id"],
-            to_type=row["to_type"],
-            to_entity_type=row["to_entity_type"],
-            facets=raw_facets,
+            edge["relation"],
+            from_id=edge["from_id"],
+            from_type=edge["from_type"],
+            from_entity_type=edge["from_entity_type"],
+            to_id=edge["to_id"],
+            to_type=edge["to_type"],
+            to_entity_type=edge["to_entity_type"],
+            facets=edge["facets"],
         )
         if (
-            canon.relation == row["relation"]
-            and canon.from_id == row["from_id"]
-            and canon.to_id == row["to_id"]
-            and canon.facets == raw_facets
+            canon.relation == edge["relation"]
+            and canon.from_id == edge["from_id"]
+            and canon.to_id == edge["to_id"]
+            and canon.facets == edge["facets"]
         ):
             continue
-        db.conn.execute(
-            "UPDATE edges SET relation = ?, from_id = ?, to_id = ?, facets_json = ? WHERE id = ?",
-            (canon.relation, canon.from_id, canon.to_id, json.dumps(canon.facets), row["id"]),
+        db.update_edge(
+            edge["edge_id"],
+            relation=canon.relation,
+            from_id=canon.from_id,
+            to_id=canon.to_id,
+            facets=canon.facets,
         )
         report.edges_canonicalized += 1
 
@@ -200,15 +157,9 @@ def _merge_cluster(db: OntologyDB, cluster: list[Node], report: RepairReport) ->
                 facets[k] = v
         if not summary and loser.summary:
             summary = loser.summary
-        db.conn.execute("UPDATE edges SET from_id = ? WHERE from_id = ?", (survivor.id, loser.id))
-        db.conn.execute("UPDATE edges SET to_id = ? WHERE to_id = ?", (survivor.id, loser.id))
-        db.conn.execute("DELETE FROM node_vectors WHERE node_id = ?", (loser.id,))
-        db.conn.execute("DELETE FROM nodes WHERE id = ?", (loser.id,))
+        report.self_loops_deleted += db.merge_node_into(loser.id, survivor.id)
         report.nodes_merged += 1
 
-    # Self-loops created by repointing carry no information.
-    cur = db.conn.execute("DELETE FROM edges WHERE from_id = to_id AND from_id = ?", (survivor.id,))
-    report.self_loops_deleted += max(cur.rowcount, 0)
     report.merged_survivor_ids.append(survivor.id)
     survivor.aliases = aliases
     survivor.facets = facets
@@ -218,36 +169,27 @@ def _merge_cluster(db: OntologyDB, cluster: list[Node], report: RepairReport) ->
 
 def _delete_duplicate_edges(db: OntologyDB, report: RepairReport) -> None:
     """Merge facets and keep one edge per (from, to, relation, source doc) after renames and merges."""
-    rows = db.conn.execute(
-        "SELECT id, from_id, to_id, relation, facets_json, source_doc_id FROM edges ORDER BY id ASC"
-    ).fetchall()
-    groups: dict[tuple[str, str, str, str], list[sqlite3.Row]] = defaultdict(list)
-    for row in rows:
-        key = (
-            str(row["from_id"]),
-            str(row["to_id"]),
-            str(row["relation"]),
-            str(row["source_doc_id"] or ""),
-        )
-        groups[key].append(row)
+    edges = sorted(db.list_edges_with_endpoints(), key=lambda e: e["edge_id"])
+    groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for edge in edges:
+        key = (edge["from_id"], edge["to_id"], edge["relation"], str(edge["source_doc_id"] or ""))
+        groups[key].append(edge)
 
     for group in groups.values():
         if len(group) <= 1:
             continue
         survivor = group[0]
-        merged = json.loads(survivor["facets_json"])
+        merged = survivor["facets"]
         for extra in group[1:]:
-            merged = merge_edge_facets(merged, json.loads(extra["facets_json"]))
-        merged_json = json.dumps(merged)
-        if merged_json != survivor["facets_json"]:
-            db.conn.execute(
-                "UPDATE edges SET facets_json = ? WHERE id = ?",
-                (merged_json, survivor["id"]),
+            merged = merge_edge_facets(merged, extra["facets"])
+        if merged != survivor["facets"]:
+            db.update_edge(
+                survivor["edge_id"],
+                relation=survivor["relation"],
+                from_id=survivor["from_id"],
+                to_id=survivor["to_id"],
+                facets=merged,
             )
-        extra_ids = [str(extra["id"]) for extra in group[1:]]
-        placeholders = ", ".join("?" for _ in extra_ids)
-        cur = db.conn.execute(
-            f"DELETE FROM edges WHERE id IN ({placeholders})",
-            extra_ids,
+        report.duplicate_edges_deleted += db.delete_edges(
+            [extra["edge_id"] for extra in group[1:]]
         )
-        report.duplicate_edges_deleted += cur.rowcount

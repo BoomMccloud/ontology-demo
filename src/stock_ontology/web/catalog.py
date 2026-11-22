@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from stock_ontology.config import SUPPORTED_EXTENSIONS
 from stock_ontology.db import OntologyDB
 from stock_ontology.i18n import DEFAULT_LANGUAGE, translate
-from stock_ontology.pipeline import SUPPORTED_EXTENSIONS
 
 AUTHOR_FOLDER_ROOTS = {"authors", "analysts", "people", "persons"}
 PERSON_FOLDER_ROOTS = AUTHOR_FOLDER_ROOTS

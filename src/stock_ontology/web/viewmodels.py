@@ -13,7 +13,7 @@ from stock_ontology.audit import (
     classify_edge_against_registry,
     run_ontology_audit,
 )
-from stock_ontology.db import SIGNAL_CATEGORY_ALIASES, OntologyDB, _node_to_dict
+from stock_ontology.db import SIGNAL_CATEGORY_ALIASES, OntologyDB, node_to_dict
 from stock_ontology.i18n import (
     DEFAULT_LANGUAGE,
     translate,
@@ -614,7 +614,7 @@ def _format_search_result(
 ) -> dict[str, Any]:
     eff_sent, sent_src = resolve_item_sentiment(node.facets, edge_facets)
     return {
-        **_node_to_dict(node),
+        **node_to_dict(node),
         "subtype": _node_subtype(node),
         "effective_sentiment": eff_sent,
         "sentiment_source": sent_src,

@@ -10,7 +10,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.toolsets import WrapperToolset
 
-from stock_ontology.db import OntologyDB, _node_to_dict
+from stock_ontology.db import OntologyDB, node_to_dict
 from stock_ontology.i18n import (
     DEFAULT_LANGUAGE,
     get_language_spec,
@@ -298,11 +298,11 @@ class OntologyAgent:
 
         vec = self.llm.embed_texts([cleaned])[0]
         for node, dist in self.db.vector_search(vec, node_type=nt, limit=limit):
-            seen[node.id] = {**_node_to_dict(node), "score_type": "vector", "distance": round(dist, 4)}
+            seen[node.id] = {**node_to_dict(node), "score_type": "vector", "distance": round(dist, 4)}
 
         for node in self.db.keyword_search(cleaned, node_type=nt, limit=limit):
             if node.id not in seen:
-                seen[node.id] = {**_node_to_dict(node), "score_type": "keyword"}
+                seen[node.id] = {**node_to_dict(node), "score_type": "keyword"}
 
         return {"results": list(seen.values())[:limit]}
 
@@ -388,7 +388,7 @@ class OntologyAgent:
         if node is None:
             return {"error": f"Node not found: {node_id!r}."}
         return {
-            "node": _node_to_dict(node),
+            "node": node_to_dict(node),
             "edges": self.db.get_incident_edges(node.id),
         }
 

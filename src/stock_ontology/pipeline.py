@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from stock_ontology.config import SUPPORTED_EXTENSIONS
 from stock_ontology.db import OntologyDB
 from stock_ontology.llm import LLMClient
 from stock_ontology.registry import OntologyRegistry, create_minimal_registry
@@ -24,7 +25,6 @@ from stock_ontology.models import (
     normalize_sentiment,
 )
 
-SUPPORTED_EXTENSIONS = {".md", ".txt"}
 CANONICAL_DISTANCE_THRESHOLD = 0.15
 # Most recently updated entities and themes listed in the extraction catalog (each type),
 # in addition to every entity/theme the note names.
@@ -779,6 +779,17 @@ def _build_view_node(vw: Any, *, doc_id: str, source_meta: dict[str, Any], now: 
         updated_at=now,
     )
 
+
+def reembed_nodes(db: OntologyDB, llm: Any, node_ids: list[str]) -> int:
+    """Recompute and store embeddings for `node_ids` (e.g. merge survivors); returns the count."""
+    if db.read_only:
+        raise ValueError("reembed_nodes requires a writable OntologyDB.")  # noqa: TRY003
+    nodes = db.get_nodes(node_ids)
+    if not nodes:
+        return 0
+    vectors = llm.embed_texts([node_embedding_text(node) for node in nodes])
+    mapping = {node.id: vec for node, vec in zip(nodes, vectors, strict=True)}
+    return db.replace_node_embeddings(mapping, prune_orphans=False)
 
 def _build_node_source(base_meta: dict[str, Any], facets: dict[str, Any]) -> dict[str, Any]:
     """Combine file provenance with any author/title/kind extracted from text."""
