@@ -1,6 +1,6 @@
 ---
 proposal_id: "company-view-separation"
-state: BUILT
+state: ACCEPTED
 witness: builder
 candidate: "4d0e55c @ .claude/worktrees/agent-aff71a0ff67ea7b3b (branch worktree-agent-aff71a0ff67ea7b3b)"
 ---
@@ -132,9 +132,59 @@ Logs live in the session scratchpad `/private/tmp/claude-502/-Users-jasonbxu--cl
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+Candidate: `4d0e55c @ /Users/jasonbxu/Documents/GitHub/stock_ontology/.claude/worktrees/agent-aff71a0ff67ea7b3b (branch worktree-agent-aff71a0ff67ea7b3b)`, base `5aceabc`. `8549c7d` only touches `docs/proposals/company-view-separation.md`.
+
+Independence: fresh-context. The auditing context had seen only the orchestrator's audit brief, the ledger, the repository and the diff. It did not build the candidate.
+
+Primary-claim verdict: PROVED. Evidence:
+- The witness `tests/test_web.py::test_entity_page_templates_only_see_presentation_models` passes on the candidate.
+- In a scratch copy of 5aceabc with the candidate's `tests/test_web.py`, the witness is RED: 1 failed, 20 raw facet paths, starting at `ctx['entity']['facets']`. Its render assertions passed on the old code, so they pin the same output before and after the change.
+- The witness's static regex, run over the `entity.html` include closure, flags `facet_consensus_card.html`, `facet_header.html`, `section_events.html`, `section_related_entities.html`, `section_themes.html` and `section_views.html` at 5aceabc, and none at the candidate.
+- The context walk covers a company (`ent_tsmc`), a person (`ent_wei`) and a peer company (`ent_asml`). It requires dataclass rows for entity, consensus, events, views, themes, related entities and prior consensuses.
+- An independent pytest plugin captured every `/entity/` and `/theme/` response requested by `tests/test_web.py`, `tests/test_web_navigation.py`, `tests/test_relationships.py` and `tests/test_i18n.py`, at 5aceabc and at the candidate. Of 47 pages, 45 are identical after line-strip, and 2 match as sorted lines: `ent_vrt` and `thm_power` from `test_read_side_consolidation_and_natural_ux_labels`. Three reruns at 5aceabc showed those pages already reorder run to run.
+- On the specific checks:
+  - The sentiment fallback (edge, then node) and the entity-impact note now come from `_sentiment_display`. The witness asserts the "overall: mixed" note, and its absence on an event without an edge override.
+  - Ticker, aliases, source author, kind and link, and prior-consensus stance and as_of are each asserted by the witness or matched in the render comparison.
+  - `pillars` is now wrapped as a tuple, but `models.py` types pillars as `list[str]`, so output is unchanged.
+  - The dropped `sentiment_summary` was read by no template.
+
+Limit:
+- The static regex is narrower than the Frame's literal wording ("mentions `facets`"). It allows prepared-pair names such as `company_facets` and translation keys such as `'facets.col_value'`, and it would miss forms like `.get('facets')` or `attr('facets')`. The context walk closes that gap for the entity route, because no raw facets reach the templates. Build recorded the narrowing.
+- The render comparison covers seeded fixtures only.
+
+Guardrail verdicts:
+- Theme page events and views render unchanged: PROVED. Evidence: `build_theme_context` maps through the same `_event_row` and `_view_row`. The witness asserts the theme page's event name, sentiment badge and author, and the view name and stance. The render comparison matched every captured `/theme/` page, either identical or, for `thm_power`, as the same sorted lines. The rest of `theme.html` (`row.company.facets` and `link.facets`) is untouched, as Frame required. Limit: the witness does not assert the impact note on the theme page. That rests on the render comparison and the shared mapper.
+- Web UI stays read-only: PROVED. Evidence: `git diff 5aceabc 4d0e55c -- src/stock_ontology/db src/stock_ontology/web/app.py` is empty. `entity_page` still builds its context inside `_open_ro_db`. `viewmodels.py` gains no write calls. The witness builds its context through `OntologyDB(..., read_only=True)`. The existing `tests/test_db.py::test_read_only_enforces_pragma_query_only` passes in the full gate. Limit: there is no new test of the read-only invariant. This rests on the unchanged code path.
+
+Scope and duty verdict: scope HELD; duties HELD. Evidence:
+- Every changed file is on Frame's Include list: `viewmodels.py`; the six named partials; `navigation.py::_entity`; `tests/test_web.py`; the listed `tests/test_web_navigation.py::test_navigation_registry_lookup`; and one sentence in `docs/architecture/web.md`.
+- `README.md` gains a Web UI Constraints entry with a `**Why:**` and a `**Guarded by:**` that names the existing witness, as step 7's constraint-capture duty requires.
+- `entity.html`, CSS, locales, `src/stock_ontology/db/` and event pages are untouched.
+- The nav test change matches Frame's Invariants changed entry: it passes an `EntityHeader` and expects the same nav state.
+- The supporting obligations are met: one mapper per row type shared by the entity and theme contexts, `impact_note` and `overall_sentiment` prepared, raw enum codes kept for `t_enum` and badge classes, and a 43-plus page render comparison done.
+
+Limit: dropping the unused `sentiment_summary` key was not named explicitly in Frame. It sits inside the `build_entity_context` change Frame allowed and has no visible effect.
+
+Test homes:
+- `tests/test_web.py`: the new witness and its seed `_seed_presentation_db`. This is Frame's named permanent owner for entity and theme page rendering.
+- `tests/test_web_navigation.py`: an amended `test_navigation_registry_lookup`. This is its existing owner, and the change is listed under Invariants changed.
+
+Full gates: PASS.
+- `uv sync`: ok.
+- `uv run pytest tests/test_web.py tests/test_web_navigation.py -q`: 53 passed.
+- `uv run pytest -q`: 146 passed.
+- Every test runs offline with fake LLM clients (`FakeWebLLM`).
+- `uv run ruff check src/stock_ontology/web tests/test_web.py tests/test_web_navigation.py`: 2 findings, both in `src/stock_ontology/web/catalog.py`, which the candidate leaves untouched. Ruff is not a required gate in `AGENTS.md`.
+
+Limit: the suite runs only seeded fixtures, not a real `ontology.db`.
+
+Residual risks:
+- The static template guard is regex-based. A future template could read raw data through `.get('facets')` or `attr()`, but only if a raw node reaches the context again, which the context walk would catch for `build_entity_context`.
+- `_entity` in `navigation.py` now uses `getattr`. A raw dict passed as `entity` would give an empty breadcrumb instead of failing loudly. Only `/entity/{entity_id}` uses it today, and that route always supplies an `EntityHeader`.
+- `theme.html` outside the shared partials still reads raw facets. Frame left that to `theme-view-separation`.
+
+Recommendation: ACCEPT
+Packet: no rework needed. The next step is human-owned: decide whether to merge `worktree-agent-aff71a0ff67ea7b3b` into `main`. This audit authorizes no irreversible action.
 
 ## Revisions
 
