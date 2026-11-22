@@ -13,6 +13,7 @@ from urllib.parse import quote
 from stock_ontology.config import SUPPORTED_EXTENSIONS
 from stock_ontology.db import OntologyDB
 from stock_ontology.i18n import DEFAULT_LANGUAGE, translate
+from stock_ontology.search import resolve_safe_note_path
 
 AUTHOR_FOLDER_ROOTS = {"authors", "analysts", "people", "persons"}
 PERSON_FOLDER_ROOTS = AUTHOR_FOLDER_ROOTS
@@ -128,32 +129,6 @@ def _ascii_initial(value: str) -> str:
         return ""
     first = stripped[0].upper()
     return first if first.isascii() and first.isalpha() else ""
-
-
-def resolve_safe_note_path(data_dir: Path, rel_path: str) -> Path | None:
-    """Resolve `rel_path` strictly inside `data_dir`, rejecting traversal or hidden files."""
-    if not rel_path or "\x00" in rel_path:
-        return None
-    if rel_path.startswith(("/", "\\")) or "\\" in rel_path:
-        return None
-    parts = rel_path.split("/")
-    if any(part in ("", ".", "..") or part.startswith(".") for part in parts):
-        return None
-    try:
-        root = data_dir.resolve()
-        if not root.exists() or not root.is_dir():
-            return None
-        candidate = (root / rel_path).resolve()
-        if not candidate.is_relative_to(root):
-            return None
-        rel_parts = candidate.relative_to(root).parts
-        if not rel_parts or any(part.startswith(".") for part in rel_parts):
-            return None
-        if not candidate.is_file() or candidate.suffix.lower() not in SUPPORTED_EXTENSIONS:
-            return None
-        return candidate
-    except (OSError, ValueError):
-        return None
 
 
 def _format_inline_markdown(escaped_text: str, *, allow_br: bool = False) -> str:

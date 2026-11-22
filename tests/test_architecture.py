@@ -22,6 +22,7 @@ MODULE_OF: dict[str, str] = {
     "registry": "ontology",
     "db": "storage",
     "llm": "llm",
+    "search": "search",
     "pipeline": "pipeline",
     "agent": "agent",
     "audit": "governance",
@@ -35,10 +36,11 @@ ALLOWED: dict[str, set[str]] = {
     "ontology": set(),
     "storage": {"ontology"},
     "llm": {"shared", "ontology"},
+    "search": {"shared", "ontology", "storage", "llm"},
     "pipeline": {"shared", "ontology", "storage", "llm"},
-    "agent": {"shared", "ontology", "storage", "llm"},
+    "agent": {"shared", "ontology", "storage", "llm", "search"},
     "governance": {"shared", "ontology", "storage"},
-    "web": {"shared", "ontology", "storage", "llm", "agent", "governance"},
+    "web": {"shared", "ontology", "storage", "llm", "search", "agent", "governance"},
     "cli": set(MODULE_OF.values()),
 }
 

@@ -12,8 +12,9 @@ calling tools over the graph.
 
 ## How it works
 
-`OntologyAgent(db, llm, language)` refuses to start unless `db.read_only` is
-true. There are two ways to call it:
+`OntologyAgent(db, llm, language, data_dir=None)` refuses to start unless
+`db.read_only` is true. `data_dir` is the research notes directory that
+`search_notes` greps. There are two ways to call it:
 
 - `chat(message, history=())` returns a `ChatTurn`, a frozen dataclass with
   `reply`, `history`, `tools_used` (this turn only), `provider`, `model`, and
@@ -27,7 +28,10 @@ Other attributes (`messages`, `tool_trace`, `last_provider`, `last_model`,
 
 Tools exposed to the model (`TOOL_SCHEMAS`):
 
-- `search_nodes`: vector and keyword search.
+- `search_nodes`: the shared entity-first search in [search.md](search.md),
+  with a `match_reason` on each result.
+- `search_notes`: greps the research notes for a literal phrase and returns
+  `passages` (`file`, `line`, `text`). It needs `data_dir`.
 - `get_entity_overview`: one company with its consensus, themes, and links.
 - `query_entity_signals`: events and views for a company, filtered by category.
 - `find_theme_companies`: companies exposed to a theme.
@@ -35,7 +39,7 @@ Tools exposed to the model (`TOOL_SCHEMAS`):
 - `traverse_graph`: breadth-first walk from a node.
 - `list_catalog`: counts and top nodes, for orientation.
 
-Each tool is a thin wrapper over an `OntologyDB` query. Every call is recorded
+Each tool is a thin wrapper over an `OntologyDB` query or the shared search. Every call is recorded
 in a tool trace that the web chat shows.
 
 `build_agent_system_prompt(language)` adds a reply-language instruction. The
@@ -44,7 +48,7 @@ graph's own text stays in its original language.
 ## Depends on
 
 [storage.md](storage.md) (read-only), [ontology.md](ontology.md),
-[llm.md](llm.md), and i18n from [shared.md](shared.md).
+[llm.md](llm.md), [search.md](search.md), and i18n from [shared.md](shared.md).
 
 ## Used by
 
