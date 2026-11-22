@@ -11,6 +11,7 @@ from collections import Counter
 from stock_ontology.audit import (
     AuditReport,
     classify_edge_against_registry,
+    node_type_label,
     run_ontology_audit,
 )
 from stock_ontology.db import SIGNAL_CATEGORY_ALIASES, OntologyDB, node_to_dict
@@ -835,12 +836,6 @@ def _build_diagram_links(
     }
 
 
-def _endpoint_label(node_type: str, entity_type: str | None) -> str:
-    if node_type == "entity" and entity_type:
-        return f"entity:{entity_type}"
-    return node_type
-
-
 def _build_registry_view(
     registry: OntologyRegistry,
     audit_report: AuditReport,
@@ -1304,11 +1299,11 @@ def build_ontology_context(
                 {
                     "from_type": ft,
                     "from_entity_type": fet,
-                    "from_label": _endpoint_label(ft, fet),
+                    "from_label": node_type_label(ft, fet),
                     "relation": rel,
                     "to_type": tt,
                     "to_entity_type": tet,
-                    "to_label": _endpoint_label(tt, tet),
+                    "to_label": node_type_label(tt, tet),
                     "count": cnt,
                     "classification": cls_dict,
                     "suggestion_status": sug_status,
@@ -1338,8 +1333,8 @@ def build_ontology_context(
             edge_samples.append(
                 {
                     **e,
-                    "from_label": _endpoint_label(e["from_type"], e["from_entity_type"]),
-                    "to_label": _endpoint_label(e["to_type"], e["to_entity_type"]),
+                    "from_label": node_type_label(e["from_type"], e["from_entity_type"]),
+                    "to_label": node_type_label(e["to_type"], e["to_entity_type"]),
                     "from_href": from_href,
                     "to_href": to_href,
                     "classification": cls_dict,

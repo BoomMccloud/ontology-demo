@@ -20,10 +20,13 @@ from stock_ontology.registry import (
     RelationSuggestion,
     SampleEdge,
     ThemeSuggestion,
+    company_suggestion_sort_key,
     make_suggestion_id,
     matches_type_spec,
+    normalize_name_key,
     normalize_relation_name,
     normalize_ticker,
+    theme_suggestion_sort_key,
 )
 
 ALIAS_STOP_WORDS = {
@@ -214,7 +217,8 @@ def _cosine_distance(a: list[float], b: list[float]) -> float:
     return max(0.0, 1.0 - dot / (na * nb))
 
 
-def _node_type_label(node_type: str, entity_type: str | None) -> str:
+def node_type_label(node_type: str, entity_type: str | None) -> str:
+    """Registry endpoint label: `entity:<type>` for typed entities, else the node type."""
     if node_type == "entity" and entity_type:
         return f"entity:{entity_type}"
     return node_type
@@ -441,7 +445,7 @@ def run_ontology_audit(
             norm_rel = normalize_relation_name(raw_rel)
             unmapped_rel_counts[norm_rel] += 1
             unmapped_rel_sigs[norm_rel][
-                (_node_type_label(from_type, from_et), _node_type_label(to_type, to_et))
+                (node_type_label(from_type, from_et), node_type_label(to_type, to_et))
             ] += 1
             if len(unmapped_rel_samples[norm_rel]) < 3:
                 unmapped_rel_samples[norm_rel].append(sample)
@@ -459,7 +463,7 @@ def run_ontology_audit(
 
         if cls.issue_type is not None:
             observed_sig = (
-                f"{_node_type_label(from_type, from_et)} -> {_node_type_label(to_type, to_et)}"
+                f"{node_type_label(from_type, from_et)} -> {node_type_label(to_type, to_et)}"
             )
             expected_sig = cls.expected_signature or "* -> *"
             key = (
@@ -663,9 +667,7 @@ def run_ontology_audit(
             )
         )
 
-    unmapped_companies.sort(
-        key=lambda c: (0 if c.has_consensus else 1, -c.signal_count, c.name.casefold())
-    )
+    unmapped_companies.sort(key=company_suggestion_sort_key)
 
     duplicate_company_candidates: list[NearDuplicatePair] = []
     for i in range(len(companies)):
@@ -766,12 +768,7 @@ def run_ontology_audit(
             )
         )
 
-    unmapped_themes.sort(
-        key=lambda t: (
-            t.nearest_official.distance if t.nearest_official is not None else 9.9,
-            t.name.casefold(),
-        )
-    )
+    unmapped_themes.sort(key=theme_suggestion_sort_key)
 
     near_duplicate_themes: list[NearDuplicatePair] = []
     for i in range(len(themes)):
@@ -812,8 +809,8 @@ def run_ontology_audit(
         official_aliases: set[str] | None = None
         official_ticker: str | None = None
         if spec is not None:
-            official_aliases = {a.strip().casefold() for a in spec.aliases if a.strip()}
-            official_aliases.add(spec.name.strip().casefold())
+            official_aliases = {normalize_name_key(a) for a in spec.aliases if a.strip()}
+            official_aliases.add(normalize_name_key(spec.name))
             official_ticker = normalize_ticker(spec.ticker)
         suspicious_aliases.extend(
             _find_suspicious_aliases(

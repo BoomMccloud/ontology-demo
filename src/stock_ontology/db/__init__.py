@@ -10,6 +10,7 @@ from stock_ontology.db.schema import (
     SIGNAL_CATEGORY_ALIASES,
     THEME_EXPOSURE_RELATIONS,
     merge_edge_facets,
+    node_meta,
     node_to_dict,
     reconcile_sentiment,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "THEME_EXPOSURE_RELATIONS",
     "OntologyDB",
     "merge_edge_facets",
+    "node_meta",
     "node_to_dict",
     "reconcile_sentiment",
 ]
