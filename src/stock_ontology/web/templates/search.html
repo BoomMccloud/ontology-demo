@@ -52,10 +52,10 @@
               {% endif %}
               <div class="u-mt-4px">
                 {% if item.effective_sentiment %}
-                  <span class="badge badge-{{ item.effective_sentiment | lower }}">{{ t_enum('sentiment', item.effective_sentiment) }}</span>
+                  <span class="badge badge-{{ item.effective_sentiment }}">{{ t_enum('sentiment', item.effective_sentiment) }}</span>
                 {% endif %}
                 {% if item.stance %}
-                  <span class="badge badge-{{ item.stance | lower }}">{{ t_enum('stance', item.stance) }}</span>
+                  <span class="badge badge-{{ item.stance }}">{{ t_enum('stance', item.stance) }}</span>
                 {% endif %}
                 {% if item.date %}
                   <span class="source-cite">{{ item.date }}</span>

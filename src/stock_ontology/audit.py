@@ -25,6 +25,7 @@ from stock_ontology.registry import (
     normalize_relation_name,
     normalize_ticker,
 )
+from stock_ontology.vocab import out_of_vocabulary_node_facets
 
 ALIAS_STOP_WORDS = {
     "inc",
@@ -71,6 +72,7 @@ class AuditSummary(BaseModel):
     total_events: int = 0
     views_missing_sentiment: int = 0
     total_views: int = 0
+    out_of_vocabulary_value_count: int = 0
 
 
 class RelationNormalizationHit(BaseModel):
@@ -155,6 +157,15 @@ class FacetAliasHit(BaseModel):
     count: int
 
 
+class OutOfVocabularyValue(BaseModel):
+    """A stored enum facet value that is not a member of its `vocab` vocabulary."""
+
+    node_type: str
+    facet: str
+    value: str
+    count: int
+
+
 class ReciprocalContradiction(BaseModel):
     """Asymmetric official relation observed in opposing directions between the same pair."""
 
@@ -184,6 +195,7 @@ class AuditReport(BaseModel):
     suspicious_aliases: list[SuspiciousAlias] = Field(default_factory=list)
     ticker_normalization_issues: list[TickerNormalizationIssue] = Field(default_factory=list)
     facet_alias_hits: list[FacetAliasHit] = Field(default_factory=list)
+    out_of_vocabulary_values: list[OutOfVocabularyValue] = Field(default_factory=list)
 
 
 EdgeRegistryStatus = Literal[
@@ -299,7 +311,7 @@ def _find_suspicious_aliases(
     if not node.aliases:
         return []
 
-    entity_type = str(node.facets.get("entity_type") or "").strip().lower() or None
+    entity_type = str(node.facets.get("entity_type") or "") or None
     raw_ticker = node.facets.get("ticker")
     node_norm_ticker = normalize_ticker(str(raw_ticker)) if raw_ticker is not None else None
     name_clean = node.name.strip()
@@ -577,7 +589,7 @@ def run_ontology_audit(
         (
             n
             for n in all_entities
-            if str(n.facets.get("entity_type") or "").strip().lower() == "company"
+            if n.facets.get("entity_type") == "company"
         ),
         key=lambda n: n.name.casefold(),
     )
@@ -831,8 +843,11 @@ def run_ontology_audit(
     events_missing_sentiment = 0
     total_views = 0
     views_missing_sentiment = 0
+    oov_counts: dict[tuple[str, str, str], int] = defaultdict(int)
 
     for node in db.list_nodes(limit=10000):
+        for facet, value in out_of_vocabulary_node_facets(node.node_type, node.facets).items():
+            oov_counts[(node.node_type, facet, value)] += 1
         for key in node.facets:
             canonical_key = registry.resolve_facet_key(node.node_type, key)
             if canonical_key != key:
@@ -856,6 +871,11 @@ def run_ontology_audit(
         for (nt, raw_k, canon_k), cnt in sorted(
             facet_counts.items(), key=lambda kv: (-kv[1], kv[0][0], kv[0][1])
         )
+    ]
+
+    out_of_vocabulary_values = [
+        OutOfVocabularyValue(node_type=nt, facet=facet, value=value, count=cnt)
+        for (nt, facet, value), cnt in sorted(oov_counts.items(), key=lambda kv: (-kv[1], kv[0]))
     ]
 
     summary = AuditSummary(
@@ -882,6 +902,7 @@ def run_ontology_audit(
         total_events=total_events,
         views_missing_sentiment=views_missing_sentiment,
         total_views=total_views,
+        out_of_vocabulary_value_count=sum(v.count for v in out_of_vocabulary_values),
     )
 
     return AuditReport(
@@ -899,4 +920,5 @@ def run_ontology_audit(
         suspicious_aliases=suspicious_aliases,
         ticker_normalization_issues=ticker_normalization_issues,
         facet_alias_hits=facet_alias_hits,
+        out_of_vocabulary_values=out_of_vocabulary_values,
     )

@@ -22,7 +22,6 @@ import sqlite_vec
 
 from stock_ontology.db.schema import (
     SECOND_ORDER_ENTITY_RELATIONS,
-    SIGNAL_CATEGORY_ALIASES,
     init_schema,
     merge_edge_facets,
     node_meta,
@@ -44,6 +43,13 @@ from stock_ontology.registry import (
     CanonicalEdgeResult,
     OntologyRegistry,
     create_minimal_registry,
+    normalize_relation_name,
+)
+from stock_ontology.vocab import (
+    matches_signal_filter,
+    parse_category_filter,
+    parse_filter_values,
+    parse_sentiment_filter,
 )
 
 
@@ -214,7 +220,7 @@ class OntologyDB:
 
     def upsert_edge(self, edge: Edge) -> str:
         """Insert an edge or update facets if an identical (from, to, relation, doc) exists."""
-        norm_rel = edge.relation.strip().upper().replace(" ", "_")
+        norm_rel = normalize_relation_name(edge.relation)
         with self.transaction():
             existing = self.conn.execute(
                 """
@@ -256,7 +262,7 @@ class OntologyDB:
             SELECT DISTINCT n.id
             FROM nodes n
             WHERE n.node_type = 'entity'
-              AND lower(COALESCE(json_extract(n.facets_json, '$.entity_type'), '')) = 'company'
+              AND json_extract(n.facets_json, '$.entity_type') = 'company'
               AND (
                   n.id IN (SELECT from_id FROM edges WHERE source_doc_id = ?)
                   OR n.id IN (SELECT to_id FROM edges WHERE source_doc_id = ?)
@@ -334,7 +340,7 @@ class OntologyDB:
         with self.transaction():
             self.conn.execute(
                 "UPDATE edges SET relation = ?, from_id = ?, to_id = ?, facets_json = ? WHERE id = ?",
-                (relation, from_id, to_id, json.dumps(facets), edge_id),
+                (normalize_relation_name(relation), from_id, to_id, json.dumps(facets), edge_id),
             )
 
     def merge_node_into(self, loser_id: str, survivor_id: str) -> int:
@@ -858,8 +864,8 @@ class OntologyDB:
         for r in rows:
             from_facets = json.loads(r["from_facets_json"])
             to_facets = json.loads(r["to_facets_json"])
-            from_et = str(from_facets.get("entity_type") or "").strip().lower() or None
-            to_et = str(to_facets.get("entity_type") or "").strip().lower() or None
+            from_et = str(from_facets.get("entity_type") or "") or None
+            to_et = str(to_facets.get("entity_type") or "") or None
             edges.append(
                 {
                     "edge_id": str(r["edge_id"]),
@@ -980,7 +986,7 @@ class OntologyDB:
                 "edge_facets": item["facets"],
             }
             if ntype == "event":
-                rel = str(item["relation"]).strip().upper()
+                rel = str(item["relation"])
                 rank = (
                     1 if normalize_sentiment(item["facets"].get("sentiment")) is not None else 0,
                     1 if rel == "ABOUT" else 0,
@@ -1004,7 +1010,7 @@ class OntologyDB:
                         if status == "superseded" and nid not in prior_by_id:
                             prior_by_id[nid] = {**neighbor, **edge_info}
                 else:
-                    rel = str(item["relation"]).strip().upper()
+                    rel = str(item["relation"])
                     rank = (
                         1 if normalize_sentiment(item["facets"].get("sentiment")) is not None else 0,
                         1 if rel == "ABOUT" else 0,
@@ -1181,13 +1187,13 @@ class OntologyDB:
             if ntype not in ("event", "view"):
                 continue
 
-            rel = str(item["relation"]).strip().upper()
+            rel = str(item["relation"])
             if not include_authored and rel == "AUTHORED_BY":
                 continue
 
             facets = neighbor["facets"]
-            if ntype == "view" and str(facets.get("view_type") or "").strip().lower() == "consensus":
-                status = str(facets.get("status") or "active").strip().lower()
+            if ntype == "view" and facets.get("view_type") == "consensus":
+                status = facets.get("status") or "active"
                 if not include_consensus or status != "active":
                     continue
 
@@ -1237,33 +1243,14 @@ class OntologyDB:
         if entity is None:
             raise KeyError(f"Node not found: {entity_id}")  # noqa: TRY003
 
-        norm_sentiments: set[str] | None = None
-        if sentiments:
-            parsed_sents = set()
-            for raw in sentiments:
-                cleaned = str(raw).strip().lower()
-                if not cleaned:
-                    continue
-                if cleaned in ("unknown", "unclassified", "none"):
-                    parsed_sents.add("unclassified")
-                else:
-                    parsed_sents.add(cleaned)
-            norm_sentiments = parsed_sents or None
+        norm_sentiments = parse_filter_values(sentiments, parse_sentiment_filter)
 
         norm_node_types: set[str] | None = None
         if node_types:
             parsed_types = {str(nt).strip().lower() for nt in node_types if str(nt).strip()}
             norm_node_types = parsed_types or None
 
-        norm_categories: set[str] | None = None
-        if categories:
-            parsed_cats = set()
-            for raw in categories:
-                cleaned = str(raw).strip().lower().replace(" ", "_")
-                if not cleaned:
-                    continue
-                parsed_cats.add(SIGNAL_CATEGORY_ALIASES.get(cleaned, cleaned))
-            norm_categories = parsed_cats or None
+        norm_categories = parse_filter_values(categories, parse_category_filter)
 
         norm_statuses: set[str] | None = None
         if statuses:
@@ -1280,25 +1267,15 @@ class OntologyDB:
             include_authored=include_authored,
         )
 
-        def _matches_category(item: dict[str, Any], cat: str) -> bool:
-            ntype = item["node_type"]
-            subtype = str(item.get("subtype") or "").strip().lower()
-            status = str(item["facets"].get("status") or "").strip().lower()
-            if cat == "rumor":
-                return (ntype == "view" and subtype == "rumor") or (
-                    ntype == "event" and (status == "rumored" or subtype == "rumor")
-                )
-            return subtype == cat
-
         scope_items: list[dict[str, Any]] = []
         for item in raw_items:
             if norm_node_types is not None and item["node_type"] not in norm_node_types:
                 continue
-            item_status = str(item["facets"].get("status") or "").strip().lower()
+            item_status = str(item["facets"].get("status") or "")
             if norm_statuses is not None and item_status not in norm_statuses:
                 continue
-            if norm_categories is not None and not any(
-                _matches_category(item, cat) for cat in norm_categories
+            if not matches_signal_filter(
+                item["node_type"], item["facets"], None, categories=norm_categories
             ):
                 continue
             if d_from is not None or d_to is not None:
@@ -1315,14 +1292,16 @@ class OntologyDB:
             1 for item in scope_items if item["effective_sentiment"] is None
         )
 
-        if norm_sentiments is not None:
-            matched = [
-                item
-                for item in scope_items
-                if (item["effective_sentiment"] or "unclassified") in norm_sentiments
-            ]
-        else:
-            matched = list(scope_items)
+        matched = [
+            item
+            for item in scope_items
+            if matches_signal_filter(
+                item["node_type"],
+                item["facets"],
+                item["effective_sentiment"],
+                sentiments=norm_sentiments,
+            )
+        ]
 
         matched.sort(key=lambda item: item["name"].casefold())
         matched.sort(key=lambda item: str(item.get("date") or ""), reverse=True)
@@ -1340,11 +1319,11 @@ class OntologyDB:
             counts_by_sentiment[eff] = counts_by_sentiment.get(eff, 0) + 1
             ntype = item["node_type"]
             counts_by_node_type[ntype] = counts_by_node_type.get(ntype, 0) + 1
-            subtype_key = str(item.get("subtype") or ntype).strip().lower()
+            subtype_key = str(item.get("subtype") or ntype)
             counts_by_subtype[subtype_key] = counts_by_subtype.get(subtype_key, 0) + 1
             if (
                 ntype == "event"
-                and str(item["facets"].get("status") or "").strip().lower() == "rumored"
+                and item["facets"].get("status") == "rumored"
             ):
                 rumored_event_count += 1
 
@@ -1381,7 +1360,7 @@ class OntologyDB:
         if start is None:
             raise KeyError(f"Node not found: {start_node_id}")  # noqa: TRY003
 
-        rel_filter = {r.strip().upper() for r in relations} if relations else None
+        rel_filter = {normalize_relation_name(r) for r in relations} if relations else None
         visited_hops: dict[str, int] = {start.id: 0}
         nodes_by_id: dict[str, dict[str, Any]] = {start.id: {**node_to_dict(start), "hop": 0}}
         nodes_out: list[dict[str, Any]] = [nodes_by_id[start.id]]
@@ -1398,7 +1377,7 @@ class OntologyDB:
                 continue
             for item in self.get_incident_edges(curr_id):
                 res, _ = self._canonicalize_incident_edge(curr_node, item)
-                rel = res.relation.upper()
+                rel = res.relation
                 if rel_filter is not None and rel not in rel_filter:
                     continue
                 nb = item["neighbor"]
@@ -1459,7 +1438,7 @@ class OntologyDB:
         def _is_company(node_dict: dict[str, Any]) -> bool:
             return (
                 node_dict["node_type"] == "entity"
-                and str(node_dict["facets"].get("entity_type", "")).lower() == "company"
+                and node_dict["facets"].get("entity_type") == "company"
             )
 
         for item in self.get_incident_edges(theme.id):
@@ -1641,7 +1620,7 @@ class OntologyDB:
         where_type = ""
         params: list[Any] = []
         if entity_type is not None:
-            where_type = "AND lower(COALESCE(json_extract(ent.facets_json, '$.entity_type'), '')) = ?"
+            where_type = "AND json_extract(ent.facets_json, '$.entity_type') = ?"
             params.append(entity_type.strip().lower())
 
         sql = f"""
@@ -1723,7 +1702,7 @@ class OntologyDB:
             nb_id = str(item["neighbor"]["id"])
             if nb_id == entity_id:
                 continue
-            rel = str(item["relation"]).strip().upper()
+            rel = str(item["relation"])
             edge_facets = item["facets"]
             rank = (
                 1 if normalize_sentiment(edge_facets.get("sentiment")) is not None else 0,

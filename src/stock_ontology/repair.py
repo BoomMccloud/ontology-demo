@@ -1,4 +1,4 @@
-"""Deterministic repair of stored ontology data: orphans, relation names, exact duplicates.
+"""Deterministic repair of stored ontology data: orphans, enum facets, relation names, exact duplicates.
 
 Only fixes with a single right answer live here. Judgment calls (unknown relations,
 near-duplicate entities) are queued as pending registry suggestions by `audit`.
@@ -14,6 +14,7 @@ from typing import Any
 from stock_ontology.db import OntologyDB, merge_edge_facets
 from stock_ontology.models import Node
 from stock_ontology.registry import OntologyRegistry
+from stock_ontology.vocab import canonicalize_edge_facets, canonicalize_node_facets
 
 
 @dataclass
@@ -22,6 +23,8 @@ class RepairReport:
 
     orphan_nodes_deleted: int = 0
     orphan_edges_deleted: int = 0
+    # Nodes and edges whose enum facets were lowercased or mapped to their vocabulary member.
+    facets_canonicalized: int = 0
     edges_canonicalized: int = 0
     duplicate_edges_deleted: int = 0
     nodes_merged: int = 0
@@ -36,6 +39,7 @@ class RepairReport:
         return (
             self.orphan_nodes_deleted
             + self.orphan_edges_deleted
+            + self.facets_canonicalized
             + self.edges_canonicalized
             + self.duplicate_edges_deleted
             + self.nodes_merged
@@ -51,6 +55,7 @@ def repair_ontology(db: OntologyDB, registry: OntologyRegistry) -> RepairReport:
     report = RepairReport()
     with db.transaction():
         _delete_orphan_artifacts(db, report)
+        _canonicalize_facets(db, report)
         _apply_approved_merges(db, registry, report)
         _merge_exact_duplicates(db, report)
         _canonicalize_relations(db, registry, report)
@@ -66,6 +71,27 @@ def _delete_orphan_artifacts(db: OntologyDB, report: RepairReport) -> None:
         db.delete_document_artifacts(doc_id)
         report.orphan_nodes_deleted += nodes
         report.orphan_edges_deleted += edges
+
+
+def _canonicalize_facets(db: OntologyDB, report: RepairReport) -> None:
+    """Map stored enum facets to their vocabulary member; lowercase, but keep, unknown values."""
+    for node in db.list_all_nodes():
+        facets = canonicalize_node_facets(node.node_type, node.facets)
+        if facets != node.facets:
+            node.facets = facets
+            db.upsert_node(node)
+            report.facets_canonicalized += 1
+    for edge in db.list_edges_with_endpoints():
+        facets = canonicalize_edge_facets(edge["facets"])
+        if facets != edge["facets"]:
+            db.update_edge(
+                edge["edge_id"],
+                relation=edge["relation"],
+                from_id=edge["from_id"],
+                to_id=edge["to_id"],
+                facets=facets,
+            )
+            report.facets_canonicalized += 1
 
 
 def _canonicalize_relations(
@@ -101,7 +127,7 @@ def _canonicalize_relations(
 
 
 def _merge_key(node: Node) -> tuple[str, str]:
-    entity_type = str(node.facets.get("entity_type", "")).strip().casefold()
+    entity_type = str(node.facets.get("entity_type", ""))
     return node.node_type, entity_type if node.node_type == "entity" else ""
 
 

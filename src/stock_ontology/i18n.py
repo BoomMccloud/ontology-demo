@@ -323,7 +323,7 @@ def format_relation_label(
     lang: str = DEFAULT_LANGUAGE,
 ) -> str:
     """Format a relation (and optional focus-relative direction) into a natural localized label."""
-    norm_rel = str(relation or "").strip().upper()
+    norm_rel = str(relation or "").strip()
     if not norm_rel:
         return ""
     resolved = normalize_language(lang) or DEFAULT_LANGUAGE

@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from stock_ontology.models import Edge, Node, Sentiment, normalize_sentiment
+from stock_ontology.vocab import SIGNAL_CATEGORY_ALIASES  # noqa: F401  (re-exported by stock_ontology.db)
+
 
 SECOND_ORDER_ENTITY_RELATIONS = {
     "BUY",
@@ -21,26 +23,6 @@ SECOND_ORDER_ENTITY_RELATIONS = {
 
 THEME_EXPOSURE_RELATIONS = {
     "EXPOSED_TO",
-}
-
-SIGNAL_CATEGORY_ALIASES: dict[str, str] = {
-    "rumor": "rumor",
-    "rumors": "rumor",
-    "news": "news",
-    "fact": "fact",
-    "facts": "fact",
-    "earnings": "earnings",
-    "catalyst": "catalyst",
-    "catalysts": "catalyst",
-    "meeting": "meeting",
-    "meetings": "meeting",
-    "analyst_report": "analyst_report",
-    "analyst_reports": "analyst_report",
-    "pm_view": "pm_view",
-    "pm_views": "pm_view",
-    "channel_check": "channel_check",
-    "channel_checks": "channel_check",
-    "consensus": "consensus",
 }
 
 
@@ -165,12 +147,12 @@ def node_to_dict(node: Node) -> dict[str, Any]:
 
 
 def node_meta(node: Node | dict[str, Any]) -> tuple[str, str, str | None]:
-    """Return (id, node_type, lowercased entity_type) for a node or node dict."""
+    """Return (id, node_type, entity_type) for a node or node dict."""
     if isinstance(node, Node):
         et = node.facets.get("entity_type")
-        return node.id, node.node_type, str(et).strip().lower() if et else None
+        return node.id, node.node_type, str(et) if et else None
     et = node["facets"].get("entity_type")
-    return str(node["id"]), str(node["node_type"]), str(et).strip().lower() if et else None
+    return str(node["id"]), str(node["node_type"]), str(et) if et else None
 
 
 def sql_casefold(value: Any) -> str | None:

@@ -13,7 +13,7 @@ from stock_ontology.audit import (
     classify_edge_against_registry,
     run_ontology_audit,
 )
-from stock_ontology.db import SIGNAL_CATEGORY_ALIASES, OntologyDB, node_to_dict
+from stock_ontology.db import OntologyDB, node_to_dict
 from stock_ontology.i18n import (
     DEFAULT_LANGUAGE,
     translate,
@@ -26,6 +26,12 @@ from stock_ontology.registry import (
     OntologyRegistry,
     normalize_name_key,
     normalize_relation_name,
+)
+from stock_ontology.vocab import (
+    matches_signal_filter,
+    node_subtype,
+    parse_category_filter,
+    parse_sentiment_filter,
 )
 from stock_ontology.web.catalog import format_source_citation, resolve_safe_note_path
 
@@ -150,7 +156,7 @@ def build_rail_context(db: OntologyDB) -> dict[str, Any]:
     company_count = sum(
         1
         for ent in all_entities
-        if str(ent.facets.get("entity_type", "entity")).lower() == "company"
+        if ent.facets.get("entity_type", "entity") == "company"
     )
     other_entity_count = len(all_entities) - company_count
     return {
@@ -172,7 +178,7 @@ def _load_entities_split(
     other_entities: list[dict[str, Any]] = []
 
     for ent in all_entities:
-        etype = str(ent.facets.get("entity_type", "entity")).lower()
+        etype = str(ent.facets.get("entity_type", "entity"))
         if etype == "company":
             overview = db.get_entity_overview(ent.id)
             cons = overview["consensus"]
@@ -354,7 +360,7 @@ def build_entity_context(
         raise KeyError(f"Node {entity_id} is a {entity['node_type']}, not an entity")  # noqa: TRY003
 
     facets: dict[str, Any] = entity.get("facets", {})
-    entity_type = str(facets.get("entity_type", "entity")).lower()
+    entity_type = str(facets.get("entity_type", "entity"))
 
     company_facets = _format_facet_pairs(facets, COMPANY_FACET_KEYS, lang=lang)
     person_facets = _format_facet_pairs(facets, PERSON_FACET_KEYS, lang=lang)
@@ -433,7 +439,7 @@ def build_theme_context(
     for item in db.get_incident_edges(theme_id):
         nb = item["neighbor"]
         nid = str(nb["id"])
-        rel = str(item["relation"]).strip().upper()
+        rel = str(item["relation"])
         edge_facets = item.get("facets") or {}
         eff_sent, sent_src = resolve_item_sentiment(nb.get("facets", {}), edge_facets)
         rank = (
@@ -485,16 +491,7 @@ def build_theme_context(
 
 
 def _node_subtype(node: Node) -> str:
-    facets = node.facets or {}
-    if node.node_type == "entity":
-        return str(facets.get("entity_type") or "").strip().lower()
-    if node.node_type == "event":
-        return str(facets.get("event_type") or "").strip().lower()
-    if node.node_type == "view":
-        return str(facets.get("view_type") or "").strip().lower()
-    if node.node_type == "theme":
-        return str(facets.get("stage") or "").strip().lower()
-    return ""
+    return node_subtype(node.node_type, node.facets or {})
 
 
 def _node_date(node: Node) -> str:
@@ -539,7 +536,7 @@ def build_search_filter_options(db: OntologyDB) -> dict[str, Any]:
         sub = _node_subtype(node)
         if sub and node.node_type in observed_subtypes:
             observed_subtypes[node.node_type].add(sub)
-        stance = str(node.facets.get("stance") or "").strip().lower()
+        stance = str(node.facets.get("stance") or "")
         if stance:
             observed_stances.add(stance)
 
@@ -620,7 +617,7 @@ def _format_search_result(
         "subtype": _node_subtype(node),
         "effective_sentiment": eff_sent,
         "sentiment_source": sent_src,
-        "stance": str(node.facets.get("stance") or "").strip().lower() or None,
+        "stance": str(node.facets.get("stance") or "") or None,
         "date": _node_date(node) or None,
         "source_file": _node_source_file(node) or None,
         "score_type": score_type,
@@ -650,15 +647,8 @@ def run_hybrid_search(
     valid_types = ("entity", "event", "view", "theme")
     nt: NodeType | None = node_type if node_type in valid_types else None  # type: ignore[assignment]
 
-    norm_subtype: str | None = None
-    if subtype and subtype.strip():
-        sub_low = subtype.strip().lower().replace(" ", "_")
-        norm_subtype = SIGNAL_CATEGORY_ALIASES.get(sub_low, sub_low)
-
-    norm_sentiment: str | None = None
-    if sentiment and sentiment.strip():
-        s_low = sentiment.strip().lower()
-        norm_sentiment = "unclassified" if s_low in ("unknown", "unclassified", "none") else s_low
+    norm_subtype = parse_category_filter(subtype)
+    norm_sentiment = parse_sentiment_filter(sentiment)
 
     norm_stance = stance.strip().lower() if stance and stance.strip() else None
     norm_entity_id = entity_id.strip() if entity_id and entity_id.strip() else None
@@ -693,28 +683,20 @@ def run_hybrid_search(
             return False
         if norm_entity_id is not None and node.id not in connected_map:
             return False
-        if norm_subtype is not None:
-            node_sub = _node_subtype(node)
-            if norm_subtype == "rumor":
-                status_val = str(node.facets.get("status") or "").strip().lower()
-                if not (
-                    (node.node_type == "view" and node_sub == "rumor")
-                    or (
-                        node.node_type == "event"
-                        and (status_val == "rumored" or node_sub == "rumor")
-                    )
-                ):
-                    return False
-            elif node_sub != norm_subtype:
-                return False
+        eff_sent: str | None = None
         if norm_sentiment is not None:
             edge_facets = connected_map.get(node.id) if norm_entity_id else None
             eff_sent, _ = resolve_item_sentiment(node.facets, edge_facets)
-            actual = eff_sent or "unclassified"
-            if actual != norm_sentiment:
-                return False
+        if not matches_signal_filter(
+            node.node_type,
+            node.facets,
+            eff_sent,
+            categories={norm_subtype} if norm_subtype is not None else None,
+            sentiments={norm_sentiment} if norm_sentiment is not None else None,
+        ):
+            return False
         if norm_stance is not None:
-            node_stance = str(node.facets.get("stance") or "").strip().lower()
+            node_stance = str(node.facets.get("stance") or "")
             if node_stance != norm_stance:
                 return False
         if norm_date_from is not None or norm_date_to is not None:
@@ -1474,8 +1456,8 @@ def build_ontology_context(
                     "summary": n.summary,
                     "subtype": subtype_val,
                     "effective_sentiment": eff_sent,
-                    "stance": str(n.facets.get("stance") or "").strip().lower() or None,
-                    "status": str(n.facets.get("status") or "").strip().lower() or None,
+                    "stance": str(n.facets.get("stance") or "") or None,
+                    "status": str(n.facets.get("status") or "") or None,
                     "date": _node_date(n) or None,
                     "edge_count": edge_counts.get(n.id, 0),
                     "href": _resolve_result_href(db, n),

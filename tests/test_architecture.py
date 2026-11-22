@@ -20,6 +20,7 @@ MODULE_OF: dict[str, str] = {
     "i18n": "shared",
     "models": "ontology",
     "registry": "ontology",
+    "vocab": "ontology",
     "db": "storage",
     "llm": "llm",
     "pipeline": "pipeline",

@@ -4,7 +4,7 @@ The app is nine modules. Each has its own page.
 
 | Module | Files | Page |
 | --- | --- | --- |
-| Ontology | `models.py`, `registry.py` | [ontology.md](ontology.md) |
+| Ontology | `models.py`, `registry.py`, `vocab.py` | [ontology.md](ontology.md) |
 | Storage | `db/schema.py`, `db/storage.py` | [storage.md](storage.md) |
 | Data pipeline | `pipeline.py`, `llm/prompts.py` | [pipeline.md](pipeline.md) |
 | LLM layer | `llm/` | [llm.md](llm.md) |
@@ -32,7 +32,7 @@ Each layer may import from layers above it, never below.
 
 ```text
 1. shared         config, i18n
-2. ontology       models, registry
+2. ontology       models, registry, vocab
 3. storage, llm   db/, llm/          (independent of each other)
 4. pipeline, agent, governance        (independent of each other)
 5. web app

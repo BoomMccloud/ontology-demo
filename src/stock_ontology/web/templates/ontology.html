@@ -418,7 +418,7 @@
             {% for th in registry_view.themes %}
               <tr>
                 <td><strong>{{ th.name }}</strong></td>
-                <td><span class="badge badge-{{ th.stage | lower }}">{{ t_enum('stage', th.stage) }}</span></td>
+                <td><span class="badge badge-{{ th.stage }}">{{ t_enum('stage', th.stage) }}</span></td>
                 <td class="mono u-fs-0p82rem">{{ th.aliases | join(', ') or t('common.none') }}</td>
                 <td>
                   {% for m in th.db_matches %}
@@ -530,7 +530,7 @@
                   <td class="mono">{{ c.signal_count }}</td>
                   <td>
                     {% if c.consensus_stance %}
-                      <span class="badge badge-{{ c.consensus_stance | lower }}">{{ t_enum('stance', c.consensus_stance) }}</span>
+                      <span class="badge badge-{{ c.consensus_stance }}">{{ t_enum('stance', c.consensus_stance) }}</span>
                     {% else %}{{ t('common.none') }}{% endif %}
                   </td>
                   <td class="mono u-fs-0p82rem">
@@ -567,7 +567,7 @@
                     <div class="source-cite">{{ th.summary[:120] }}{% if th.summary | length > 120 %}...{% endif %}</div>
                   </td>
                   <td><span class="badge">{{ t_enum('suggestion_status', th.suggestion_status) }}</span></td>
-                  <td>{% if th.stage %}<span class="badge badge-{{ th.stage | lower }}">{{ t_enum('stage', th.stage) }}</span>{% else %}{{ t('common.none') }}{% endif %}</td>
+                  <td>{% if th.stage %}<span class="badge badge-{{ th.stage }}">{{ t_enum('stage', th.stage) }}</span>{% else %}{{ t('common.none') }}{% endif %}</td>
                   <td class="mono u-fs-0p82rem">
                     {% if th.nearest_official %}
                       {{ th.nearest_official.name }} (d={{ '%.3f' | format(th.nearest_official.distance) }})
@@ -876,10 +876,10 @@
                 {% endif %}
                 <div class="u-mt-4px">
                   {% if rec.effective_sentiment %}
-                    <span class="badge badge-{{ rec.effective_sentiment | lower }}">{{ t_enum('sentiment', rec.effective_sentiment) }}</span>
+                    <span class="badge badge-{{ rec.effective_sentiment }}">{{ t_enum('sentiment', rec.effective_sentiment) }}</span>
                   {% endif %}
                   {% if rec.stance %}
-                    <span class="badge badge-{{ rec.stance | lower }}">{{ t_enum('stance', rec.stance) }}</span>
+                    <span class="badge badge-{{ rec.stance }}">{{ t_enum('stance', rec.stance) }}</span>
                   {% endif %}
                   {% if rec.status %}
                     <span class="source-cite">{{ t_enum('status', rec.status) }}</span>

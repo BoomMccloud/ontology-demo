@@ -144,7 +144,7 @@
           <strong>{{ active_group.entity.name }}</strong>
           {% if active_group.entity.ticker %}<span class="mono">({{ active_group.entity.ticker }})</span>{% endif %}
           {% if active_group.entity.consensus_stance %}
-            <span class="badge badge-{{ active_group.entity.consensus_stance | lower }}">{{ t_enum('stance', active_group.entity.consensus_stance) }}</span>
+            <span class="badge badge-{{ active_group.entity.consensus_stance }}">{{ t_enum('stance', active_group.entity.consensus_stance) }}</span>
           {% endif %}
           {% if active_group.entity.sector %}
             &bull; <span class="source-cite">{{ active_group.entity.sector }}</span>
@@ -206,7 +206,7 @@
             </td>
             <td class="catalog-nowrap">
               {% if grp.entity and grp.entity.consensus_stance %}
-                <span class="badge badge-{{ grp.entity.consensus_stance | lower }}">{{ t_enum('stance', grp.entity.consensus_stance) }}</span>
+                <span class="badge badge-{{ grp.entity.consensus_stance }}">{{ t_enum('stance', grp.entity.consensus_stance) }}</span>
               {% else %}
                 <span class="source-cite">{{ t('common.none') }}</span>
               {% endif %}

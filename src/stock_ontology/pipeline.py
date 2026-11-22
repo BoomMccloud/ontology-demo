@@ -24,6 +24,7 @@ from stock_ontology.models import (
     facets_list_to_dict,
     normalize_sentiment,
 )
+from stock_ontology.vocab import ENTITY_TYPE, STAGE
 
 # Most recently updated entities and themes listed in the extraction catalog (each type),
 # in addition to every entity/theme the note names.
@@ -251,7 +252,7 @@ class IngestionPipeline:
     ) -> Node | None:
         """Map a registry company/theme match to the stored node carrying any of its labels."""
         labels: list[str] = []
-        if node_type == "entity" and str(facets.get("entity_type", "")).strip().lower() == "company":
+        if node_type == "entity" and facets.get("entity_type") == "company":
             ticker = facets.get("ticker")
             company = self.registry.resolve_company(
                 name, ticker=str(ticker) if ticker else None, aliases=aliases
@@ -268,7 +269,7 @@ class IngestionPipeline:
             found = self.db.find_by_name_or_alias(label, node_type=node_type)
             if found is None:
                 continue
-            if node_type == "entity" and str(found.facets.get("entity_type", "")).strip().lower() != "company":
+            if node_type == "entity" and found.facets.get("entity_type") != "company":
                 continue
             return found
         return None
@@ -291,7 +292,7 @@ class IngestionPipeline:
         if node is None:
             return "entity", None
         et = node.facets.get("entity_type")
-        return node.node_type, str(et).strip().lower() if et else None
+        return node.node_type, str(et) if et else None
 
     def _process_document(
         self,
@@ -385,7 +386,8 @@ class IngestionPipeline:
         # 1. Resolve canonical entities & themes.
         for ent in extraction.entities:
             ent_facets = facets_list_to_dict(ent.facets)
-            ent_facets.setdefault("entity_type", ent.entity_type or "company")
+            # A facet-list `entity_type` still wins over the field, but only as a member.
+            ent_facets["entity_type"] = ENTITY_TYPE.coerce(ent_facets.get("entity_type")) or ent.entity_type
             node, updated = self._resolve_canonical_node(
                 node_type="entity",
                 temp_id=ent.temp_id,
@@ -400,12 +402,12 @@ class IngestionPipeline:
             local_nodes[node.id] = node
             if updated:
                 nodes_written += 1
-            if str(node.facets.get("entity_type", "")).lower() == "company":
+            if node.facets.get("entity_type") == "company":
                 affected_company_ids.add(node.id)
 
         for thm in extraction.themes:
             thm_facets = facets_list_to_dict(thm.facets)
-            thm_facets.setdefault("stage", thm.stage or "accelerating")
+            thm_facets["stage"] = STAGE.coerce(thm_facets.get("stage")) or thm.stage
             node, updated = self._resolve_canonical_node(
                 node_type="theme",
                 temp_id=thm.temp_id,
@@ -502,7 +504,7 @@ class IngestionPipeline:
 
         if not event_nodes and not view_nodes:
             if prior is not None:
-                prior.facets["status"] = "stale"
+                prior.facets["status"] = "superseded"
                 prior.updated_at = datetime.now(UTC)
                 self.db.upsert_node(prior)
                 return True
@@ -642,7 +644,7 @@ class IngestionPipeline:
             target_company_ids = sorted(
                 n.id
                 for n in self.db.list_nodes(node_type="entity", limit=5000)
-                if str(n.facets.get("entity_type", "")).lower() == "company"
+                if n.facets.get("entity_type") == "company"
             )
         else:
             target_company_ids = sorted(affected_company_ids)
@@ -749,10 +751,10 @@ def _resolve_sentiment(*candidates: Any) -> str:
 
 def _build_event_node(ev: Any, *, doc_id: str, source_meta: dict[str, Any], now: datetime) -> Node:
     facets = facets_list_to_dict(ev.facets)
-    facets["event_type"] = ev.event_type or "fact"
+    facets["event_type"] = ev.event_type
     if ev.event_date:
         facets["event_date"] = ev.event_date
-    facets["status"] = ev.status or "occurred"
+    facets["status"] = ev.status
     explicit = ev.sentiment if "sentiment" in ev.model_fields_set else None
     # Precedence: explicitly extracted field, then a sentiment facet, then the model default.
     facets["sentiment"] = _resolve_sentiment(explicit, facets.get("sentiment"), ev.sentiment)
@@ -772,17 +774,17 @@ def _build_event_node(ev: Any, *, doc_id: str, source_meta: dict[str, Any], now:
 
 def _build_view_node(vw: Any, *, doc_id: str, source_meta: dict[str, Any], now: datetime) -> Node:
     facets = facets_list_to_dict(vw.facets)
-    vtype = (vw.view_type or "analyst_report").strip().lower()
-    if vtype in ("consensus", "house_consensus"):
+    vtype = vw.view_type
+    if vtype == "consensus":
         vtype = "pm_view"
     facets["view_type"] = vtype
-    facets["stance"] = vw.stance or "neutral"
+    facets["stance"] = vw.stance
     # Precedence: extracted field, then a sentiment facet, then the stance.
     facets["sentiment"] = _resolve_sentiment(
         vw.sentiment, facets.get("sentiment"), derive_sentiment_from_stance(facets["stance"])
     )
-    facets["support_strength"] = vw.support_strength or "moderate"
-    facets["conviction"] = vw.conviction or "medium"
+    facets["support_strength"] = vw.support_strength
+    facets["conviction"] = vw.conviction
     if vw.as_of:
         facets["as_of"] = vw.as_of
     facets["source"] = _build_node_source(source_meta, facets)

@@ -26,7 +26,7 @@
             <td><a href="/entity/{{ comp.id }}">{{ comp.name }}</a></td>
             <td>
               {% if comp.consensus and comp.consensus.stance %}
-                <span class="badge badge-{{ comp.consensus.stance | lower }}">{{ t_enum('stance', comp.consensus.stance) }}</span>
+                <span class="badge badge-{{ comp.consensus.stance }}">{{ t_enum('stance', comp.consensus.stance) }}</span>
                 {% if comp.consensus.conviction %}
                   <span class="source-cite">({{ t_enum('conviction', comp.consensus.conviction) }})</span>
                 {% endif %}
@@ -68,7 +68,7 @@
             <td><a href="/theme/{{ thm.id }}">{{ thm.name }}</a></td>
             <td>
               {% if thm.stage %}
-                <span class="badge badge-{{ thm.stage | lower }}">{{ t_enum('stage', thm.stage) }}</span>
+                <span class="badge badge-{{ thm.stage }}">{{ t_enum('stage', thm.stage) }}</span>
               {% else %}
                 <span class="source-cite">{{ t('common.none') }}</span>
               {% endif %}

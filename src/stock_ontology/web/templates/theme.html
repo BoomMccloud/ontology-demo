@@ -8,7 +8,7 @@
     <h1 class="u-m-0 u-fs-1p55rem">{{ theme.name }}</h1>
     <div>
       {% if stage %}
-        <span class="badge badge-{{ stage | lower }}">{{ t('theme.stage_badge', value=t_enum('stage', stage)) }}</span>
+        <span class="badge badge-{{ stage }}">{{ t('theme.stage_badge', value=t_enum('stage', stage)) }}</span>
       {% endif %}
     </div>
   </div>
@@ -46,7 +46,7 @@
             </td>
             <td>
               {% if row.consensus_stance %}
-                <span class="badge badge-{{ row.consensus_stance | lower }}">{{ t_enum('stance', row.consensus_stance) }}</span>
+                <span class="badge badge-{{ row.consensus_stance }}">{{ t_enum('stance', row.consensus_stance) }}</span>
               {% else %}
                 {{ t('common.none') }}
               {% endif %}
@@ -59,7 +59,7 @@
                       {{ format_relation(link.relation, link.direction | default('outgoing')) }}
                       {% set link_sent = link.exposure_sentiment or (link.facets.get("sentiment") if link.facets is mapping else None) %}
                       {% if link_sent %}
-                        <span class="badge badge-{{ link_sent | lower }}">{{ t_enum('sentiment', link_sent) }}</span>
+                        <span class="badge badge-{{ link_sent }}">{{ t_enum('sentiment', link_sent) }}</span>
                       {% endif %}
                       <span class="source-cite">({{ t('theme.via_direct') }})</span>
                     {% else %}

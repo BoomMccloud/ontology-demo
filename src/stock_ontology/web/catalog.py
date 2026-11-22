@@ -522,7 +522,7 @@ def build_catalog_context(
     person_nodes: list[dict[str, Any]] = []
 
     for ent in all_entities:
-        etype = str(ent.facets.get("entity_type", "entity")).strip().lower()
+        etype = str(ent.facets.get("entity_type", "entity"))
         if etype == "company":
             cons = db.get_entity_consensus(ent.id)
             comp_info = {
@@ -626,7 +626,7 @@ def build_catalog_context(
         pid = p_info["id"]
         role = p_info["role"]
         links = person_links_by_id.get(pid, [])
-        has_authored = any(str(lk.get("relation", "")).upper() == "AUTHORED_BY" for lk in links)
+        has_authored = any(lk.get("relation") == "AUTHORED_BY" for lk in links)
         if _is_research_analyst_role(role) or (has_authored and not _is_non_author_role(role)):
             qualifying_persons.append(p_info)
 
@@ -704,8 +704,7 @@ def build_catalog_context(
                 candidate_paths.add(doc_id_to_path[link["doc_id"]])
             if link.get("file_path"):
                 candidate_paths.add(str(link["file_path"]))
-            rel_upper = str(link.get("relation", "")).upper()
-            reason = "authored" if rel_upper == "AUTHORED_BY" else "graph"
+            reason = "authored" if link.get("relation") == "AUTHORED_BY" else "graph"
             for fp in candidate_paths:
                 if fp in notes_by_path:
                     reasons_map.setdefault(fp, set()).add(reason)

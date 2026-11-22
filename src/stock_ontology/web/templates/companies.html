@@ -42,7 +42,7 @@
             <td>{{ comp.sector or t('common.none') }}</td>
             <td>
               {% if comp.consensus and comp.consensus.stance %}
-                <span class="badge badge-{{ comp.consensus.stance | lower }}">{{ t_enum('stance', comp.consensus.stance) }}</span>
+                <span class="badge badge-{{ comp.consensus.stance }}">{{ t_enum('stance', comp.consensus.stance) }}</span>
               {% else %}
                 <span class="source-cite">{{ t('home.no_consensus') }}</span>
               {% endif %}

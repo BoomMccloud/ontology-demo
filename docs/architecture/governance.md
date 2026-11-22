@@ -24,7 +24,11 @@ longer reports is dropped.
 ## Repair
 
 `repair_ontology(db, registry)` writes to the DB. It deletes rows from notes
-no longer in the ingestion log, renames registered alias and inverse relations,
+no longer in the ingestion log, canonicalizes stored enum facets on nodes and
+edges through `vocab.py` (case and aliases, so legacy `stale` becomes
+`superseded`; an unknown value is lowercased and kept, never replaced, and
+counted in `RepairReport.facets_canonicalized`), renames registered alias and
+inverse relations,
 merges the pairs of `approved` merge suggestions (never pending or rejected
 ones), and merges exact name or alias duplicates. Judgment calls are left to
 `audit`.

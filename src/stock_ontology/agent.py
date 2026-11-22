@@ -20,7 +20,8 @@ from stock_ontology.i18n import (
 )
 from stock_ontology.llm import AgentTurn, LLMClient
 from stock_ontology.llm.pydantic_ai_model import LLMClientModel
-from stock_ontology.models import VALID_SENTIMENTS, Node, NodeType
+from stock_ontology.models import Node, NodeType
+from stock_ontology.vocab import EVENT_STATUS, SENTIMENT_FILTER_VALUES, SIGNAL_CATEGORIES
 
 AGENT_SYSTEM_PROMPT = """You are an investment research assistant for portfolio managers at a stock fund.
 You query a strictly read-only 4-node stock ontology database containing:
@@ -101,8 +102,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "name": "query_entity_signals",
         "description": (
             "Deterministically filter and count events and views linked to an entity by sentiment "
-            "(positive, negative, neutral, mixed, unclassified), category (rumor, news, fact, earnings, "
-            "catalyst, meeting, analyst_report, pm_view, channel_check), status, or date range."
+            f"({', '.join(SENTIMENT_FILTER_VALUES)}), category ({', '.join(SIGNAL_CATEGORIES)}), "
+            "status, or date range."
         ),
         "parameters": {
             "type": "object",
@@ -115,7 +116,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "type": "array",
                     "items": {
                         "type": "string",
-                        "enum": ["positive", "negative", "neutral", "mixed", "unclassified"],
+                        "enum": list(SENTIMENT_FILTER_VALUES),
                     },
                     "description": "Optional filter on effective sentiment (supports per-company ABOUT edge overrides).",
                 },
@@ -123,8 +124,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "Optional subtype/category filter: rumor, news, fact, earnings, catalyst, "
-                        "meeting, analyst_report, pm_view, channel_check."
+                        f"Optional subtype/category filter: {', '.join(SIGNAL_CATEGORIES)}."
                     ),
                 },
                 "node_types": {
@@ -135,7 +135,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "statuses": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional event status filter (e.g. occurred, upcoming, rumored).",
+                    "description": (
+                        f"Optional event status filter (e.g. {', '.join(EVENT_STATUS.members)})."
+                    ),
                 },
                 "date_from": {
                     "type": "string",
@@ -360,7 +362,7 @@ class OntologyAgent:
     ) -> dict[str, Any]:
         sent_list = self._coerce_str_list(sentiments)
         if sent_list is not None:
-            valid_sents = {*VALID_SENTIMENTS, "unclassified", "unknown"}
+            valid_sents = {*SENTIMENT_FILTER_VALUES, "unknown"}
             invalid_sents = [s for s in sent_list if s.lower() not in valid_sents]
             if invalid_sents:
                 return {

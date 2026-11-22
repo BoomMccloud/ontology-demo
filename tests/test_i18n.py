@@ -288,3 +288,17 @@ def test_load_catalogs_reloads_when_locale_file_changes(
         encoding="utf-8",
     )
     assert translate("catalog.by_author", lang="en", count=3) == "By Author (3)"
+
+
+def test_every_vocab_member_has_an_enum_key_in_every_locale() -> None:
+    from stock_ontology.vocab import ALL_VOCABS
+
+    catalogs = load_catalogs()
+    missing = [
+        (code, f"enum.{v.group}.{member}")
+        for code in SUPPORTED_LANGUAGE_CODES
+        for v in ALL_VOCABS
+        for member in v.members
+        if f"enum.{v.group}.{member}" not in catalogs.get(code, {})
+    ]
+    assert missing == []

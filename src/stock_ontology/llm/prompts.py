@@ -7,23 +7,37 @@ import re
 from typing import Any
 
 from stock_ontology.models import Node
+from stock_ontology.vocab import (
+    CONVICTION,
+    ENTITY_TYPE,
+    EVENT_STATUS,
+    EVENT_TYPE,
+    EXTRACTED_VIEW_TYPES,
+    SENTIMENT,
+    STANCE,
+    SUPPORT_STRENGTH,
+    format_choices,
+)
 
-EXTRACTION_SYSTEM_PROMPT = """You are an investment research ontology extractor for a stock fund.
+_SENTIMENTS = format_choices(SENTIMENT.members, sep=" | ")
+_SENTIMENTS_TIGHT = format_choices(SENTIMENT.members, sep="|")
+
+EXTRACTION_SYSTEM_PROMPT = f"""You are an investment research ontology extractor for a stock fund.
 Extract structured knowledge strictly using the 4 ontology node types and directed edges:
 
 1. entity: Company, Person, Product/Tech, Institution, Sector, or Region.
    - Use canonical names (e.g., "NVIDIA", "TSMC", "Vertiv"). Put tickers/abbreviations in `aliases`.
-   - Include `entity_type` (`company`, `person`, `product`, `institution`, `sector`, `region`).
+   - Include `entity_type` ({format_choices(ENTITY_TYPE.members, sep=", ")}).
    - For companies, add useful facets like `ticker` and `sector`. For people, add `role`, `organization`, `credibility` (`high`|`medium`|`low`) when discernible.
 2. event: Any objective observation, fact, news item, earnings release, meeting, or upcoming catalyst.
-   - `event_type`: `fact` | `news` | `earnings` | `catalyst` | `meeting`.
-   - `status`: `occurred` | `upcoming` | `rumored`.
-   - `sentiment`: `positive` | `negative` | `neutral` | `mixed` reflecting directional impact on the primary subject (use `mixed` for offsetting effects or opposing multi-company impacts).
+   - `event_type`: {format_choices(EVENT_TYPE.members)}.
+   - `status`: {format_choices(EVENT_STATUS.members)}.
+   - `sentiment`: {_SENTIMENTS} reflecting directional impact on the primary subject (use `mixed` for offsetting effects or opposing multi-company impacts).
    - Put any document-specific source details you observe (e.g., `author`, `source_kind`, `source_title`, `source_date`) in `facets`.
 3. view: Any subjective claim, rumor, analyst take, channel check, or PM note.
-   - `view_type`: `rumor` | `analyst_report` | `pm_view` | `channel_check`.
+   - `view_type`: {format_choices(EXTRACTED_VIEW_TYPES)}.
    - NEVER emit `consensus` or `house_consensus` views from an individual document; fund consensus is synthesized separately.
-   - Set `stance` (`buy`|`hold`|`sell`|`bullish`|`bearish`|`neutral`|`cautious`), `sentiment` (`positive`|`negative`|`neutral`|`mixed`, consistent with `stance`: `buy`/`bullish` -> `positive`, `sell`/`bearish`/`cautious` -> `negative`, `hold`/`neutral` -> `neutral`, or `mixed` when nuanced), `support_strength` (`strong`|`moderate`|`weak`), and `conviction` (`high`|`medium`|`low`).
+   - Set `stance` ({format_choices(STANCE.members, sep="|")}), `sentiment` ({_SENTIMENTS_TIGHT}, consistent with `stance`: `buy`/`bullish` -> `positive`, `sell`/`bearish`/`cautious` -> `negative`, `hold`/`neutral` -> `neutral`, or `mixed` when nuanced), `support_strength` ({format_choices(SUPPORT_STRENGTH.members, sep="|")}), and `conviction` ({format_choices(CONVICTION.members, sep="|")}).
 4. theme: A meta-narrative, secular trend, or investment thesis (e.g., "AI Data Center Power Bottleneck").
 
 Resolution & linking rules:
@@ -31,10 +45,10 @@ Resolution & linking rules:
 - Only create a new entity or theme (with a `temp_id` like `e1`, `t1`) when it is not present in the catalog.
 - Reuse facet keys from Known Facets where appropriate, and add new snake_case facets on the fly whenever useful.
 - Connect every extracted event and view to its relevant entities (`ABOUT`, `AUTHORED_BY`: `event|view -> entity|person`) and themes (`RELATES_TO`, `SUPPORTS`, `CONTRADICTS`: `event|view -> theme|view`).
-- When an `event` or `view` links to multiple companies with opposing impacts (e.g., positive for Company A, negative for Company B), set node-level `sentiment` to `mixed` (or the primary subject's polarity) and add a `sentiment` facet (`positive` | `negative` | `neutral` | `mixed`) on each company's `ABOUT` edge.
+- When an `event` or `view` links to multiple companies with opposing impacts (e.g., positive for Company A, negative for Company B), set node-level `sentiment` to `mixed` (or the primary subject's polarity) and add a `sentiment` facet ({_SENTIMENTS}) on each company's `ABOUT` edge.
 - Capture entity relationships strictly using the minimal directed vocabulary:
   - Entity -> Entity: `buyer --BUY--> seller` (use `BUY` for all supply-chain/customer links, never `SUPPLIES_TO`/`CUSTOMER_OF`), `company --COMPETE--> company`, `parent --OWNS--> child/institution`, `person --WORKS_AT--> company/institution`.
-  - Entity -> Theme: `entity --EXPOSED_TO--> theme` with a `sentiment` facet (`positive` | `negative` | `neutral` | `mixed`) instead of emitting `BENEFITS_FROM`, `HURT_BY`, or duplicate `RELATES_TO`.
+  - Entity -> Theme: `entity --EXPOSED_TO--> theme` with a `sentiment` facet ({_SENTIMENTS}) instead of emitting `BENEFITS_FROM`, `HURT_BY`, or duplicate `RELATES_TO`.
 """
 
 CONSENSUS_SYSTEM_PROMPT = """You are the head of research synthesis for an equity fund.

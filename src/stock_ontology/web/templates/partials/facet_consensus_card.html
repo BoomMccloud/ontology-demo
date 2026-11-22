@@ -4,10 +4,10 @@
     <h2 class="u-bd-none u-m-0 u-p-0">{{ t('consensus.heading') }}</h2>
     <div>
       {% if consensus.stance %}
-        <span class="badge badge-{{ consensus.stance | lower }}">{{ t_enum('stance', consensus.stance) }}</span>
+        <span class="badge badge-{{ consensus.stance }}">{{ t_enum('stance', consensus.stance) }}</span>
       {% endif %}
       {% if consensus.support_strength %}
-        <span class="badge badge-{{ consensus.support_strength | lower }}">{{ t('consensus.support_badge', value=t_enum('support_strength', consensus.support_strength)) }}</span>
+        <span class="badge badge-{{ consensus.support_strength }}">{{ t('consensus.support_badge', value=t_enum('support_strength', consensus.support_strength)) }}</span>
       {% endif %}
       {% if consensus.conviction %}
         <span class="badge">{{ t('consensus.conviction_badge', value=t_enum('conviction', consensus.conviction)) }}</span>

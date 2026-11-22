@@ -24,8 +24,8 @@ Pure definitions. Nothing here opens a connection.
   `Node` / `Edge` models.
 - `merge_edge_facets` and `reconcile_sentiment` define how two facet dicts
   combine when edges are deduplicated. Opposing sentiments become `mixed`.
-- Relation groupings used by queries: `SECOND_ORDER_ENTITY_RELATIONS`,
-  `THEME_EXPOSURE_RELATIONS`, and `SIGNAL_CATEGORY_ALIASES`.
+- Relation groupings used by queries: `SECOND_ORDER_ENTITY_RELATIONS` and
+  `THEME_EXPOSURE_RELATIONS`. `SIGNAL_CATEGORY_ALIASES` is re-exported from `vocab.py`.
 
 Change this layer when the shape of the data changes: a new column, a new
 table, a new facet merge rule. A column added to an existing table goes in
@@ -40,10 +40,11 @@ table, a new facet merge rule. A column added to an existing table goes in
   rejects writes. Writable connections use WAL, call `init_schema`, and backfill
   `node_lookup` if any node lacks rows there.
 - Transactions: `transaction()` nests; only the outermost scope commits.
-- Writes: `upsert_node`, `upsert_edge`, `upsert_consensus_view`,
+- Writes: `upsert_node`, `upsert_edge` (relation through
+  `normalize_relation_name`), `upsert_consensus_view`,
   `delete_document_artifacts`, `relink_document`, `replace_node_embeddings`,
   `rebuild_node_lookup`, the `ingestion_log` methods, and `set_metadata`.
-- Repair writes: `update_edge`, `merge_node_into` (returns the self-loops it
+- Repair writes: `update_edge` (also normalizes the relation), `merge_node_into` (returns the self-loops it
   dropped), `delete_edges`, plus the
   `list_artifact_doc_ids` and `count_document_artifacts` lookups.
 - Lookups: `get_node`, `get_nodes`, `find_by_name_or_alias`,
@@ -56,6 +57,10 @@ table, a new facet merge rule. A column added to an existing table goes in
 - Stats for the UI: `get_stats`, `get_doc_node_counts`,
   `get_entity_document_links`, `get_edge_schema_summary`,
   `get_node_edge_counts`, `get_entity_connected_nodes`, `list_recent_edges`.
+
+Stored enum facets and relation names are canonical, so queries compare them
+directly. `query_entity_signals` parses its filter input and matches items with
+the shared `vocab` filter functions.
 
 Change this layer when you need a new query or a faster one.
 

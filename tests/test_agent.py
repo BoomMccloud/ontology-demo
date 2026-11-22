@@ -634,3 +634,35 @@ def test_agent_chat_returns_immutable_turn_contract(tmp_path: Path) -> None:
     # Provider fields come from the turn's final model call.
     assert (first.provider, first.model, first.fallback_used) == ("prov-2", "model-2", False)
     assert (second.provider, second.model, second.fallback_used) == ("prov-4", "model-4", True)
+
+
+def test_prompt_and_tool_schema_vocab_lists_come_from_vocab() -> None:
+    from stock_ontology.agent import TOOL_SCHEMAS
+    from stock_ontology.llm.prompts import EXTRACTION_SYSTEM_PROMPT
+    from stock_ontology.vocab import (
+        CONVICTION,
+        ENTITY_TYPE,
+        EVENT_STATUS,
+        EVENT_TYPE,
+        EXTRACTED_VIEW_TYPES,
+        SENTIMENT_FILTER_VALUES,
+        SIGNAL_CATEGORIES,
+        STANCE,
+        SUPPORT_STRENGTH,
+        format_choices,
+    )
+
+    assert f"`stance` ({format_choices(STANCE.members, sep='|')})" in EXTRACTION_SYSTEM_PROMPT
+    assert f"`view_type`: {format_choices(EXTRACTED_VIEW_TYPES)}." in EXTRACTION_SYSTEM_PROMPT
+    assert f"`event_type`: {format_choices(EVENT_TYPE.members)}." in EXTRACTION_SYSTEM_PROMPT
+    assert f"`status`: {format_choices(EVENT_STATUS.members)}." in EXTRACTION_SYSTEM_PROMPT
+    assert format_choices(ENTITY_TYPE.members, sep=", ") in EXTRACTION_SYSTEM_PROMPT
+    assert format_choices(SUPPORT_STRENGTH.members, sep="|") in EXTRACTION_SYSTEM_PROMPT
+    assert format_choices(CONVICTION.members, sep="|") in EXTRACTION_SYSTEM_PROMPT
+    assert "`consensus`" not in format_choices(EXTRACTED_VIEW_TYPES)
+
+    signals = next(t for t in TOOL_SCHEMAS if t["name"] == "query_entity_signals")
+    props = signals["parameters"]["properties"]
+    assert props["sentiments"]["items"]["enum"] == list(SENTIMENT_FILTER_VALUES)
+    assert all(cat in props["categories"]["description"] for cat in SIGNAL_CATEGORIES)
+    assert all(st in props["statuses"]["description"] for st in EVENT_STATUS.members)

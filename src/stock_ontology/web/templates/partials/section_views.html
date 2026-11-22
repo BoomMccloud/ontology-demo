@@ -15,13 +15,13 @@
         <tr id="node-{{ vw.id }}">
           <td>
             {% if vw.facets.get("stance") %}
-              <span class="badge badge-{{ vw.facets.get('stance') | lower }}">{{ t_enum('stance', vw.facets.get("stance")) }}</span>
+              <span class="badge badge-{{ vw.facets.get('stance') }}">{{ t_enum('stance', vw.facets.get("stance")) }}</span>
             {% endif %}
             {% if vw_sent %}
-              <span class="badge badge-{{ vw_sent | lower }}">{{ t_enum('sentiment', vw_sent) }}</span>
+              <span class="badge badge-{{ vw_sent }}">{{ t_enum('sentiment', vw_sent) }}</span>
             {% endif %}
             {% if vw.facets.get("support_strength") %}
-              <span class="badge badge-{{ vw.facets.get('support_strength') | lower }}">{{ t_enum('support_strength', vw.facets.get("support_strength")) }}</span>
+              <span class="badge badge-{{ vw.facets.get('support_strength') }}">{{ t_enum('support_strength', vw.facets.get("support_strength")) }}</span>
             {% endif %}
             <div class="source-cite u-mt-3px">
               {{ t_enum('view_type', vw.facets.get("view_type", "view")) }}

@@ -4,15 +4,37 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
+
+from stock_ontology.vocab import (
+    CONVICTION,
+    ENTITY_TYPE,
+    EVENT_STATUS,
+    EVENT_TYPE,
+    EXTRACTED_VIEW_TYPES,
+    SENTIMENT,
+    STAGE,
+    STANCE,
+    SUPPORT_STRENGTH,
+    VALID_SENTIMENTS,  # noqa: F401  (re-exported for callers)
+    VIEW_TYPE,
+    Conviction,
+    EntityType,
+    EventStatus,
+    EventType,
+    Sentiment,
+    Stage,
+    Stance,
+    SupportStrength,
+    Vocabulary,
+    ViewType,
+    normalize_sentiment,
+)
 
 NodeType = Literal["entity", "event", "view", "theme"]
-Sentiment = Literal["positive", "negative", "neutral", "mixed"]
 SentimentSource = Literal["edge", "node", "stance"]
-
-VALID_SENTIMENTS: tuple[Sentiment, ...] = ("positive", "negative", "neutral", "mixed")
 STANCE_TO_SENTIMENT: dict[str, Sentiment] = {
     "buy": "positive",
     "bullish": "positive",
@@ -26,16 +48,6 @@ STANCE_TO_SENTIMENT: dict[str, Sentiment] = {
     "hold": "neutral",
     "neutral": "neutral",
 }
-
-
-def normalize_sentiment(value: Any) -> Sentiment | None:
-    """Return canonical Sentiment if `value` is a valid polarity string, else None."""
-    if not isinstance(value, str):
-        return None
-    cleaned = value.strip().lower()
-    if cleaned in VALID_SENTIMENTS:
-        return cast(Sentiment, cleaned)
-    return None
 
 
 def derive_sentiment_from_stance(stance: Any) -> Sentiment | None:
@@ -148,6 +160,27 @@ def _looks_numeric_json(raw: str) -> bool:
         return True
 
 
+def _ingest_coercer(vocab: Vocabulary) -> BeforeValidator:
+    """Pydantic before-validator: canonical member, else the vocabulary's ingest fallback."""
+    return BeforeValidator(vocab.coerce_or_fallback)
+
+
+def _choices(members: tuple[str, ...]) -> str:
+    return " | ".join(members)
+
+
+CoercedEntityType = Annotated[EntityType, _ingest_coercer(ENTITY_TYPE)]
+CoercedEventType = Annotated[EventType, _ingest_coercer(EVENT_TYPE)]
+CoercedEventStatus = Annotated[EventStatus, _ingest_coercer(EVENT_STATUS)]
+CoercedViewType = Annotated[ViewType, _ingest_coercer(VIEW_TYPE)]
+CoercedStance = Annotated[Stance, _ingest_coercer(STANCE)]
+CoercedSupportStrength = Annotated[SupportStrength, _ingest_coercer(SUPPORT_STRENGTH)]
+CoercedConviction = Annotated[Conviction, _ingest_coercer(CONVICTION)]
+CoercedStage = Annotated[Stage, _ingest_coercer(STAGE)]
+# An unknown sentiment is treated as missing, so `resolve_item_sentiment` precedence applies.
+CoercedSentiment = Annotated[Sentiment | None, BeforeValidator(SENTIMENT.coerce)]
+
+
 class ExtractedEntity(BaseModel):
     """Entity extracted from a research note or article."""
 
@@ -155,9 +188,9 @@ class ExtractedEntity(BaseModel):
     name: str = Field(description="Canonical entity name, e.g. 'NVIDIA' or 'Jane Doe'.")
     summary: str = Field(description="Concise description of the entity in context.")
     aliases: list[str] = Field(default_factory=list, description="Alternative names, tickers, acronyms.")
-    entity_type: str = Field(
+    entity_type: CoercedEntityType = Field(
         default="company",
-        description="Entity subtype: company | person | product | institution | sector | region.",
+        description=f"Entity subtype: {_choices(ENTITY_TYPE.members)}.",
     )
     facets: list[FacetKV] = Field(
         default_factory=list,
@@ -171,22 +204,22 @@ class ExtractedEvent(BaseModel):
     temp_id: str = Field(description="Temporary ID unique within this extraction, e.g. 'ev1'.")
     name: str = Field(description="Short title of the event or factual observation.")
     summary: str = Field(description="Detailed unstructured description of what happened or was observed.")
-    event_type: str = Field(
+    event_type: CoercedEventType = Field(
         default="fact",
-        description="Event subtype: fact | news | earnings | catalyst | meeting.",
+        description=f"Event subtype: {_choices(EVENT_TYPE.members)}.",
     )
     event_date: str | None = Field(
         default=None,
         description="ISO date YYYY-MM-DD when the event occurred or is expected.",
     )
-    status: str = Field(
+    status: CoercedEventStatus = Field(
         default="occurred",
-        description="Status: occurred | upcoming | rumored.",
+        description=f"Status: {_choices(EVENT_STATUS.members)}.",
     )
-    sentiment: str = Field(
+    sentiment: CoercedSentiment = Field(
         default="neutral",
         description=(
-            "Directional polarity for the primary subject: positive | negative | neutral | mixed. "
+            f"Directional polarity for the primary subject: {_choices(SENTIMENT.members)}. "
             "Use 'mixed' when an event helps one company and hurts another "
             "(and put per-company overrides on ABOUT edges)."
         ),
@@ -203,28 +236,28 @@ class ExtractedView(BaseModel):
     temp_id: str = Field(description="Temporary ID unique within this extraction, e.g. 'v1'.")
     name: str = Field(description="Short title summarizing the thesis, rumor, or opinion.")
     summary: str = Field(description="Full statement of the view and its supporting reasoning.")
-    view_type: str = Field(
+    view_type: CoercedViewType = Field(
         default="analyst_report",
-        description="Subtype: rumor | analyst_report | pm_view | channel_check (never 'consensus').",
+        description=f"Subtype: {_choices(EXTRACTED_VIEW_TYPES)} (never 'consensus').",
     )
-    stance: str = Field(
+    stance: CoercedStance = Field(
         default="neutral",
-        description="Directional stance: buy | hold | sell | bullish | bearish | neutral | cautious.",
+        description=f"Directional stance: {_choices(STANCE.members)}.",
     )
-    sentiment: str | None = Field(
+    sentiment: CoercedSentiment = Field(
         default=None,
         description=(
-            "Directional polarity: positive | negative | neutral | mixed. "
+            f"Directional polarity: {_choices(SENTIMENT.members)}. "
             "Consistent with stance; if omitted, derived from stance."
         ),
     )
-    support_strength: str = Field(
+    support_strength: CoercedSupportStrength = Field(
         default="moderate",
-        description="Evidence strength: strong | moderate | weak.",
+        description=f"Evidence strength: {_choices(SUPPORT_STRENGTH.members)}.",
     )
-    conviction: str = Field(
+    conviction: CoercedConviction = Field(
         default="medium",
-        description="Speaker or author conviction: high | medium | low.",
+        description=f"Speaker or author conviction: {_choices(CONVICTION.members)}.",
     )
     as_of: str | None = Field(default=None, description="ISO date YYYY-MM-DD when the view was stated.")
     facets: list[FacetKV] = Field(
@@ -240,9 +273,9 @@ class ExtractedTheme(BaseModel):
     name: str = Field(description="Canonical theme title, e.g. 'AI Data Center Power Bottleneck'.")
     summary: str = Field(description="Description of the macro/secular narrative or thesis.")
     aliases: list[str] = Field(default_factory=list, description="Alternative phrasings of this theme.")
-    stage: str = Field(
+    stage: CoercedStage = Field(
         default="accelerating",
-        description="Lifecycle stage: emerging | accelerating | consensus | fading.",
+        description=f"Lifecycle stage: {_choices(STAGE.members)}.",
     )
     facets: list[FacetKV] = Field(default_factory=list)
 
@@ -264,7 +297,7 @@ class ExtractedEdge(BaseModel):
         default_factory=list,
         description=(
             "Optional edge facets such as rationale, confidence, order, as_of, "
-            "or sentiment (positive|negative|neutral|mixed on EXPOSED_TO entity->theme edges "
+            f"or sentiment ({'|'.join(SENTIMENT.members)} on EXPOSED_TO entity->theme edges "
             "and on ABOUT edges when a multi-company event/view impacts entities differently)."
         ),
     )
@@ -283,9 +316,13 @@ class ExtractionResult(BaseModel):
 class ConsensusSynthesis(BaseModel):
     """Pipeline-synthesized fund consensus view for a single company entity."""
 
-    stance: str = Field(description="Fund stance: buy | hold | sell | bullish | bearish | neutral.")
-    support_strength: str = Field(description="Overall evidence strength: strong | moderate | weak.")
-    conviction: str = Field(description="Overall conviction: high | medium | low.")
+    stance: CoercedStance = Field(description=f"Fund stance: {_choices(STANCE.members)}.")
+    support_strength: CoercedSupportStrength = Field(
+        description=f"Overall evidence strength: {_choices(SUPPORT_STRENGTH.members)}."
+    )
+    conviction: CoercedConviction = Field(
+        description=f"Overall conviction: {_choices(CONVICTION.members)}."
+    )
     summary: str = Field(description="Concise synthesis of the current fund consensus and key tension points.")
     pillars: list[str] = Field(
         default_factory=list,

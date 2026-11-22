@@ -18,7 +18,7 @@
             <div>
               <span class="badge">{{ t_enum('event_type', ev.facets.get("event_type", "event")) }}</span>
               {% if ev_sent %}
-                <span class="badge badge-{{ ev_sent | lower }}">{{ t_enum('sentiment', ev_sent) }}</span>
+                <span class="badge badge-{{ ev_sent }}">{{ t_enum('sentiment', ev_sent) }}</span>
               {% endif %}
             </div>
             {% if ev.facets.get("status") %}

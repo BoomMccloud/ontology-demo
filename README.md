@@ -150,6 +150,9 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
 - Take a note's `doc_id` from its ingestion log entry, not from its current path. A moved note keeps its original `doc_id`, so a path-derived ID can collide with it.
   **Why:** moved notes are relinked instead of re-extracted (proposal `ingestion-followups`, 2026-11-22).
   **Guarded by:** `tests/test_db.py::test_moves_handle_root_folder_ambiguity_reused_paths_and_force`.
+- Coerce every enum facet through `stock_ontology.vocab` when you write it, and compare stored values directly when you read them. Don't add a new copy of a vocabulary list or re-lowercase on read.
+  **Why:** enum values were stored in whatever case the LLM returned, about 30 readers re-lowercased them inconsistently, and consensus retirement wrote `stale` in one path and `superseded` in another (proposal `canonical-vocabulary`, 2026-11-22).
+  **Guarded by:** `tests/test_canonical_vocabulary.py` and `tests/test_vocab.py`.
 
 ## Query Agent Constraints
 

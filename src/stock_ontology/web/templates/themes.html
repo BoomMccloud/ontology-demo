@@ -27,7 +27,7 @@
           </td>
           <td>
             {% if thm.stage %}
-              <span class="badge badge-{{ thm.stage | lower }}">{{ t_enum('stage', thm.stage) }}</span>
+              <span class="badge badge-{{ thm.stage }}">{{ t_enum('stage', thm.stage) }}</span>
             {% else %}
               {{ t('common.none') }}
             {% endif %}
