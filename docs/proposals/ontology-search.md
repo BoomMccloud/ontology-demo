@@ -1,8 +1,8 @@
 ---
 proposal_id: "ontology-search"
-state: PROVED
+state: BUILT
 witness: independent
-candidate: "d2b2c2b @ .claude/worktrees/ontology-search"
+candidate: "b8f6839 @ .claude/worktrees/ontology-search"
 ---
 
 # Proposal: Generic ontology search
@@ -204,6 +204,52 @@ Candidate: `d2b2c2b @ .claude/worktrees/ontology-search` (RED observed on the so
 - The client-side side column, shared session, detach, and failed state have no offline pytest owner. Audit should record this as a limit unless Build adds a JS check the repo already supports.
 
 ## Build
+
+Candidate: `b8f6839 @ .claude/worktrees/ontology-search (proposal/ontology-search)`
+
+### Files changed
+
+- `src/stock_ontology/search.py` (new): this is the shared `search` module. `search_ontology()` resolves entities first: `find_by_name_or_alias` for entities, then themes, then `keyword_search`, then `vector_search`. It expands one hop through `get_incident_edges`, labels each relation with its registry-canonical name via `db.registry.canonicalize_edge`, and never returns edges as results. It labels every result with a `match_reason`, ranks by reason weight plus a bounded recency term (≤0.1), and uses a deterministic `parse_period` (quarter, FY, month, year) that drops items dated outside the period and boosts those inside it. It also contains `grep_notes`: a literal, case-insensitive grep that walks only supported, non-hidden files, never follows a link out of the data dir, caps passages per file and in total, and folds an event or view's own source-note line into that item's `note_line`. `SearchFilters` holds the filter logic moved from `run_hybrid_search`. `resolve_safe_note_path` and the `node_subtype/date/source_file` helpers moved here from `web/`. This covers the primary claim and the filesystem and DB guardrails.
+- `src/stock_ontology/agent.py`: `OntologyAgent` takes an optional `data_dir`. `search_nodes` now calls `search_ontology` and returns `match_reason`, `score`, `distance` and `via`. A new `search_notes` tool is added to `TOOL_SCHEMAS` and `execute_tool` and registered like the others (async, `sequential=True`). Without `data_dir` it returns an error. This covers the agent side of the primary claim.
+- `src/stock_ontology/web/viewmodels.py`: `run_hybrid_search` and `_format_search_result` are replaced by `build_search_results`, which builds the best-match card, the sections, and the note passages. The node helpers are imported from `search`.
+- `src/stock_ontology/web/catalog.py`: imports `resolve_safe_note_path` from `search`. The rules are unchanged.
+- `src/stock_ontology/web/app.py`: `/search` calls `build_search_results` with `SearchFilters.from_raw(...)` and passes `agent_query` and `agent_prompt` to the template. `chat_endpoint` passes `data_dir=settings.data_dir` to `OntologyAgent`. No new route.
+- `src/stock_ontology/web/templates/search.html`: emits the witness page contract. That is a `data-best-match` card, items carrying `data-result-id`/`data-match-reason`, passages carrying `data-note-file`/`data-note-line`, and a `data-agent-column` with `data-agent-query`, `data-agent-detach` and a failed-state note. Sections are straight lists, and the agent column is pinned beside the results (layout A). No inline styles.
+- `src/stock_ontology/web/static/clippy.js`: on the search page, it moves the existing Clippy window into the column. It sends the search prompt to `/api/chat` once per word and language, on the shared `sessionStorage` session. It shows a failed state and retries on the next visit if the run fails. Detach and Pin toggle the floating window.
+- `src/stock_ontology/web/static/library.css`: adds the `search-*` classes. It uses no new media query; the existing 740px breakpoint stacks the column.
+- `src/stock_ontology/locales/{en,zh,ko,ja,es,fr}.json`: 21 new keys each (`search.*` section, agent and match-reason labels, plus `enum.match_reason.*`).
+- `tests/test_search.py` (new): Build-owned unit tests for the supporting obligations. They check that a name match beats a nearer vector hit and that alias matches are labeled `alias`. They check canonical relations (`supplies to` becomes `BUY`) with no edges returned as results. They check semantic failure, keyword mode, and filters. They check period narrowing and bounded recency, then the literal grep of `A.*`, case-insensitivity, the caps, and that traversal, hidden, symlinked and `.pdf` paths are skipped. They check an item and a passage from one file appear once with `note_line`, and that `/api/chat` gives the agent `data_dir` (a `search_notes` round trip).
+- `tests/test_architecture.py`: `MODULE_OF` adds `search`. In `ALLOWED`, `search` may import shared, ontology, storage and llm, and `agent` and `web` may import `search` (per Frame's Invariants changed).
+- `docs/architecture/README.md`, `docs/architecture/search.md` (new), `agent.md`, `web.md`, `storage.md`: these record the new module, the layer, `search_nodes`/`search_notes`, the shared search for both surfaces, and the column behavior (per Invariants changed).
+- `README.md`: "Calling the Agent" now documents the optional `data_dir`. One constraint entry is added under Query Agent Constraints: search only through `search_ontology`/`grep_notes`, and never let a vector hit outrank a name or alias match. Its `**Why:**` cites the "nvidia" showing "Consensus: Buy Apple Inc." first (proposal `ontology-search`, 2026-11-22), and `**Guarded by:**` names the two primary witnesses and the read guardrail.
+- Two notes for Audit, neither a scope change:
+  - A keyword hit found only in an item's extracted summary or facets is labeled `note`, since the contract lists only name, alias, relationship, note and semantic.
+  - Filter-only listings (no search word) carry `data-match-reason="filter"`, which is outside the five listed reasons.
+- `tests/test_web.py::test_web_home_entity_theme_search_and_clippy_chat` and `test_web_nav_and_advanced_search_filters` needed no change and pass as they are.
+
+### Unit evidence
+
+- `uv run pytest tests/test_search.py -q`: RED, failed at collection with `ModuleNotFoundError: No module named 'stock_ontology.search'`, before any implementation.
+- `uv run pytest tests/test_search.py tests/test_architecture.py tests/test_i18n.py tests/test_web_navigation.py -q`: GREEN, 53 passed.
+- Manual check in the browser pane, against a local uvicorn with fake LLM clients and the witness fixtures (script now stopped). Results:
+  - `/search?q=nvidia` ran the agent once into the pinned column: state `done`, one session id, dock launcher hidden.
+  - Detach made the column `position: fixed` and collapsed the grid. Pin restored it.
+  - A failing agent run showed the failed note with state `failed`.
+  - This is not an automated test. The client-side JS still has no pytest owner.
+
+### Green evidence
+
+- Decisive witness: `uv run pytest tests/test_web.py tests/test_agent.py -k "search_" -v -rA`: 7 passed, covering all 5 protected witnesses plus the 2 existing search and filter tests.
+- Witness integrity: `git diff d2b2c2b -- tests/test_web.py tests/test_agent.py` is empty. Re-checked by the orchestrator at `b8f6839`: empty.
+- Gate: `uv run pytest -q`: 157 passed (144 before, plus the 5 witnesses and 8 new unit tests). Re-run by the orchestrator at `b8f6839`: 157 passed.
+
+### Intervention record
+
+- None. The repository has no intervention ledger. The user-facing outcome (search ranking on the live `ontology.db` with Gemini embeddings) is not measured offline.
+
+### Deviations
+
+- None.
 
 ## Audit
 
