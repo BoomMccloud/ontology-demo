@@ -242,3 +242,76 @@ def test_reembed_gives_merged_survivor_a_fresh_embedding(tmp_path: Path) -> None
         fresh = db.get_node_embeddings([survivor_id])[survivor_id]
         assert fresh == pytest.approx(llm.embed_texts([expected_text])[0])
         assert fresh != pytest.approx(stale)
+
+
+# ---------------------------------------------------------------------------
+# Proof witnesses: exact-entity-merge (repair applies only approved merge suggestions)
+# ---------------------------------------------------------------------------
+
+
+def _merge_suggestion(sid: str, a: Node, b: Node, status: str) -> dict[str, Any]:
+    return {
+        "id": sid,
+        "node_type": "company",
+        "node_a_id": a.id,
+        "node_a_name": a.name,
+        "node_b_id": b.id,
+        "node_b_name": b.name,
+        "reason": "vector_similarity",
+        "distance": 0.05,
+        "status": status,
+        "reviewer_note": None,
+        "first_seen_at": "2026-11-22T09:00:00+00:00",
+        "last_seen_at": "2026-11-22T09:00:00+00:00",
+    }
+
+
+def test_repair_applies_only_approved_merge_suggestions(tmp_path: Path) -> None:
+    from stock_ontology.registry import OntologyRegistry
+
+    omega_a = _entity("ent_omega_a", "Omega Grid", "company")
+    omega_b = _entity("ent_omega_b", "Omega Grid Solutions", "company", ["OGS"])
+    sigma_a = _entity("ent_sigma_a", "Sigma Chips", "company")
+    sigma_b = _entity("ent_sigma_b", "Sigma Semi", "company")
+    tau_a = _entity("ent_tau_a", "Tau Power", "company")
+    tau_b = _entity("ent_tau_b", "Tau Energy", "company")
+
+    raw = create_minimal_registry().model_dump(mode="json")
+    raw["suggestions"]["merges"] = [
+        _merge_suggestion("merge_omega", omega_a, omega_b, "approved"),
+        _merge_suggestion("merge_sigma", sigma_a, sigma_b, "pending"),
+        _merge_suggestion("merge_tau", tau_a, tau_b, "rejected"),
+    ]
+    registry = OntologyRegistry.model_validate(raw)
+
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
+        for i, node in enumerate([omega_a, omega_b, sigma_a, sigma_b, tau_a, tau_b]):
+            db.upsert_node(node, embedding=_vec(i))
+        db.upsert_node(_event("evt_omega", "Omega Contract", "doc_omega"), embedding=_vec(6))
+        db.upsert_ingestion_log("notes/omega.md", "doc_omega", "hash_omega", datetime.now(UTC).isoformat())
+        db.upsert_edge(_edge("e_omega_a", "evt_omega", "ABOUT", "ent_omega_a", "doc_omega"))
+        db.upsert_edge(_edge("e_omega_b", "evt_omega", "MENTIONS", "ent_omega_b", "doc_omega"))
+
+        report = _load_repair_ontology()(db, registry)
+
+        omega_left = [nid for nid in ("ent_omega_a", "ent_omega_b") if db.get_node(nid) is not None]
+        assert len(omega_left) == 1, "repair did not merge the nodes of an approved merge suggestion"
+        survivor = db.get_node(omega_left[0])
+        assert survivor is not None
+        loser = ({"ent_omega_a", "ent_omega_b"} - {survivor.id}).pop()
+        assert not _has_vector(db, loser)
+        assert {"Omega Grid", "Omega Grid Solutions", "OGS"} <= set(survivor.aliases) | {survivor.name}
+        assert {("evt_omega", "ABOUT", survivor.id), ("evt_omega", "MENTIONS", survivor.id)} <= _edges(db)
+        assert survivor.id in report.merged_survivor_ids
+        assert getattr(report, "approved_merges_applied", None) == 1, (
+            "RepairReport does not count approved merge suggestions applied"
+        )
+
+        # Pending and rejected pairs are never merged.
+        for nid in ("ent_sigma_a", "ent_sigma_b", "ent_tau_a", "ent_tau_b"):
+            assert db.get_node(nid) is not None, f"{nid} was merged without an approved suggestion"
+
+        # Re-running with the approved pair already merged changes nothing.
+        before = _snapshot(db)
+        _load_repair_ontology()(db, registry)
+        assert _snapshot(db) == before

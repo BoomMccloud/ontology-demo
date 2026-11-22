@@ -1545,3 +1545,116 @@ def test_pipeline_catalog_lists_old_entities_named_in_note(tmp_path: Path) -> No
         # Matched by name, and by alias, despite 600 newer entities.
         assert "[ent_legacy]" in catalog, "entity named in the note is missing from the catalog"
         assert "[ent_omega]" in catalog, "entity whose alias appears in the note is missing from the catalog"
+
+
+# ---------------------------------------------------------------------------
+# Proof witnesses: exact-entity-merge (ingestion merges only on exact or registry match)
+# ---------------------------------------------------------------------------
+
+
+def _unit(values: dict[int, float], dim: int = DIM) -> list[float]:
+    vec = [0.0] * dim
+    for idx, val in values.items():
+        vec[idx] = val
+    norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+    return [x / norm for x in vec]
+
+
+class _ExactMergeFakeLLM(FakePipelineLLM):
+    """Embeds AMD within the old 0.15 cosine distance of NVIDIA and "Nvidia Corporation" far from it."""
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for text in texts:
+            lowered = text.lower()
+            if "amd" in lowered or "advanced micro devices" in lowered:
+                # cos(AMD, NVIDIA) = 10 / sqrt(109) ~ 0.958 -> distance ~ 0.042 < 0.15.
+                out.append(_unit({0: 10.0, 9: 3.0}))
+            elif "nvidia corporation" in lowered:
+                # Orthogonal to NVIDIA: only an exact or registry match can merge it.
+                out.append(_unit({12: 1.0}))
+            else:
+                out.append(_deterministic_embed(text))
+        return out
+
+    def extract_document(
+        self,
+        *,
+        text: str,
+        source_meta: dict[str, Any],
+        existing_catalog: str,
+        known_facets: dict[str, list[str]],
+    ) -> ExtractionResult:
+        rel_path = source_meta["file_path"]
+        self.extract_calls.append(rel_path)
+        if rel_path == "nvda.md":
+            entity = ExtractedEntity(
+                temp_id="e_nvda",
+                name="NVIDIA",
+                summary="AI GPU platform leader.",
+                aliases=["NVDA"],
+                entity_type="company",
+                facets=[FacetKV(key="ticker", value="NVDA")],
+            )
+        elif rel_path == "amd.md":
+            entity = ExtractedEntity(
+                temp_id="e_amd",
+                name="AMD",
+                summary="Advanced Micro Devices, GPU and CPU designer.",
+                aliases=[],
+                entity_type="company",
+                facets=[FacetKV(key="ticker", value="AMD")],
+            )
+        elif rel_path == "nvidia_corp.md":
+            entity = ExtractedEntity(
+                temp_id="e_nvcorp",
+                name="Nvidia Corporation",
+                summary="Maker of accelerated computing chips.",
+                aliases=[],
+                entity_type="company",
+            )
+        else:
+            raise AssertionError(f"unexpected note {rel_path}")  # noqa: TRY003
+        return ExtractionResult(entities=[entity])
+
+
+def _ingest_one_by_one(tmp_path: Path, llm: FakePipelineLLM, notes: list[str]) -> OntologyDB:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    db = OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False)
+    pipeline = IngestionPipeline(db, llm, data_dir)
+    for note in notes:
+        (data_dir / note).write_text(f"Note {note}.", encoding="utf-8")
+        report = pipeline.run()
+        assert report.errors == [], report.errors
+        assert report.files_processed == 1
+    return db
+
+
+def test_pipeline_does_not_merge_distinct_company_by_embedding_distance(tmp_path: Path) -> None:
+    db = _ingest_one_by_one(tmp_path, _ExactMergeFakeLLM(), ["nvda.md", "amd.md"])
+    try:
+        nvidia = _entities_named(db, "NVIDIA")
+        assert len(nvidia) == 1
+        amd = _entities_named(db, "AMD")
+        assert len(amd) == 1, (
+            "AMD was merged into an existing node because its embedding is near NVIDIA; "
+            "ingestion must only merge on exact or registry matches"
+        )
+        assert amd[0].id != nvidia[0].id
+        assert "AMD" not in nvidia[0].aliases
+    finally:
+        db.close()
+
+
+def test_pipeline_merges_registry_alias_without_embedding_similarity(tmp_path: Path) -> None:
+    db = _ingest_one_by_one(tmp_path, _ExactMergeFakeLLM(), ["nvda.md", "nvidia_corp.md"])
+    try:
+        nvidia = _entities_named(db, "NVIDIA")
+        assert len(nvidia) == 1
+        assert _entities_named(db, "Nvidia Corporation") == [], (
+            "'Nvidia Corporation' is a registry alias of NVIDIA but was stored as its own node"
+        )
+        assert "Nvidia Corporation" in nvidia[0].aliases
+    finally:
+        db.close()

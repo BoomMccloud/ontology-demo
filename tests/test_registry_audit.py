@@ -639,3 +639,77 @@ def test_cli_audit_command_reads_ro_and_syncs_registry(tmp_path: Path) -> None:
     assert len(updated_reg.suggestions.relations) == 1
     assert len(updated_reg.suggestions.companies) == 2
     assert len(updated_reg.suggestions.themes) == 2
+
+
+# ---------------------------------------------------------------------------
+# Proof witnesses: exact-entity-merge (audit queues near-duplicates as merge suggestions)
+# ---------------------------------------------------------------------------
+
+
+def _merge_suggestions_by_pair(reg_path: Path) -> dict[frozenset[str], list[dict]]:
+    raw = json.loads(reg_path.read_text(encoding="utf-8"))
+    merges = raw["suggestions"].get("merges")
+    assert merges is not None, (
+        "audit --sync-suggestions wrote no `suggestions.merges` list to the registry"
+    )
+    by_pair: dict[frozenset[str], list[dict]] = {}
+    for item in merges:
+        by_pair.setdefault(frozenset({item["node_a_id"], item["node_b_id"]}), []).append(item)
+    return by_pair
+
+
+def test_cli_audit_queues_merge_suggestions_and_keeps_human_decisions(tmp_path: Path) -> None:
+    db_path = tmp_path / "merge_audit.db"
+    reg_path = tmp_path / "ontology_registry.json"
+    _seed_audit_db(db_path)
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        # Shares NVIDIA's ticker, so audit reports it as a duplicate company candidate.
+        db.upsert_node(
+            Node(
+                id="ent_nvda_dup",
+                node_type="entity",
+                name="NVIDIA Holdings",
+                summary="Duplicate NVIDIA record.",
+                facets={"entity_type": "company", "ticker": "NVDA"},
+            ),
+            embedding=_unit_vec(9),
+        )
+    save_registry(create_minimal_registry(), reg_path)
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
+        stats_before = ro_db.get_stats()
+
+    theme_pair = frozenset({"thm_div", "thm_hedge"})
+    company_pair = frozenset({"ent_nvda", "ent_nvda_dup"})
+    runner = CliRunner()
+    args = ["audit", "--db", str(db_path), "--registry", str(reg_path)]
+
+    first = runner.invoke(app, args)
+    assert first.exit_code == 0, first.output
+    pairs = _merge_suggestions_by_pair(reg_path)
+    assert theme_pair in pairs, "near-duplicate theme pair was not queued as a merge suggestion"
+    assert company_pair in pairs, "duplicate company pair was not queued as a merge suggestion"
+    assert pairs[theme_pair][0]["status"] == "pending"
+    assert pairs[company_pair][0]["status"] == "pending"
+
+    # A human rejects the theme pair and approves the company pair in the registry file.
+    raw = json.loads(reg_path.read_text(encoding="utf-8"))
+    for item in raw["suggestions"]["merges"]:
+        pair = frozenset({item["node_a_id"], item["node_b_id"]})
+        if pair == theme_pair:
+            item["status"] = "rejected"
+            item["reviewer_note"] = "Distinct themes."
+        elif pair == company_pair:
+            item["status"] = "approved"
+    reg_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    second = runner.invoke(app, args)
+    assert second.exit_code == 0, second.output
+    pairs = _merge_suggestions_by_pair(reg_path)
+    assert len(pairs[theme_pair]) == 1, "rejected merge pair was queued again"
+    assert pairs[theme_pair][0]["status"] == "rejected"
+    assert pairs[theme_pair][0]["reviewer_note"] == "Distinct themes."
+    assert len(pairs[company_pair]) == 1
+    assert pairs[company_pair][0]["status"] == "approved"
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
+        assert ro_db.get_stats() == stats_before
