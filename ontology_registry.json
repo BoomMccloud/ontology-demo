@@ -378,19 +378,19 @@
         },
         "stance": {
           "members": {
-            "buy": "Recommends buying.",
-            "hold": "Recommends holding.",
-            "sell": "Recommends selling.",
-            "bullish": "Expects the price or fundamentals to improve.",
-            "bearish": "Expects the price or fundamentals to worsen.",
-            "neutral": "No directional call.",
-            "cautious": "Leans negative, with reservations."
+            "bullish": "Expects the price or fundamentals to improve, including a buy rating.",
+            "bearish": "Expects the price or fundamentals to worsen, including a sell rating.",
+            "neutral": "No directional call, including a hold rating."
           },
           "aliases": {
-            "outperform": "buy",
-            "overweight": "buy",
-            "underperform": "sell",
-            "underweight": "sell",
+            "buy": "bullish",
+            "outperform": "bullish",
+            "overweight": "bullish",
+            "sell": "bearish",
+            "cautious": "bearish",
+            "underperform": "bearish",
+            "underweight": "bearish",
+            "hold": "neutral",
             "unknown": "neutral"
           },
           "fallback": "neutral"
