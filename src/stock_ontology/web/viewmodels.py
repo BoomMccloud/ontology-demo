@@ -348,7 +348,8 @@ def _resolve_source_fields(
 # place that knows how ontology records are shaped. Enum fields keep the raw code so
 # templates translate them with `t_enum` and pick badge classes; everything else is
 # display-ready. `tests/test_web.py::test_entity_page_templates_only_see_presentation_models`
-# enforces this for the entity page.
+# and `::test_theme_page_templates_only_see_presentation_models` enforce this for the
+# entity and theme pages.
 # ---------------------------------------------------------------------------
 
 
@@ -463,6 +464,58 @@ class RelatedEntityRow:
     summary: str
     entity_type: str | None
     relationships: tuple[RelationLink, ...]
+
+
+@dataclass(frozen=True)
+class ThemeHeader:
+    """Title block of a theme page."""
+
+    id: str
+    name: str
+    summary: str
+    aliases: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ExposureLink:
+    """How a first-order company is exposed to a theme: directly, or via an event or view."""
+
+    # "direct", or "<event|view>: <name>" for a link through an event or view.
+    via: str
+    relation: str | None
+    direction: str | None
+    sentiment: str | None
+    entity_relation: str | None
+    theme_relation: str | None
+    source: SourceCitation
+
+
+@dataclass(frozen=True)
+class FirstOrderRow:
+    """One company directly or evidentially exposed to a theme."""
+
+    company: EntityHeader
+    consensus_stance: str | None
+    links: tuple[ExposureLink, ...]
+
+
+@dataclass(frozen=True)
+class SecondOrderPath:
+    """One relationship tying a second-order company to a first-order one."""
+
+    relation: str
+    direction: str
+    connected_to: str
+    connected_to_id: str
+
+
+@dataclass(frozen=True)
+class SecondOrderRow:
+    """One supply-chain or peer company reached through a first-order company."""
+
+    company: EntityHeader
+    consensus_stance: str | None
+    paths: tuple[SecondOrderPath, ...]
 
 
 def _text(value: Any) -> str | None:
@@ -601,6 +654,64 @@ def _related_entity_row(rel: dict[str, Any]) -> RelatedEntityRow:
     )
 
 
+def _theme_header(theme: dict[str, Any]) -> ThemeHeader:
+    return ThemeHeader(
+        id=str(theme["id"]),
+        name=str(theme.get("name", "")),
+        summary=str(theme.get("summary", "")),
+        aliases=tuple(str(a) for a in theme.get("aliases") or ()),
+    )
+
+
+def _exposure_link(link: dict[str, Any], data_dir: Path | None) -> ExposureLink:
+    via = str(link.get("via", ""))
+    if via == "direct":
+        facets = link.get("facets")
+        link_sent = facets.get("sentiment") if isinstance(facets, dict) else None
+        return ExposureLink(
+            via=via,
+            relation=str(link.get("relation", "")),
+            direction=str(link.get("direction", "outgoing")),
+            sentiment=_text(link.get("exposure_sentiment") or link_sent),
+            entity_relation=None,
+            theme_relation=None,
+            source=SourceCitation(),
+        )
+    return ExposureLink(
+        via=via,
+        relation=None,
+        direction=None,
+        sentiment=None,
+        entity_relation=str(link.get("entity_relation", "")),
+        theme_relation=str(link.get("theme_relation", "")),
+        source=_source_citation(link, data_dir),
+    )
+
+
+def _first_order_row(row: dict[str, Any], data_dir: Path | None) -> FirstOrderRow:
+    return FirstOrderRow(
+        company=_entity_header(row["company"], "company"),
+        consensus_stance=_text(row.get("consensus_stance")),
+        links=tuple(_exposure_link(link, data_dir) for link in row.get("links", ())),
+    )
+
+
+def _second_order_row(row: dict[str, Any]) -> SecondOrderRow:
+    return SecondOrderRow(
+        company=_entity_header(row["company"], "company"),
+        consensus_stance=_text(row.get("consensus_stance")),
+        paths=tuple(
+            SecondOrderPath(
+                relation=str(path.get("relation", "")),
+                direction=str(path.get("direction", "")),
+                connected_to=str(path.get("connected_to", "")),
+                connected_to_id=str(path.get("connected_to_id", "")),
+            )
+            for path in row.get("paths", ())
+        ),
+    )
+
+
 def build_entity_context(
     db: OntologyDB,
     entity_id: str,
@@ -704,19 +815,12 @@ def build_theme_context(
     events = [_event_row(pair[1], data_dir) for pair in events_by_id.values()]
     views = [_view_row(pair[1], data_dir) for pair in views_by_id.values()]
 
-    for row in theme_data["first_order"]:
-        for link in row["links"]:
-            fp, label, exists = _resolve_source_fields(link.get("source"), data_dir)
-            link["source_file"] = fp
-            link["source_label"] = label
-            link["source_exists"] = exists
-
     return {
-        "theme": theme,
+        "theme": _theme_header(theme),
         "stage": facets.get("stage", ""),
         "extra_facets": _format_facet_pairs(facets, extra_keys, lang=lang),
-        "first_order": theme_data["first_order"],
-        "second_order": theme_data["second_order"],
+        "first_order": [_first_order_row(row, data_dir) for row in theme_data["first_order"]],
+        "second_order": [_second_order_row(row) for row in theme_data["second_order"]],
         "events": events,
         "views": views,
         "page_context": translate(

@@ -1922,3 +1922,53 @@ def test_web_search_note_links_jump_to_the_matching_line(tmp_path: Path) -> None
     raw = client.get("/catalog", params={"file": _SEARCH_NOTE_FILE, "format": "raw"}).text
     assert '<span id="L3" class="note-line">Channel check: NVIDIA lead times shortened.' in raw
     assert '<span id="L1" class="note-line"># Channel check' in raw
+
+
+def test_theme_page_templates_only_see_presentation_models(tmp_path: Path) -> None:
+    """Theme pages render from typed presentation models, never raw ontology facets."""
+    from stock_ontology.web.viewmodels import build_theme_context
+
+    db_path = tmp_path / "presentation.db"
+    _seed_presentation_db(db_path)
+    note = tmp_path / "TSMC" / "2026-11-10_capex.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("# Capex Raise Notes\n\nTSMC raises capex.\n", encoding="utf-8")
+    settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=tmp_path)
+    client = TestClient(create_app(settings, llm=FakeWebLLM()))
+
+    # 1. The rendered page still shows what the ontology holds.
+    page = client.get("/theme/thm_ai")
+    assert page.status_code == 200
+    text = page.text
+    assert '<span class="badge badge-accelerating">STAGE: accelerating</span>' in text
+    first = text.split('aria-label="1st-Order Exposed Companies"', 1)[1].split("</section>", 1)[0]
+    assert '<a href="/entity/ent_tsmc"><strong>TSMC</strong></a>' in first
+    assert '<span class="mono">(TSM)</span>' in first
+    assert '<span class="badge badge-buy">buy</span>' in first
+    direct = first.split("exposed to", 1)[1].split("</li>", 1)[0]
+    assert '<span class="badge badge-positive">positive</span>' in direct
+    assert '<span class="source-cite">(direct)</span>' in direct
+    assert "ABOUT &rarr; event: Capex Raise &rarr; RELATES_TO" in first
+    assert '<a href="/catalog?file=TSMC/2026-11-10_capex.md">Capex Raise Notes</a>' in first
+    assert "ABOUT &rarr; view: Pricing Rumor &rarr; CONTRADICTS" in first
+    assert "[TSMC — Rumor (2026-11-12)]" in first
+    second = text.split('aria-label="2nd-Order Exposed Companies"', 1)[1].split("</section>", 1)[0]
+    assert '<a href="/entity/ent_asml"><strong>ASML</strong></a>' in second
+    assert '<span class="mono">(ASML)</span>' in second
+    assert 'sells to &rarr;' in second and '<a href="/entity/ent_tsmc">TSMC</a>' in second
+
+    # 2. The view model hands templates presentation models only.
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        ctx = build_theme_context(db, "thm_ai", data_dir=tmp_path, lang="en")
+    assert _raw_facet_paths(ctx) == []
+    assert dataclasses.is_dataclass(ctx["theme"])
+    for key in ("first_order", "second_order", "events", "views"):
+        assert ctx[key] and all(dataclasses.is_dataclass(item) for item in ctx[key]), key
+
+    # 3. No template the theme page renders reads raw facets.
+    closure = _template_closure("theme.html")
+    assert "partials/section_events.html" in closure and "partials/facet_generic_table.html" in closure
+    offenders = sorted(
+        name for name in closure if RAW_FACET_TOKEN.search((TEMPLATES_DIR / name).read_text(encoding="utf-8"))
+    )
+    assert offenders == []

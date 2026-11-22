@@ -12,7 +12,9 @@ that talks to the agent. It never writes to `ontology.db`.
   The entity page context holds only frozen presentation models
   (`EntityHeader`, `ConsensusSummary`, `EventRow`, `ViewRow`, `ThemeLinkRow`,
   `RelatedEntityRow`, and so on) and prepared label/value pairs, so its
-  templates never read `facets`.
+  templates never read `facets`. The theme page context does the same with
+  `ThemeHeader`, `FirstOrderRow` (with its `ExposureLink`s), `SecondOrderRow`
+  (with its `SecondOrderPath`s), `EventRow` and `ViewRow`.
 - `src/stock_ontology/web/catalog.py`: the raw notes browser, XSS-safe Markdown
   rendering, and source citations. Note paths go through the search module's
   `resolve_safe_note_path`.
