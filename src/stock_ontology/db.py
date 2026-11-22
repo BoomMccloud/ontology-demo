@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import struct
 import uuid
@@ -194,6 +195,7 @@ class OntologyDB:
             self.conn.commit()
 
     def _init_schema(self) -> None:
+        lookup_existed = self._has_node_lookup()
         with self.conn:
             self.conn.executescript(
                 f"""
@@ -242,8 +244,56 @@ class OntologyDB:
                 CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
                 CREATE INDEX IF NOT EXISTS idx_edges_relation ON edges(relation);
                 CREATE INDEX IF NOT EXISTS idx_edges_doc ON edges(source_doc_id);
+
+                CREATE TABLE IF NOT EXISTS node_lookup (
+                    key TEXT NOT NULL,
+                    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                    node_type TEXT NOT NULL,
+                    PRIMARY KEY (key, node_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_node_lookup_key_type ON node_lookup(key, node_type);
+                CREATE INDEX IF NOT EXISTS idx_node_lookup_node ON node_lookup(node_id);
                 """
             )
+        self._migrate_schema(backfill_lookup=not lookup_existed)
+
+    def _migrate_schema(self, *, backfill_lookup: bool) -> None:
+        """Apply additive migrations to databases created by older versions."""
+        log_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(ingestion_log)")}
+        with self.transaction():
+            if "size" not in log_cols:
+                self.conn.execute("ALTER TABLE ingestion_log ADD COLUMN size INTEGER")
+            if "mtime_ns" not in log_cols:
+                self.conn.execute("ALTER TABLE ingestion_log ADD COLUMN mtime_ns INTEGER")
+            if backfill_lookup:
+                self.rebuild_node_lookup()
+
+    def _has_node_lookup(self) -> bool:
+        return (
+            self.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'node_lookup'"
+            ).fetchone()
+            is not None
+        )
+
+    def _write_node_lookup(self, node_id: str, node_type: str, name: str, aliases: list[str]) -> None:
+        self.conn.execute("DELETE FROM node_lookup WHERE node_id = ?", (node_id,))
+        keys = {k for k in (_sql_casefold(label) for label in [name, *aliases]) if k}
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO node_lookup (key, node_id, node_type) VALUES (?, ?, ?)",
+            [(key, node_id, node_type) for key in sorted(keys)],
+        )
+
+    def rebuild_node_lookup(self) -> int:
+        """Recompute the normalized name/alias lookup for every node; returns rows written."""
+        with self.transaction():
+            self.conn.execute("DELETE FROM node_lookup")
+            rows = self.conn.execute("SELECT id, node_type, name, aliases_json FROM nodes").fetchall()
+            for r in rows:
+                self._write_node_lookup(
+                    str(r["id"]), str(r["node_type"]), str(r["name"]), json.loads(r["aliases_json"] or "[]")
+                )
+            return int(self.conn.execute("SELECT COUNT(*) FROM node_lookup").fetchone()[0])
 
     @staticmethod
     def _row_to_node(row: sqlite3.Row) -> Node:
@@ -309,6 +359,7 @@ class OntologyDB:
                     node.updated_at.isoformat(),
                 ),
             )
+            self._write_node_lookup(node.id, node.node_type, node.name, node.aliases)
             if embedding is not None:
                 vec_blob = sqlite_vec.serialize_float32(embedding)
                 self.conn.execute("DELETE FROM node_vectors WHERE node_id = ?", (node.id,))
@@ -481,38 +532,96 @@ class OntologyDB:
 
         return view_node
 
-    def get_ingestion_log(self) -> dict[str, dict[str, str]]:
-        """Return ingestion log keyed by relative file_path."""
-        rows = self.conn.execute(
-            "SELECT file_path, doc_id, content_hash, ingested_at FROM ingestion_log"
-        ).fetchall()
+    def get_ingestion_log(self) -> dict[str, dict[str, Any]]:
+        """Return ingestion log keyed by relative file_path.
+
+        `size` and `mtime_ns` are None for rows written before they were recorded
+        (or when the DB is an older read-only file without those columns).
+        """
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(ingestion_log)")}
+        has_stat = {"size", "mtime_ns"} <= cols
+        select = "file_path, doc_id, content_hash, ingested_at" + (", size, mtime_ns" if has_stat else "")
+        rows = self.conn.execute(f"SELECT {select} FROM ingestion_log").fetchall()  # noqa: S608
         return {
             str(r["file_path"]): {
                 "file_path": str(r["file_path"]),
                 "doc_id": str(r["doc_id"]),
                 "content_hash": str(r["content_hash"]),
                 "ingested_at": str(r["ingested_at"]),
+                "size": r["size"] if has_stat else None,
+                "mtime_ns": r["mtime_ns"] if has_stat else None,
             }
             for r in rows
         }
 
     def upsert_ingestion_log(
-        self, file_path: str, doc_id: str, content_hash: str, ingested_at: str | None = None
+        self,
+        file_path: str,
+        doc_id: str,
+        content_hash: str,
+        ingested_at: str | None = None,
+        *,
+        size: int | None = None,
+        mtime_ns: int | None = None,
     ) -> None:
         """Record or update ingestion state for a source file."""
         ts = ingested_at or _now_iso()
         with self.transaction():
             self.conn.execute(
                 """
-                INSERT INTO ingestion_log (file_path, doc_id, content_hash, ingested_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO ingestion_log (file_path, doc_id, content_hash, ingested_at, size, mtime_ns)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(file_path) DO UPDATE SET
                     doc_id = excluded.doc_id,
                     content_hash = excluded.content_hash,
-                    ingested_at = excluded.ingested_at
+                    ingested_at = excluded.ingested_at,
+                    size = excluded.size,
+                    mtime_ns = excluded.mtime_ns
                 """,
-                (file_path, doc_id, content_hash, ts),
+                (file_path, doc_id, content_hash, ts, size, mtime_ns),
             )
+
+    def update_ingestion_stat(self, file_path: str, size: int, mtime_ns: int) -> None:
+        """Record a file's size and modification time without touching its content state."""
+        with self.transaction():
+            self.conn.execute(
+                "UPDATE ingestion_log SET size = ?, mtime_ns = ? WHERE file_path = ?",
+                (size, mtime_ns, file_path),
+            )
+
+    def relink_document(
+        self, doc_id: str, old_path: str, new_path: str, *, size: int, mtime_ns: int
+    ) -> None:
+        """Point an ingested document at a new file path without re-extracting it."""
+        folder = Path(new_path).parent.as_posix()
+        with self.transaction():
+            self.conn.execute(
+                "UPDATE ingestion_log SET file_path = ?, size = ?, mtime_ns = ? WHERE file_path = ?",
+                (new_path, size, mtime_ns, old_path),
+            )
+            self.conn.execute(
+                """
+                UPDATE nodes SET facets_json = json_set(facets_json, '$.source.file_path', ?)
+                WHERE source_doc_id = ? AND json_type(facets_json, '$.source') = 'object'
+                """,
+                (new_path, doc_id),
+            )
+            if folder == ".":
+                self.conn.execute(
+                    """
+                    UPDATE nodes SET facets_json = json_remove(facets_json, '$.source.folder')
+                    WHERE source_doc_id = ? AND json_type(facets_json, '$.source') = 'object'
+                    """,
+                    (doc_id,),
+                )
+            else:
+                self.conn.execute(
+                    """
+                    UPDATE nodes SET facets_json = json_set(facets_json, '$.source.folder', ?)
+                    WHERE source_doc_id = ? AND json_type(facets_json, '$.source') = 'object'
+                    """,
+                    (folder, doc_id),
+                )
 
     def delete_ingestion_log(self, file_path: str) -> None:
         """Remove an ingestion log record for a deleted file."""
@@ -596,6 +705,38 @@ class OntologyDB:
         row = self.conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
         return self._row_to_node(row) if row is not None else None
 
+    def get_nodes(self, node_ids: list[str]) -> list[Node]:
+        """Fetch nodes by ID in one query, preserving input order and skipping missing IDs."""
+        unique = list(dict.fromkeys(node_ids))
+        if not unique:
+            return []
+        placeholders = ",".join("?" for _ in unique)
+        rows = self.conn.execute(
+            f"SELECT * FROM nodes WHERE id IN ({placeholders})", unique  # noqa: S608
+        ).fetchall()
+        by_id = {str(r["id"]): self._row_to_node(r) for r in rows}
+        return [by_id[i] for i in unique if i in by_id]
+
+    def find_nodes_mentioned_in(self, text: str, node_types: tuple[str, ...]) -> list[Node]:
+        """Return nodes whose normalized name or alias occurs in `text` as a whole word."""
+        haystack = text.casefold()
+        if not haystack.strip() or not self._has_node_lookup():
+            return []
+        placeholders = ",".join("?" for _ in node_types)
+        rows = self.conn.execute(
+            f"""
+            SELECT DISTINCT l.node_id, l.key FROM node_lookup l
+            WHERE l.node_type IN ({placeholders}) AND length(l.key) >= 2 AND instr(?, l.key) > 0
+            """,  # noqa: S608
+            (*node_types, haystack),
+        ).fetchall()
+        matched: list[str] = []
+        for r in rows:
+            pattern = r"(?<!\w)" + re.escape(str(r["key"])) + r"(?!\w)"
+            if re.search(pattern, haystack):
+                matched.append(str(r["node_id"]))
+        return self.get_nodes(sorted(set(matched)))
+
     def find_by_name_or_alias(
         self, name: str, node_type: NodeType | None = None
     ) -> Node | None:
@@ -603,6 +744,19 @@ class OntologyDB:
         target = name.strip().casefold()
         if not target:
             return None
+        if self._has_node_lookup():
+            sql = """
+                SELECT n.* FROM node_lookup l JOIN nodes n ON n.id = l.node_id
+                WHERE l.key = :target
+            """
+            params_l: dict[str, Any] = {"target": target}
+            if node_type is not None:
+                sql += " AND l.node_type = :node_type"
+                params_l["node_type"] = node_type
+            sql += " ORDER BY n.updated_at DESC LIMIT 1"
+            row = self.conn.execute(sql, params_l).fetchone()
+            return self._row_to_node(row) if row is not None else None
+        # Older read-only databases without `node_lookup`: scan names and aliases.
         sql = """
             SELECT * FROM nodes n
             WHERE (

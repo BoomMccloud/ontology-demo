@@ -34,7 +34,7 @@ from stock_ontology.registry import (
     load_registry,
     save_registry,
 )
-from stock_ontology.repair import repair_ontology
+from stock_ontology.repair import reembed_nodes, repair_ontology
 
 app = typer.Typer(
     name="stock-ontology",
@@ -847,6 +847,13 @@ def repair(
     json_out: Annotated[
         bool, typer.Option("--json", help="Print machine-readable JSON repair report.")
     ] = False,
+    reembed: Annotated[
+        bool,
+        typer.Option(
+            "--reembed",
+            help="Recompute embeddings of merged survivors with the configured LLM (needs API keys).",
+        ),
+    ] = False,
 ) -> None:
     """Apply deterministic fixes to ontology.db: orphaned rows, alias/inverse relations, exact duplicates."""
     settings = _load_settings(db=db, registry=registry)
@@ -859,10 +866,14 @@ def repair(
         console.print(f"[red]Ontology database does not exist at {settings.db_path}.[/red]")
         raise typer.Exit(code=1)
 
+    llm = create_llm_client(settings) if reembed else None
+    reembedded = 0
     with OntologyDB(settings.db_path, embedding_dim=settings.embedding_dim, read_only=False) as store:
         report = repair_ontology(store, reg)
+        if llm is not None and report.merged_survivor_ids:
+            reembedded = reembed_nodes(store, llm, report.merged_survivor_ids)
 
-    payload = {**asdict(report), "total_changes": report.total_changes}
+    payload = {**asdict(report), "total_changes": report.total_changes, "reembedded": reembedded}
     if json_out:
         print(json.dumps(payload, indent=2))
         return

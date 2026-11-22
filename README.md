@@ -69,6 +69,8 @@ uv run stock-ontology audit
 #     Run it on a timer (cron or launchd), then `audit` to queue judgment calls as pending suggestions.
 uv run stock-ontology repair
 uv run stock-ontology repair --json
+# After repair merges duplicates, recompute the survivors' embeddings (needs LLM API keys).
+uv run stock-ontology repair --reembed
 
 # 3. Periodically watch data/ for new or updated notes
 uv run stock-ontology watch --interval 60
@@ -98,6 +100,13 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
 - Look up names and aliases with SQL over `name` and `aliases_json` (`OntologyDB.find_by_name_or_alias`), never with a capped Python scan, and keep the edge-reference fallback limited to entities and themes.
   **Why:** a 5,000-node scan ordered by recency let newer events and views push old entities out of the window, so ingestion created duplicate entities (proposal `ingestion-write-integrity`, 2026-11-22).
   **Guarded by:** `tests/test_pipeline.py::test_pipeline_resolves_old_entity_past_5000_newer_nodes`.
+
+- Write nodes only through `OntologyDB.upsert_node` (deletes may be raw SQL; `node_lookup` cascades). Raw `INSERT`/`UPDATE` on `nodes` skips the indexed `node_lookup` table, so name and alias lookups miss the node and ingestion creates duplicates.
+  **Why:** name lookup moved from a full scan to the `node_lookup` index (proposal `ingestion-followups`, 2026-11-22).
+  **Guarded by:** `tests/test_db.py::test_node_lookup_uses_index_and_tracks_alias_edits_and_deletes`.
+- Take a note's `doc_id` from its ingestion log entry, not from its current path. A moved note keeps its original `doc_id`, so a path-derived ID can collide with it.
+  **Why:** moved notes are relinked instead of re-extracted (proposal `ingestion-followups`, 2026-11-22).
+  **Guarded by:** `tests/test_db.py::test_moves_handle_root_folder_ambiguity_reused_paths_and_force`.
 
 ## Tests (Offline)
 

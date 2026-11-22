@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from stock_ontology.db import OntologyDB, merge_edge_facets
 from stock_ontology.models import Node
@@ -25,6 +26,9 @@ class RepairReport:
     edges_canonicalized: int = 0
     duplicate_edges_deleted: int = 0
     nodes_merged: int = 0
+    self_loops_deleted: int = 0
+    # Survivors of merges keep a stale embedding until `reembed_nodes` recomputes it.
+    merged_survivor_ids: list[str] = field(default_factory=list)
 
     @property
     def total_changes(self) -> int:
@@ -34,7 +38,22 @@ class RepairReport:
             + self.edges_canonicalized
             + self.duplicate_edges_deleted
             + self.nodes_merged
+            + self.self_loops_deleted
         )
+
+
+def reembed_nodes(db: OntologyDB, llm: Any, node_ids: list[str]) -> int:
+    """Recompute and store embeddings for `node_ids` (e.g. merge survivors); returns the count."""
+    from stock_ontology.pipeline import node_embedding_text
+
+    if db.read_only:
+        raise ValueError("reembed_nodes requires a writable OntologyDB.")  # noqa: TRY003
+    nodes = db.get_nodes(node_ids)
+    if not nodes:
+        return 0
+    vectors = llm.embed_texts([node_embedding_text(node) for node in nodes])
+    mapping = {node.id: vec for node, vec in zip(nodes, vectors, strict=True)}
+    return db.replace_node_embeddings(mapping, prune_orphans=False)
 
 
 def repair_ontology(db: OntologyDB, registry: OntologyRegistry) -> RepairReport:
@@ -188,7 +207,9 @@ def _merge_cluster(db: OntologyDB, cluster: list[Node], report: RepairReport) ->
         report.nodes_merged += 1
 
     # Self-loops created by repointing carry no information.
-    db.conn.execute("DELETE FROM edges WHERE from_id = to_id AND from_id = ?", (survivor.id,))
+    cur = db.conn.execute("DELETE FROM edges WHERE from_id = to_id AND from_id = ?", (survivor.id,))
+    report.self_loops_deleted += max(cur.rowcount, 0)
+    report.merged_survivor_ids.append(survivor.id)
     survivor.aliases = aliases
     survivor.facets = facets
     survivor.summary = summary

@@ -790,3 +790,195 @@ def test_cli_ingest_uses_registry_file_for_relations(
     with OntologyDB(db_path, embedding_dim=WIRING_DIM, read_only=True) as db:
         relations = {r[0] for r in db.conn.execute("SELECT relation FROM edges").fetchall()}
     assert relations == {"WORKS_AT"}
+
+
+# ---------------------------------------------------------------------------
+# Ingestion follow-ups: supporting unit tests
+# ---------------------------------------------------------------------------
+
+
+def _company(node_id: str, name: str, aliases: list[str] | None = None) -> Node:
+    return Node(
+        id=node_id, node_type="entity", name=name, summary=f"{name}.", aliases=aliases or [],
+        facets={"entity_type": "company"},
+    )
+
+
+def test_node_lookup_uses_index_and_tracks_alias_edits_and_deletes(tmp_path: Path) -> None:
+    with OntologyDB(tmp_path / "lk.db", embedding_dim=4, read_only=False) as db:
+        node = _company("ent_k", "Kappa Corp", ["KPC"])
+        db.upsert_node(node)
+        plan = " ".join(
+            str(r[3])
+            for r in db.conn.execute(
+                "EXPLAIN QUERY PLAN SELECT node_id FROM node_lookup WHERE key = ? AND node_type = ?",
+                ("kpc", "entity"),
+            ).fetchall()
+        )
+        assert "idx_node_lookup_key_type" in plan or "PRIMARY KEY" in plan or "sqlite_autoindex" in plan
+        assert db.find_by_name_or_alias("kpc").id == "ent_k"
+
+        node.aliases = ["KAPPA"]
+        db.upsert_node(node)
+        assert db.find_by_name_or_alias("KPC") is None
+        assert db.find_by_name_or_alias("kappa").id == "ent_k"
+
+        db.conn.execute("DELETE FROM nodes WHERE id = 'ent_k'")
+        assert db.conn.execute("SELECT COUNT(*) FROM node_lookup").fetchone()[0] == 0
+
+
+def test_node_lookup_backfills_old_db_and_read_only_falls_back(tmp_path: Path) -> None:
+    db_path = tmp_path / "old.db"
+    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
+        db.upsert_node(_company("ent_o", "Omicron Ltd", ["OMC"]))
+        db.conn.execute("DROP TABLE node_lookup")
+        db.conn.commit()
+
+    with OntologyDB(db_path, embedding_dim=4, read_only=True) as ro:
+        assert ro.find_by_name_or_alias("omc").id == "ent_o"
+
+    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
+        assert db.conn.execute("SELECT COUNT(*) FROM node_lookup").fetchone()[0] == 2
+        assert db.find_by_name_or_alias("Omicron Ltd").id == "ent_o"
+
+
+def test_ingestion_log_migrates_old_schema_and_stores_stat(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy_log.db"
+    raw = sqlite3.connect(db_path)
+    raw.execute(
+        "CREATE TABLE ingestion_log (file_path TEXT PRIMARY KEY, doc_id TEXT NOT NULL UNIQUE, "
+        "content_hash TEXT NOT NULL, ingested_at TEXT NOT NULL)"
+    )
+    raw.execute("INSERT INTO ingestion_log VALUES ('a.md', 'doc_a', 'h', '2026-01-01')")
+    raw.commit()
+    raw.close()
+
+    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
+        log = db.get_ingestion_log()
+        assert log["a.md"]["size"] is None and log["a.md"]["mtime_ns"] is None
+        db.upsert_ingestion_log("b.md", "doc_b", "h2", size=10, mtime_ns=123)
+        db.update_ingestion_stat("a.md", 7, 456)
+        log = db.get_ingestion_log()
+        assert (log["b.md"]["size"], log["b.md"]["mtime_ns"]) == (10, 123)
+        assert (log["a.md"]["size"], log["a.md"]["mtime_ns"]) == (7, 456)
+
+
+def test_get_nodes_preserves_order_and_skips_missing(tmp_path: Path) -> None:
+    with OntologyDB(tmp_path / "gn.db", embedding_dim=4, read_only=False) as db:
+        for nid in ("n1", "n2", "n3"):
+            db.upsert_node(_company(nid, f"Co {nid}"))
+        assert [n.id for n in db.get_nodes(["n3", "missing", "n1", "n3"])] == ["n3", "n1"]
+        assert db.get_nodes([]) == []
+
+
+def test_resolve_sentiment_takes_first_valid_candidate() -> None:
+    from stock_ontology.pipeline import _resolve_sentiment
+
+    assert _resolve_sentiment(None, "bogus", "negative", "positive") == "negative"
+    assert _resolve_sentiment("POSITIVE", "negative") == "positive"
+    assert _resolve_sentiment(None, None) == "neutral"
+
+
+class _EmbedCountingLLM:
+    def __init__(self, entities: list[ExtractedEntity]) -> None:
+        self.entities = entities
+        self.embed_calls = 0
+        self.extract_calls = 0
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        self.embed_calls += 1
+        return [_wiring_vec(sum(map(ord, t))) for t in texts]
+
+    def extract_document(self, **_: Any) -> ExtractionResult:
+        self.extract_calls += 1
+        return ExtractionResult(entities=self.entities)
+
+
+def test_probe_embeddings_are_batched_per_note(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "n.md").write_text("Three new people.", encoding="utf-8")
+    people = [
+        ExtractedEntity(temp_id=f"p{i}", name=f"Person {i}", summary="Analyst.", entity_type="person")
+        for i in range(1, 4)
+    ]
+    llm = _EmbedCountingLLM(people)
+    with OntologyDB(tmp_path / "b.db", embedding_dim=WIRING_DIM, read_only=False) as db:
+        IngestionPipeline(db, llm, data_dir).run()
+        assert len([n for n in db.list_all_nodes() if n.node_type == "entity"]) == 3
+    assert llm.embed_calls == 1
+
+
+def test_moves_handle_root_folder_ambiguity_reused_paths_and_force(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    (data_dir / "sub").mkdir(parents=True)
+    (data_dir / "sub" / "a.md").write_text("Note A.", encoding="utf-8")
+    llm = _EmbedCountingLLM([])
+    with OntologyDB(tmp_path / "m.db", embedding_dim=WIRING_DIM, read_only=False) as db:
+        pipeline = IngestionPipeline(db, llm, data_dir)
+        pipeline.run()
+        doc_a = db.get_ingestion_log()["sub/a.md"]["doc_id"]
+
+        # Move to the root: relinked, not re-extracted.
+        (data_dir / "sub" / "a.md").rename(data_dir / "a.md")
+        report = pipeline.run()
+        assert report.files_moved == 1 and llm.extract_calls == 1
+        assert db.get_ingestion_log()["a.md"]["doc_id"] == doc_a
+
+        # A new note at the old path must not collide with the moved note's doc ID.
+        (data_dir / "sub" / "a.md").write_text("A different note.", encoding="utf-8")
+        assert pipeline.run().errors == []
+        log = db.get_ingestion_log()
+        assert log["sub/a.md"]["doc_id"] != doc_a
+
+        # Ambiguous: two new copies of one vanished note are both ingested normally.
+        (data_dir / "a.md").rename(data_dir / "copy1.md")
+        (data_dir / "copy2.md").write_text("Note A.", encoding="utf-8")
+        before = llm.extract_calls
+        report = pipeline.run()
+        assert report.files_moved == 0
+        assert llm.extract_calls == before + 2
+
+        # --force reads and re-extracts everything.
+        before = llm.extract_calls
+        assert pipeline.run(force=True).files_processed == 3
+        assert llm.extract_calls == before + 3
+
+
+def test_cli_repair_builds_llm_only_with_reembed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    from typer.testing import CliRunner
+
+    import stock_ontology.cli as cli_module
+
+    monkeypatch.setenv("EMBEDDING_DIM", str(WIRING_DIM))
+    db_path = tmp_path / "ontology.db"
+    reg_path = tmp_path / "ontology_registry.json"
+    save_registry(create_minimal_registry(), reg_path)
+
+    def seed() -> None:
+        with OntologyDB(db_path, embedding_dim=WIRING_DIM, read_only=False) as db:
+            db.upsert_node(_company("ent_x1", "Xi Corp"), embedding=_wiring_vec(0))
+            db.upsert_node(_company("ent_x2", "xi corp"), embedding=_wiring_vec(1))
+
+    calls: list[int] = []
+
+    def fake_llm(_settings: Any) -> Any:
+        calls.append(1)
+        return _EmbedCountingLLM([])
+
+    monkeypatch.setattr(cli_module, "create_llm_client", fake_llm)
+    seed()
+    args = ["repair", "--db", str(db_path), "--registry", str(reg_path), "--json"]
+    plain = CliRunner().invoke(cli_module.app, args)
+    assert plain.exit_code == 0, plain.output
+    assert calls == []
+    assert json.loads(plain.output)["reembedded"] == 0
+
+    db_path.unlink()
+    seed()
+    with_flag = CliRunner().invoke(cli_module.app, [*args, "--reembed"])
+    assert with_flag.exit_code == 0, with_flag.output
+    assert calls == [1]
+    assert json.loads(with_flag.output)["reembedded"] == 1

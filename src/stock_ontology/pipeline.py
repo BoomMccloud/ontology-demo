@@ -26,6 +26,9 @@ from stock_ontology.models import (
 
 SUPPORTED_EXTENSIONS = {".md", ".txt"}
 CANONICAL_DISTANCE_THRESHOLD = 0.15
+# Most recently updated entities and themes listed in the extraction catalog (each type),
+# in addition to every entity/theme the note names.
+CATALOG_RECENT_BUDGET = 500
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,7 @@ class IngestReport:
     files_processed: int = 0
     files_skipped: int = 0
     files_deleted: int = 0
+    files_moved: int = 0
     nodes_created_or_updated: int = 0
     edges_created_or_updated: int = 0
     consensus_updated_for: list[str] = field(default_factory=list)
@@ -102,13 +106,12 @@ class IngestionPipeline:
         self.data_dir = Path(data_dir)
         self.registry = registry if registry is not None else create_minimal_registry()
 
-    def _scan_files(self) -> tuple[dict[str, tuple[Path, str, str]], dict[str, str]]:
-        """Return `({rel_posix_path: (abs_path, text, sha256)}, {rel_posix_path: read_error})`."""
+    def _scan_files(self) -> dict[str, tuple[Path, int, int]]:
+        """Return `{rel_posix_path: (abs_path, size, mtime_ns)}` for notes, without reading them."""
         if not self.data_dir.exists():
             raise FileNotFoundError(f"Data directory not found: {self.data_dir}")  # noqa: TRY003
 
-        discovered: dict[str, tuple[Path, str, str]] = {}
-        unreadable: dict[str, str] = {}
+        found: dict[str, tuple[Path, int, int]] = {}
         for path in sorted(self.data_dir.rglob("*")):
             if not path.is_file():
                 continue
@@ -118,18 +121,26 @@ class IngestionPipeline:
             if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
                 continue
             try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                unreadable[rel.as_posix()] = f"Could not read note: {exc}"
-                continue
-            discovered[rel.as_posix()] = (path, text, _sha256_text(text))
-        return discovered, unreadable
+                st = path.stat()
+            except OSError:
+                st = None
+            found[rel.as_posix()] = (path, st.st_size if st else -1, st.st_mtime_ns if st else -1)
+        return found
 
-    def _build_existing_catalog(self) -> str:
-        entities = self.db.list_nodes(node_type="entity", limit=500)
-        themes = self.db.list_nodes(node_type="theme", limit=500)
+    def _build_existing_catalog(self, text: str = "") -> str:
+        """List entities/themes named in `text` first, then the most recently updated ones."""
+        mentioned = self.db.find_nodes_mentioned_in(text, ("entity", "theme")) if text else []
+        recent = self.db.list_nodes(node_type="entity", limit=CATALOG_RECENT_BUDGET) + self.db.list_nodes(
+            node_type="theme", limit=CATALOG_RECENT_BUDGET
+        )
+        seen: set[str] = set()
+        ordered: list[Node] = []
+        for node in mentioned + recent:
+            if node.id not in seen:
+                seen.add(node.id)
+                ordered.append(node)
         lines: list[str] = []
-        for node in entities + themes:
+        for node in ordered:
             subtype = (
                 node.facets.get("entity_type", "entity")
                 if node.node_type == "entity"
@@ -157,22 +168,18 @@ class IngestionPipeline:
         aliases: list[str],
         facets: dict[str, Any],
         prefix: str,
+        probe_vec: list[float] | None = None,
     ) -> tuple[Node, bool]:
         """Resolve an entity/theme by exact name/alias or vector distance; upsert if new/merged."""
-        # If LLM returned an already-existing DB ID in `temp_id`, reuse it.
-        existing = self.db.get_node(temp_id)
-        if existing is None or existing.node_type != node_type:
-            existing = self.db.find_by_name_or_alias(name, node_type=node_type)
-        if existing is None:
-            for alias in aliases:
-                existing = self.db.find_by_name_or_alias(alias, node_type=node_type)
-                if existing is not None:
-                    break
+        existing = self._find_exact(node_type=node_type, temp_id=temp_id, name=name, aliases=aliases)
 
         candidate_vec: list[float] | None = None
         if existing is None:
-            probe_text = f"{node_type}: {name}\n{summary}"
-            candidate_vec = self.llm.embed_texts([probe_text])[0]
+            candidate_vec = (
+                probe_vec
+                if probe_vec is not None
+                else self.llm.embed_texts([_probe_text(node_type, name, summary)])[0]
+            )
             matches = self.db.vector_search(candidate_vec, node_type=node_type, limit=1)
             if matches and matches[0][1] < CANONICAL_DISTANCE_THRESHOLD:
                 existing = matches[0][0]
@@ -224,6 +231,33 @@ class IngestionPipeline:
         self.db.upsert_node(node, embedding=vec)
         return node, True
 
+    def _find_exact(
+        self, *, node_type: NodeType, temp_id: str, name: str, aliases: list[str]
+    ) -> Node | None:
+        # If the LLM returned an already-existing DB ID in `temp_id`, reuse it.
+        existing = self.db.get_node(temp_id)
+        if existing is not None and existing.node_type == node_type:
+            return existing
+        for label in [name, *aliases]:
+            found = self.db.find_by_name_or_alias(label, node_type=node_type)
+            if found is not None:
+                return found
+        return None
+
+    def _batch_probe_vectors(self, extraction: Any) -> dict[tuple[str, str], list[float]]:
+        """Embed probes for extracted entities/themes with no exact match, in one call."""
+        pending: list[tuple[tuple[str, str], str]] = []
+        for node_type, items in (("entity", extraction.entities), ("theme", extraction.themes)):
+            for item in items:
+                if self._find_exact(
+                    node_type=node_type, temp_id=item.temp_id, name=item.name, aliases=item.aliases
+                ) is None:
+                    pending.append(((node_type, item.temp_id), _probe_text(node_type, item.name, item.summary)))
+        if not pending:
+            return {}
+        vectors = self.llm.embed_texts([text for _, text in pending])
+        return {key: vec for (key, _), vec in zip(pending, vectors, strict=True)}
+
     def _resolve_node_ref(self, ref: str, ref_map: dict[str, str]) -> str | None:
         if ref in ref_map:
             return ref_map[ref]
@@ -254,6 +288,8 @@ class IngestionPipeline:
         replace_old_doc_id: str | None,
         affected_company_ids: set[str],
         report: IngestReport,
+        size: int | None = None,
+        mtime_ns: int | None = None,
     ) -> None:
         now = datetime.now(UTC)
         now_iso = now.isoformat()
@@ -266,17 +302,23 @@ class IngestionPipeline:
         if parent != ".":
             source_meta["folder"] = parent
 
+        # Company IDs touched by this note join the run's consensus targets only after the
+        # note's transaction commits; a rolled-back note contributes none.
+        note_companies: set[str] = set()
         if not text.strip():
             with self.db.transaction():
-                self._clear_prior_artifacts(doc_id, replace_old_doc_id, affected_company_ids)
-                self.db.upsert_ingestion_log(rel_path, doc_id, content_hash, now_iso)
+                self._clear_prior_artifacts(doc_id, replace_old_doc_id, note_companies)
+                self.db.upsert_ingestion_log(
+                    rel_path, doc_id, content_hash, now_iso, size=size, mtime_ns=mtime_ns
+                )
+            affected_company_ids.update(note_companies)
             report.files_processed += 1
             return
 
         extraction = self.llm.extract_document(
             text=text,
             source_meta=source_meta,
-            existing_catalog=self._build_existing_catalog(),
+            existing_catalog=self._build_existing_catalog(text),
             known_facets=self.db.get_known_facet_keys(),
         )
 
@@ -284,16 +326,19 @@ class IngestionPipeline:
         # leaves no partial rows behind and no ingestion log entry.
         with self.db.transaction():
             # Always clear this note's prior artifacts (including leftovers from a failed run).
-            self._clear_prior_artifacts(doc_id, replace_old_doc_id, affected_company_ids)
+            self._clear_prior_artifacts(doc_id, replace_old_doc_id, note_companies)
             nodes_written, edges_written = self._write_extraction(
                 extraction=extraction,
                 doc_id=doc_id,
                 source_meta=source_meta,
                 now=now,
-                affected_company_ids=affected_company_ids,
+                affected_company_ids=note_companies,
             )
-            affected_company_ids.update(self.db.get_doc_affected_company_ids(doc_id))
-            self.db.upsert_ingestion_log(rel_path, doc_id, content_hash, now_iso)
+            note_companies.update(self.db.get_doc_affected_company_ids(doc_id))
+            self.db.upsert_ingestion_log(
+                rel_path, doc_id, content_hash, now_iso, size=size, mtime_ns=mtime_ns
+            )
+        affected_company_ids.update(note_companies)
         report.nodes_created_or_updated += nodes_written
         report.edges_created_or_updated += edges_written
         report.files_processed += 1
@@ -320,6 +365,7 @@ class IngestionPipeline:
         edges_written = 0
         ref_map: dict[str, str] = {}
         local_nodes: dict[str, Node] = {}
+        probes = self._batch_probe_vectors(extraction)
 
         # 1. Resolve canonical entities & themes.
         for ent in extraction.entities:
@@ -333,6 +379,7 @@ class IngestionPipeline:
                 aliases=ent.aliases,
                 facets=ent_facets,
                 prefix="ent",
+                probe_vec=probes.get(("entity", ent.temp_id)),
             )
             ref_map[ent.temp_id] = node.id
             local_nodes[node.id] = node
@@ -352,6 +399,7 @@ class IngestionPipeline:
                 aliases=thm.aliases,
                 facets=thm_facets,
                 prefix="thm",
+                probe_vec=probes.get(("theme", thm.temp_id)),
             )
             ref_map[thm.temp_id] = node.id
             local_nodes[node.id] = node
@@ -361,67 +409,12 @@ class IngestionPipeline:
         # 2. Build doc-scoped events and views.
         doc_nodes: list[Node] = []
         for ev in extraction.events:
-            ev_facets = facets_list_to_dict(ev.facets)
-            ev_facets["event_type"] = ev.event_type or "fact"
-            if ev.event_date:
-                ev_facets["event_date"] = ev.event_date
-            ev_facets["status"] = ev.status or "occurred"
-            explicit_ev_sentiment = (
-                normalize_sentiment(ev.sentiment)
-                if "sentiment" in ev.model_fields_set
-                else None
-            )
-            ev_facets["sentiment"] = (
-                explicit_ev_sentiment
-                or normalize_sentiment(ev_facets.get("sentiment"))
-                or normalize_sentiment(ev.sentiment)
-                or "neutral"
-            )
-            ev_facets["source"] = _build_node_source(source_meta, ev_facets)
-            node = Node(
-                id=_make_node_id("evt", ev.name),
-                node_type="event",
-                name=ev.name.strip(),
-                summary=ev.summary.strip(),
-                aliases=[],
-                facets=ev_facets,
-                source_doc_id=doc_id,
-                created_at=now,
-                updated_at=now,
-            )
+            node = _build_event_node(ev, doc_id=doc_id, source_meta=source_meta, now=now)
             ref_map[ev.temp_id] = node.id
             local_nodes[node.id] = node
             doc_nodes.append(node)
-
         for vw in extraction.views:
-            vw_facets = facets_list_to_dict(vw.facets)
-            vtype = (vw.view_type or "analyst_report").strip().lower()
-            if vtype in ("consensus", "house_consensus"):
-                vtype = "pm_view"
-            vw_facets["view_type"] = vtype
-            vw_facets["stance"] = vw.stance or "neutral"
-            vw_facets["sentiment"] = (
-                normalize_sentiment(vw.sentiment)
-                or normalize_sentiment(vw_facets.get("sentiment"))
-                or derive_sentiment_from_stance(vw_facets["stance"])
-                or "neutral"
-            )
-            vw_facets["support_strength"] = vw.support_strength or "moderate"
-            vw_facets["conviction"] = vw.conviction or "medium"
-            if vw.as_of:
-                vw_facets["as_of"] = vw.as_of
-            vw_facets["source"] = _build_node_source(source_meta, vw_facets)
-            node = Node(
-                id=_make_node_id("vw", vw.name),
-                node_type="view",
-                name=vw.name.strip(),
-                summary=vw.summary.strip(),
-                aliases=[],
-                facets=vw_facets,
-                source_doc_id=doc_id,
-                created_at=now,
-                updated_at=now,
-            )
+            node = _build_view_node(vw, doc_id=doc_id, source_meta=source_meta, now=now)
             ref_map[vw.temp_id] = node.id
             local_nodes[node.id] = node
             doc_nodes.append(node)
@@ -479,15 +472,9 @@ class IngestionPipeline:
             return False
 
         overview = self.db.get_entity_overview(company_id)
-        event_nodes = [
-            n for item in overview["events"] if (n := self.db.get_node(item["id"])) is not None
-        ]
-        view_nodes = [
-            n for item in overview["views"] if (n := self.db.get_node(item["id"])) is not None
-        ]
-        theme_nodes = [
-            n for item in overview["themes"] if (n := self.db.get_node(item["id"])) is not None
-        ]
+        event_nodes = self.db.get_nodes([item["id"] for item in overview["events"]])
+        view_nodes = self.db.get_nodes([item["id"] for item in overview["views"]])
+        theme_nodes = self.db.get_nodes([item["id"] for item in overview["themes"]])
         prior = self.db.get_entity_consensus(company_id)
 
         if not event_nodes and not view_nodes:
@@ -543,31 +530,75 @@ class IngestionPipeline:
     def run(self, force: bool = False, rebuild_consensus: bool = False) -> IngestReport:
         """Scan `data_dir`, incrementally extract changed files, and update consensus."""
         report = IngestReport()
-        discovered, unreadable = self._scan_files()
-        report.files_scanned = len(discovered) + len(unreadable)
-        report.errors.extend(sorted(unreadable.items()))
-
+        on_disk = self._scan_files()
+        report.files_scanned = len(on_disk)
         log = self.db.get_ingestion_log()
         affected_company_ids: set[str] = set()
 
-        # 1. Clean up files removed from disk (an unreadable file still exists, so keep it).
-        for deleted_rel in sorted(set(log.keys()) - set(discovered.keys()) - set(unreadable.keys())):
+        # 1. Read only files whose size or modification time changed (or everything on --force).
+        to_check: dict[str, tuple[str, str, int, int]] = {}
+        for rel_path, (path, size, mtime_ns) in on_disk.items():
+            entry = log.get(rel_path)
+            if (
+                not force
+                and entry is not None
+                and entry.get("size") == size
+                and entry.get("mtime_ns") == mtime_ns
+            ):
+                report.files_skipped += 1
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                report.errors.append((rel_path, f"Could not read note: {exc}"))
+                continue
+            to_check[rel_path] = (text, _sha256_text(text), size, mtime_ns)
+
+        # 2. Relink notes that moved: a vanished logged path whose content hash uniquely
+        #    matches a new path keeps its doc and artifacts; nothing is re-extracted.
+        vanished = sorted(set(log) - set(on_disk))
+        new_paths = [p for p in to_check if p not in log]
+        by_hash_old: dict[str, list[str]] = {}
+        for rel in vanished:
+            by_hash_old.setdefault(log[rel]["content_hash"], []).append(rel)
+        by_hash_new: dict[str, list[str]] = {}
+        for rel in new_paths:
+            by_hash_new.setdefault(to_check[rel][1], []).append(rel)
+        for content_hash, olds in by_hash_old.items():
+            news = by_hash_new.get(content_hash, [])
+            if len(olds) != 1 or len(news) != 1:
+                continue
+            old_rel, new_rel = olds[0], news[0]
+            _, _, size, mtime_ns = to_check.pop(new_rel)
+            self.db.relink_document(
+                log[old_rel]["doc_id"], old_rel, new_rel, size=size, mtime_ns=mtime_ns
+            )
+            vanished.remove(old_rel)
+            report.files_moved += 1
+
+        # 3. Clean up files removed from disk.
+        for deleted_rel in vanished:
             doc_id = log[deleted_rel]["doc_id"]
-            affected_company_ids.update(self.db.get_doc_affected_company_ids(doc_id))
+            deleted_companies = self.db.get_doc_affected_company_ids(doc_id)
             with self.db.transaction():
                 self.db.delete_document_artifacts(doc_id)
                 self.db.delete_ingestion_log(deleted_rel)
+            affected_company_ids.update(deleted_companies)
             report.files_deleted += 1
 
-        # 2. Process new or modified files.
-        for rel_path, (_, text, content_hash) in discovered.items():
-            doc_id = f"doc_{hashlib.sha256(rel_path.encode('utf-8')).hexdigest()[:12]}"
+        # 4. Process new or modified files.
+        used_doc_ids = {e["doc_id"] for rel, e in self.db.get_ingestion_log().items()}
+        for rel_path, (text, content_hash, size, mtime_ns) in to_check.items():
             existing_entry = log.get(rel_path)
             if not force and existing_entry and existing_entry["content_hash"] == content_hash:
+                # Touched but unchanged: remember the new size/mtime so the next run skips the read.
+                self.db.update_ingestion_stat(rel_path, size, mtime_ns)
                 report.files_skipped += 1
                 continue
 
             old_doc_id = existing_entry["doc_id"] if existing_entry is not None else None
+            doc_id = old_doc_id or _new_doc_id(rel_path, used_doc_ids)
+            used_doc_ids.add(doc_id)
             try:
                 self._process_document(
                     rel_path=rel_path,
@@ -577,6 +608,8 @@ class IngestionPipeline:
                     replace_old_doc_id=old_doc_id,
                     affected_company_ids=affected_company_ids,
                     report=report,
+                    size=size,
+                    mtime_ns=mtime_ns,
                 )
             except Exception as exc:  # noqa: BLE001
                 report.errors.append((rel_path, str(exc)))
@@ -669,6 +702,81 @@ def reembed_all_nodes(db: OntologyDB, llm: LLMClient) -> ReembedReport:
         provider=provider_name,
         model=model_name,
         embedding_dim=db.embedding_dim,
+    )
+
+
+def _probe_text(node_type: str, name: str, summary: str) -> str:
+    return f"{node_type}: {name}\n{summary}"
+
+
+def _new_doc_id(rel_path: str, used: set[str]) -> str:
+    """Path-derived doc ID, salted if a moved note already holds the plain one."""
+    candidate = f"doc_{hashlib.sha256(rel_path.encode('utf-8')).hexdigest()[:12]}"
+    salt = 0
+    while candidate in used:
+        salt += 1
+        candidate = f"doc_{hashlib.sha256(f'{rel_path}#{salt}'.encode()).hexdigest()[:12]}"
+    return candidate
+
+
+def _resolve_sentiment(*candidates: Any) -> str:
+    """First candidate that normalizes to a valid sentiment, in the order given; else neutral."""
+    for candidate in candidates:
+        value = normalize_sentiment(candidate)
+        if value is not None:
+            return value
+    return "neutral"
+
+
+def _build_event_node(ev: Any, *, doc_id: str, source_meta: dict[str, Any], now: datetime) -> Node:
+    facets = facets_list_to_dict(ev.facets)
+    facets["event_type"] = ev.event_type or "fact"
+    if ev.event_date:
+        facets["event_date"] = ev.event_date
+    facets["status"] = ev.status or "occurred"
+    explicit = ev.sentiment if "sentiment" in ev.model_fields_set else None
+    # Precedence: explicitly extracted field, then a sentiment facet, then the model default.
+    facets["sentiment"] = _resolve_sentiment(explicit, facets.get("sentiment"), ev.sentiment)
+    facets["source"] = _build_node_source(source_meta, facets)
+    return Node(
+        id=_make_node_id("evt", ev.name),
+        node_type="event",
+        name=ev.name.strip(),
+        summary=ev.summary.strip(),
+        aliases=[],
+        facets=facets,
+        source_doc_id=doc_id,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _build_view_node(vw: Any, *, doc_id: str, source_meta: dict[str, Any], now: datetime) -> Node:
+    facets = facets_list_to_dict(vw.facets)
+    vtype = (vw.view_type or "analyst_report").strip().lower()
+    if vtype in ("consensus", "house_consensus"):
+        vtype = "pm_view"
+    facets["view_type"] = vtype
+    facets["stance"] = vw.stance or "neutral"
+    # Precedence: extracted field, then a sentiment facet, then the stance.
+    facets["sentiment"] = _resolve_sentiment(
+        vw.sentiment, facets.get("sentiment"), derive_sentiment_from_stance(facets["stance"])
+    )
+    facets["support_strength"] = vw.support_strength or "moderate"
+    facets["conviction"] = vw.conviction or "medium"
+    if vw.as_of:
+        facets["as_of"] = vw.as_of
+    facets["source"] = _build_node_source(source_meta, facets)
+    return Node(
+        id=_make_node_id("vw", vw.name),
+        node_type="view",
+        name=vw.name.strip(),
+        summary=vw.summary.strip(),
+        aliases=[],
+        facets=facets,
+        source_doc_id=doc_id,
+        created_at=now,
+        updated_at=now,
     )
 
 
