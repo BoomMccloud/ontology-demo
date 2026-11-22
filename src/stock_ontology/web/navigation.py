@@ -155,11 +155,11 @@ def _catalog(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
         elif view_mode == "company":
             crumbs.append(
                 Crumb(
-                    label=str(note.get("subject_label", "")),
-                    href=f"/catalog?view=company&dir={quote(str(note.get('folder', '')))}",
+                    label=str(getattr(note, "subject_label", "")),
+                    href=f"/catalog?view=company&dir={quote(str(getattr(note, 'folder', '')))}",
                 )
             )
-        crumbs.append(Crumb(label=str(note.get("title", ""))))
+        crumbs.append(Crumb(label=str(getattr(note, "title", ""))))
         return NavState("notes", notes_item.key, "component", crumbs)
 
     if group and view_mode in ("author", "company"):

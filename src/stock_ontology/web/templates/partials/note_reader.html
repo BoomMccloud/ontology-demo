@@ -1,0 +1,66 @@
+<section aria-label="{{ t('catalog.reader_aria') }}">
+  <div class="note-reader-header">
+    <div class="entry-title-row">
+      <h2 class="u-bd-none u-m-0 u-p-0 u-fs-1p25rem">
+        {{ active_note.title }}
+      </h2>
+    </div>
+
+    {% if active_note.company or active_note.authors %}
+      <div class="note-entity-chips">
+        {% if active_note.company %}
+          <span class="facet-chip">
+            {{ t('catalog.company_chip') }}
+            <a href="{{ active_note.company.href }}">
+              {{ active_note.company.label }}
+            </a>
+          </span>
+        {% endif %}
+        {% for author in active_note.authors %}
+          <span class="facet-chip">
+            {{ t('catalog.author_chip') }}
+            {% if author.href %}
+              <a href="{{ author.href }}">{{ author.name }}</a>
+            {% else %}
+              {{ author.name }}
+            {% endif %}
+          </span>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <div class="note-toolbar">
+      <a href="{{ active_note.back_link.href }}" class="retro-link-btn">{{ active_note.back_link.label }}</a>
+    </div>
+  </div>
+
+  {% if active_note.show_raw %}
+    <pre class="note-raw-pre">{% for line in active_note.raw_lines %}<span id="L{{ loop.index }}" class="note-line">{{ line }}
+</span>{% endfor %}</pre>
+  {% else %}
+    <div class="note-rendered">{{ active_note.body_html | safe }}</div>
+  {% endif %}
+
+  <div class="note-sibling-bar">
+    <div>
+      {% if active_note.prev_link %}
+        &laquo;
+        <a href="{{ active_note.prev_link.href }}">
+          {{ active_note.prev_link.label }}
+        </a>
+      {% else %}
+        <span class="source-cite">{{ t('catalog.first_in_list') }}</span>
+      {% endif %}
+    </div>
+    <div>
+      {% if active_note.next_link %}
+        <a href="{{ active_note.next_link.href }}">
+          {{ active_note.next_link.label }}
+        </a>
+        &raquo;
+      {% else %}
+        <span class="source-cite">{{ t('catalog.end_of_list') }}</span>
+      {% endif %}
+    </div>
+  </div>
+</section>

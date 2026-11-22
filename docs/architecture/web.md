@@ -17,7 +17,9 @@ that talks to the agent. It never writes to `ontology.db`.
   (with its `SecondOrderPath`s), `EventRow` and `ViewRow`.
 - `src/stock_ontology/web/catalog.py`: the raw notes browser, XSS-safe Markdown
   rendering, and source citations. Note paths go through the search module's
-  `resolve_safe_note_path`.
+  `resolve_safe_note_path`. The note page (`?file=`) hands its reader partial
+  one frozen `NoteDetail` (with `NoteCompanyChip`, `NoteAuthorChip` and
+  `NoteLink`s), built by `_note_detail`.
 - `src/stock_ontology/web/navigation.py`: the navigation registry. Every HTML
   route maps to a workflow (top nav: Research, Ontology), an owning section
   (left nav), an archetype (`page` or `component`), and a breadcrumb trail.
