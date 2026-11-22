@@ -37,7 +37,7 @@ Extract structured knowledge strictly using the 4 ontology node types and direct
 3. view: Any subjective claim, rumor, analyst take, channel check, or PM note.
    - `view_type`: {format_choices(EXTRACTED_VIEW_TYPES)}.
    - NEVER emit `consensus` or `house_consensus` views from an individual document; fund consensus is synthesized separately.
-   - Set `stance` ({format_choices(STANCE.members, sep="|")}), `sentiment` ({_SENTIMENTS_TIGHT}, consistent with `stance`: `buy`/`bullish` -> `positive`, `sell`/`bearish`/`cautious` -> `negative`, `hold`/`neutral` -> `neutral`, or `mixed` when nuanced), `support_strength` ({format_choices(SUPPORT_STRENGTH.members, sep="|")}), and `conviction` ({format_choices(CONVICTION.members, sep="|")}).
+   - Set `stance` ({format_choices(STANCE.members, sep="|")}), `sentiment` ({_SENTIMENTS_TIGHT}, consistent with `stance`: `bullish` (including buy ratings) -> `positive`, `bearish` (including sell ratings; use `conviction: low` for a merely cautious view) -> `negative`, `neutral` (including hold ratings) -> `neutral`, or `mixed` when nuanced), `support_strength` ({format_choices(SUPPORT_STRENGTH.members, sep="|")}), and `conviction` ({format_choices(CONVICTION.members, sep="|")}).
 4. theme: A meta-narrative, secular trend, or investment thesis (e.g., "AI Data Center Power Bottleneck").
 
 Resolution & linking rules:

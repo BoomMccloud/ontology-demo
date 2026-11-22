@@ -210,7 +210,7 @@ def test_gemini_structured_extraction_consensus_and_errors() -> None:
         company=nvda, events=[], views=[], themes=[], prior_consensus=None
     )
     assert isinstance(syn, ConsensusSynthesis)
-    assert syn.stance == "buy"
+    assert syn.stance == "bullish"
     assert syn.supporting_node_ids == ["ev_1"]
 
     mode["case"] = "whitespace"

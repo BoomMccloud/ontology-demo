@@ -124,6 +124,8 @@ Candidate: `5aceabc + uncommitted working tree @ home-page-tables (main checkout
   - 1. Out-of-vocabulary values: at ingest, store the field's existing model default as the fallback (`entity_type` `company`, `event_type` `fact`, event `status` `occurred`, `view_type` `analyst_report`, `stance` `neutral`, `support_strength` `moderate`, `stage` `accelerating`, `conviction` `medium`). An unknown `sentiment` is treated as missing, so today's precedence (`resolve_item_sentiment`, stance-derived) applies. `repair` lowercases legacy values but never maps an unknown value to a fallback, and `audit` reports remaining out-of-vocabulary values.
   - 2. Coverage: every enum, namely `entity_type`, `event_type`, `status` (event and view sets), `view_type`, `stance`, `sentiment`, `support_strength`, `stage`, `conviction`.
   - 3. Stances: canon is `buy`, `hold`, `sell`, `bullish`, `bearish`, `neutral`, `cautious`. Aliases: `outperform`/`overweight` to `buy`, `underperform`/`underweight` to `sell`, `unknown` to `neutral`.
+    - Superseded on 2026-11-22 at the human's request: `buy`, `hold` and `sell` duplicated `bullish`, `neutral` and `bearish`, so the canon is now `bullish`, `bearish`, `neutral`, `cautious`. `buy`/`outperform`/`overweight` alias to `bullish`, `sell`/`underperform`/`underweight` to `bearish`, and `hold`/`unknown` to `neutral`.
+    - Also on 2026-11-22: `cautious` folded into `bearish`. Ingest and `repair` set `conviction` to `low` for a `cautious` view, since intensity belongs in `conviction`. The canon is `bullish`, `bearish`, `neutral`.
 
 ## Proof
 

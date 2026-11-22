@@ -237,7 +237,7 @@ def test_router_fallback_across_error_types_and_operations() -> None:
     syn_res = router.synthesize_consensus(
         company=nvda, events=[], views=[], themes=[], prior_consensus=None
     )
-    assert syn_res.stance == "buy"
+    assert syn_res.stance == "bullish"
 
     turn1 = router.generate_agent_reply(
         system_instruction="sys", messages=[{"role": "user", "text": "hi"}], tool_schemas=[]
@@ -462,7 +462,7 @@ def test_openai_anthropic_and_compat_http_adapters() -> None:
         themes=[],
         prior_consensus=None,
     )
-    assert syn.stance == "buy"
+    assert syn.stance == "bullish"
     assert ant.supports_embeddings is False
 
     # Router configured with Anthropic first + OpenAI fallback handles embeddings via OpenAI.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from stock_ontology import vocab
-from stock_ontology.models import ExtractedEvent, ExtractedView
+from stock_ontology.models import ConsensusSynthesis, ExtractedEvent, ExtractedView, derive_sentiment_from_stance
 
 
 @pytest.mark.parametrize(
@@ -28,10 +28,14 @@ from stock_ontology.models import ExtractedEvent, ExtractedView
         (vocab.coerce_view_status, "stale", "superseded"),
         (vocab.coerce_view_status, "archived", None),
         (vocab.coerce_stance, "Bullish", "bullish"),
-        (vocab.coerce_stance, "Outperform", "buy"),
-        (vocab.coerce_stance, "overweight", "buy"),
-        (vocab.coerce_stance, "underperform", "sell"),
-        (vocab.coerce_stance, "Underweight", "sell"),
+        (vocab.coerce_stance, "Outperform", "bullish"),
+        (vocab.coerce_stance, "overweight", "bullish"),
+        (vocab.coerce_stance, "underperform", "bearish"),
+        (vocab.coerce_stance, "Underweight", "bearish"),
+        (vocab.coerce_stance, "Buy", "bullish"),
+        (vocab.coerce_stance, "sell", "bearish"),
+        (vocab.coerce_stance, "hold", "neutral"),
+        (vocab.coerce_stance, "Cautious", "bearish"),
         (vocab.coerce_stance, "unknown", "neutral"),
         (vocab.coerce_stance, "moonshot", None),
         (vocab.coerce_sentiment, "Negative", "negative"),
@@ -63,14 +67,14 @@ def test_every_member_coerces_to_itself_and_every_alias_targets_a_member() -> No
             assert v.coerce(alias) == target
 
 
-def test_stance_canon_is_the_seven_decided_members() -> None:
-    assert vocab.STANCE.members == ("buy", "hold", "sell", "bullish", "bearish", "neutral", "cautious")
+def test_stance_canon_merges_ratings_into_directions() -> None:
+    assert vocab.STANCE.members == ("bullish", "bearish", "neutral")
 
 
 def test_ingest_fallback_and_repair_rules_differ_for_unknown_values() -> None:
     assert vocab.STANCE.coerce_or_fallback("Moonshot") == "neutral"
     assert vocab.STANCE.canonicalize_stored("Moonshot") == "moonshot"
-    assert vocab.STANCE.canonicalize_stored(" Outperform ") == "buy"
+    assert vocab.STANCE.canonicalize_stored(" Outperform ") == "bullish"
     assert vocab.SENTIMENT.coerce_or_fallback("ecstatic") is None
 
 
@@ -98,7 +102,7 @@ def test_out_of_vocabulary_node_facets_reports_non_members() -> None:
 
 def test_extraction_models_coerce_through_vocab() -> None:
     view = ExtractedView(temp_id="v", name="n", summary="s", view_type="Rumour", stance="Outperform", sentiment="Ecstatic")
-    assert (view.view_type, view.stance, view.sentiment) == ("rumor", "buy", None)
+    assert (view.view_type, view.stance, view.sentiment) == ("rumor", "bullish", None)
     event = ExtractedEvent(temp_id="e", name="n", summary="s", event_type="Gossip", status="Maybe")
     assert (event.event_type, event.status, event.sentiment) == ("fact", "occurred", "neutral")
     schema = ExtractedView.model_json_schema()["properties"]["stance"]
@@ -154,3 +158,15 @@ def test_audit_counts_and_lists_out_of_vocabulary_stored_values(tmp_path) -> Non
         ("view", "stance", "moonshot", 2),
         ("view", "view_type", "hunch", 1),
     ]
+
+
+def test_cautious_stance_folds_into_bearish_with_low_conviction() -> None:
+    view = ExtractedView(temp_id="v", name="n", summary="s", stance="Cautious", conviction="high")
+    assert (view.stance, view.conviction) == ("bearish", "low")
+    syn = ConsensusSynthesis(stance="cautious", support_strength="weak", conviction="medium", summary="s")
+    assert (syn.stance, syn.conviction) == ("bearish", "low")
+    assert derive_sentiment_from_stance("cautious") == "negative"
+    repaired = vocab.canonicalize_node_facets("view", {"stance": "cautious", "conviction": "medium"})
+    assert repaired == {"stance": "bearish", "conviction": "low"}
+    untouched = vocab.canonicalize_node_facets("view", {"stance": "bearish", "conviction": "high"})
+    assert untouched == {"stance": "bearish", "conviction": "high"}

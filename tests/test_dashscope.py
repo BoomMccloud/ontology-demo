@@ -210,7 +210,7 @@ def test_dashscope_embeddings_structured_and_agent_tools(tmp_path: Path) -> None
     syn = client.synthesize_consensus(
         company=nvda, events=[], views=[], themes=[], prior_consensus=None
     )
-    assert syn.stance == "buy"
+    assert syn.stance == "bullish"
 
     # 3. Agent tool-calling round-trip against read-only DB.
     db_path = tmp_path / "ds_agent.db"

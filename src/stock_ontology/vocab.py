@@ -20,7 +20,7 @@ EventType = Literal["fact", "news", "earnings", "catalyst", "meeting"]
 EventStatus = Literal["occurred", "upcoming", "rumored"]
 ViewType = Literal["rumor", "analyst_report", "pm_view", "channel_check", "consensus"]
 ViewStatus = Literal["active", "superseded"]
-Stance = Literal["buy", "hold", "sell", "bullish", "bearish", "neutral", "cautious"]
+Stance = Literal["bullish", "bearish", "neutral"]
 Sentiment = Literal["positive", "negative", "neutral", "mixed"]
 SupportStrength = Literal["strong", "moderate", "weak"]
 Conviction = Literal["high", "medium", "low"]
@@ -142,19 +142,19 @@ STANCE = Vocabulary(
     "stance",
     Stance,
     {
-        "buy": "Recommends buying.",
-        "hold": "Recommends holding.",
-        "sell": "Recommends selling.",
-        "bullish": "Expects the price or fundamentals to improve.",
-        "bearish": "Expects the price or fundamentals to worsen.",
-        "neutral": "No directional call.",
-        "cautious": "Leans negative, with reservations.",
+        "bullish": "Expects the price or fundamentals to improve, including a buy rating.",
+        "bearish": "Expects the price or fundamentals to worsen, including a sell rating.",
+        "neutral": "No directional call, including a hold rating.",
     },
     aliases={
-        "outperform": "buy",
-        "overweight": "buy",
-        "underperform": "sell",
-        "underweight": "sell",
+        "buy": "bullish",
+        "outperform": "bullish",
+        "overweight": "bullish",
+        "sell": "bearish",
+        "cautious": "bearish",
+        "underperform": "bearish",
+        "underweight": "bearish",
+        "hold": "neutral",
         "unknown": "neutral",
     },
     fallback="neutral",
@@ -288,9 +288,18 @@ def normalize_sentiment(value: Any) -> Sentiment | None:
     return coerce_sentiment(value)
 
 
+def fold_cautious_conviction(facets: Any) -> Any:
+    """A `cautious` stance becomes `bearish` with low conviction, so the nuance moves to `conviction`."""
+    if isinstance(facets, dict) and _clean(facets.get("stance")) == "cautious":
+        return {**facets, "conviction": "low"}
+    return facets
+
+
 def canonicalize_node_facets(node_type: str, facets: dict[str, Any]) -> dict[str, Any]:
     """Repair rule over one node's facets: members canonical, unknown values lowercased."""
     vocabs = NODE_FACET_VOCABS.get(node_type, {})
+    if node_type == "view":
+        facets = fold_cautious_conviction(facets)
     return {k: vocabs[k].canonicalize_stored(v) if k in vocabs else v for k, v in facets.items()}
 
 

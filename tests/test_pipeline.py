@@ -468,7 +468,7 @@ def test_pipeline_ingest_idempotent_edit_delete_and_resolution(tmp_path: Path) -
         assert nvda is not None
         cons1 = db.get_entity_consensus(nvda.id)
         assert cons1 is not None
-        assert cons1.facets["stance"] == "buy"
+        assert cons1.facets["stance"] == "bullish"
         assert len(cons1.facets["pillars"]) == 2
 
         # 2. Second run with unchanged files must skip all 5 with 0 LLM calls.
@@ -502,7 +502,7 @@ def test_pipeline_ingest_idempotent_edit_delete_and_resolution(tmp_path: Path) -
         cons2 = db.get_entity_consensus(nvda.id)
         assert cons2 is not None
         assert cons2.id != cons1.id
-        assert cons2.facets["stance"] == "hold"
+        assert cons2.facets["stance"] == "neutral"
         old_cons = db.get_node(cons1.id)
         assert old_cons is not None and old_cons.facets["status"] == "superseded"
 
@@ -750,7 +750,7 @@ def test_pipeline_decouples_folders_from_companies(tmp_path: Path) -> None:
             assert comp is not None
             cons = db.get_entity_consensus(comp.id)
             assert cons is not None
-            assert cons.facets["stance"] == "buy"
+            assert cons.facets["stance"] == "bullish"
 
 
 class _FailingDocFakeLLM(FakePipelineLLM):

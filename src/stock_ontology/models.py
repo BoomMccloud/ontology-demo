@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
 from stock_ontology.vocab import (
     CONVICTION,
@@ -30,22 +30,15 @@ from stock_ontology.vocab import (
     SupportStrength,
     Vocabulary,
     ViewType,
+    fold_cautious_conviction,
     normalize_sentiment,
 )
 
 NodeType = Literal["entity", "event", "view", "theme"]
 SentimentSource = Literal["edge", "node", "stance"]
 STANCE_TO_SENTIMENT: dict[str, Sentiment] = {
-    "buy": "positive",
     "bullish": "positive",
-    "outperform": "positive",
-    "overweight": "positive",
-    "sell": "negative",
     "bearish": "negative",
-    "cautious": "negative",
-    "underperform": "negative",
-    "underweight": "negative",
-    "hold": "neutral",
     "neutral": "neutral",
 }
 
@@ -54,7 +47,8 @@ def derive_sentiment_from_stance(stance: Any) -> Sentiment | None:
     """Map a view stance string onto a canonical Sentiment, or None if unrecognized."""
     if not isinstance(stance, str):
         return None
-    return STANCE_TO_SENTIMENT.get(stance.strip().lower())
+    canonical = STANCE.coerce(stance)
+    return STANCE_TO_SENTIMENT.get(canonical) if canonical is not None else None
 
 
 def resolve_item_sentiment(
@@ -266,6 +260,12 @@ class ExtractedView(BaseModel):
     )
 
 
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_cautious(cls, data: Any) -> Any:
+        return fold_cautious_conviction(data)
+
+
 class ExtractedTheme(BaseModel):
     """Meta-narrative or investment thesis extracted from a document."""
 
@@ -340,3 +340,8 @@ class ConsensusSynthesis(BaseModel):
         default_factory=list,
         description="Optional extra facets such as key_risks, target_horizon, catalysts_to_watch.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_cautious(cls, data: Any) -> Any:
+        return fold_cautious_conviction(data)

@@ -174,10 +174,10 @@ def test_ingest_stores_mixed_case_and_alias_enum_values_canonically(tmp_path: Pa
             "support_strength": "strong",
             "conviction": "high",
         }
-        # Decision 3: `outperform` is an alias of `buy`.
+        # Stance merge: `outperform` is an alias of `bullish`.
         assert _facets(_one(db, "Broker Outperform On Acme", "view"), "view_type", "stance", "sentiment") == {
             "view_type": "analyst_report",
-            "stance": "buy",
+            "stance": "bullish",
             "sentiment": "positive",
         }
         assert _one(db, "Warehouse Automation", "theme").facets["stage"] == "emerging"
