@@ -1,6 +1,6 @@
 <section class="facet-card">
   <div class="entry-title-row">
-    <h1 style="margin: 0; font-size: 1.55rem;">
+    <h1 class="u-m-0 u-fs-1p55rem">
       {{ entity.name }}
       {% if entity.facets.get("ticker") %}
         <span class="mono">({{ entity.facets.get("ticker") }})</span>
@@ -15,5 +15,5 @@
       <strong>{{ t('common.also_catalogued_as') }}</strong> {{ entity.aliases | join(", ") }}
     </div>
   {% endif %}
-  <p style="margin: 10px 0 0;">{{ entity.summary }}</p>
+  <p class="u-m-10px-0-0">{{ entity.summary }}</p>
 </section>

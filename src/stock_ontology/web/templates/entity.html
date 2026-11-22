@@ -16,6 +16,6 @@
   {% include "partials/section_related_entities.html" %}
 
   <p class="portal-more-link">
-    <a href="/ask?context={{ page_context | urlencode }}">{{ t('ask.link_from_entity', name=entity.name) }}</a>
+    <a href="/ask?context={{ page_context | urlencode }}" data-clippy-context="{{ page_context }}">{{ t('ask.link_from_entity', name=entity.name) }}</a>
   </p>
 {% endblock %}

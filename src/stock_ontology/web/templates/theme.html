@@ -5,7 +5,7 @@
 {% block content %}
 <section class="facet-card">
   <div class="entry-title-row">
-    <h1 style="margin: 0; font-size: 1.55rem;">{{ theme.name }}</h1>
+    <h1 class="u-m-0 u-fs-1p55rem">{{ theme.name }}</h1>
     <div>
       {% if stage %}
         <span class="badge badge-{{ stage | lower }}">{{ t('theme.stage_badge', value=t_enum('stage', stage)) }}</span>
@@ -17,7 +17,7 @@
       <strong>{{ t('common.also_catalogued_as') }}</strong> {{ theme.aliases | join(", ") }}
     </div>
   {% endif %}
-  <p style="margin: 10px 0 0;">{{ theme.summary }}</p>
+  <p class="u-m-10px-0-0">{{ theme.summary }}</p>
 </section>
 
 {% with facet_table_title=t('theme.facets_heading') %}
@@ -52,7 +52,7 @@
               {% endif %}
             </td>
             <td>
-              <ul style="margin: 0; padding-left: 18px;">
+              <ul class="u-m-0 u-pl-18px">
                 {% for link in row.links %}
                   <li>
                     {% if link.via == "direct" %}
@@ -129,6 +129,6 @@
 {% include "partials/section_views.html" %}
 
 <p class="portal-more-link">
-  <a href="/ask?context={{ page_context | urlencode }}">{{ t('ask.link_from_theme', name=theme.name) }}</a>
+  <a href="/ask?context={{ page_context | urlencode }}" data-clippy-context="{{ page_context }}">{{ t('ask.link_from_theme', name=theme.name) }}</a>
 </p>
 {% endblock %}

@@ -271,7 +271,6 @@ def build_home_context(db: OntologyDB, lang: str = DEFAULT_LANGUAGE) -> dict[str
     themes = _load_themes_list(db)
 
     return {
-        "active_nav": "home",
         "stats": stats,
         "companies": companies,
         "other_entities": other_entities,
@@ -293,7 +292,6 @@ def build_companies_context(
     active_kind = "other" if kind.strip().lower() == "other" else "companies"
     companies, other_entities = _load_entities_split(db)
     return {
-        "active_nav": "companies",
         "active_kind": active_kind,
         "companies": companies,
         "other_entities": other_entities,
@@ -307,7 +305,6 @@ def build_themes_context(
     """Prepare the full Investment Themes directory context."""
     themes = _load_themes_list(db)
     return {
-        "active_nav": "themes",
         "themes": themes,
         "page_context": translate("page_context.themes", lang=lang),
     }
@@ -388,7 +385,6 @@ def build_entity_context(
     _attach_source_display(views, data_dir)
 
     return {
-        "active_nav": "",
         "entity": entity,
         "entity_type": entity_type,
         "is_company": entity_type == "company" or bool(company_facets),
@@ -466,7 +462,6 @@ def build_theme_context(
             link["source_exists"] = exists
 
     return {
-        "active_nav": "",
         "theme": theme,
         "stage": facets.get("stage", ""),
         "extra_facets": _format_facet_pairs(facets, extra_keys, lang=lang),
@@ -1485,7 +1480,6 @@ def build_ontology_context(
             )
 
     return {
-        "active_nav": "ontology",
         "stats": stats,
         "structures": structures,
         "diagram_pairs": diagram_pairs,

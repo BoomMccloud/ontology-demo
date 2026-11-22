@@ -34,6 +34,7 @@ from stock_ontology.i18n import (
 from stock_ontology.llm import LLMClient, create_llm_client
 from stock_ontology.registry import OntologyRegistry, load_registry
 from stock_ontology.web.catalog import build_catalog_context, format_source_citation
+from stock_ontology.web.navigation import LEFT_NAV, WORKFLOWS, resolve_nav
 from stock_ontology.web.viewmodels import (
     build_companies_context,
     build_entity_context,
@@ -155,10 +156,16 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
             "theme_count": 0,
             "doc_count": 0,
         }
+        route = request.scope.get("route")
+        nav = resolve_nav(getattr(route, "path", request.url.path), request.query_params, ctx)
         full_ctx = {
             "rail": default_rail,
-            "wide_layout": False,
             **ctx,
+            "nav": nav,
+            "nav_workflows": WORKFLOWS,
+            "nav_groups": LEFT_NAV[nav.workflow],
+            "clippy_open": request.query_params.get("ask") == "1",
+            "clippy_context": request.query_params.get("context", "").strip(),
             "lang": lang,
             "html_lang": spec["html_lang"],
             "languages": SUPPORTED_LANGUAGES,
@@ -254,19 +261,16 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
             ctx["rail"] = build_rail_context(db)
         return _render(request, "themes.html", ctx, lang)
 
-    @app.get("/ask", response_class=HTMLResponse)
-    def ask_page(request: Request, context: str = "") -> HTMLResponse:
-        lang = _resolve_request_lang(request)
-        custom_context = context.strip()
-        with _open_ro_db(lang) as db:
-            rail = build_rail_context(db)
-        ctx = {
-            "active_nav": "ask",
-            "rail": rail,
-            "custom_context": custom_context,
-            "page_context": custom_context or translate("page_context.ask", lang=lang),
-        }
-        return _render(request, "ask.html", ctx, lang)
+    @app.get("/ask")
+    def ask_redirect(request: Request, context: str = "") -> RedirectResponse:
+        """The Ask desk is the on-page Clippy dock: open it on Overview, carrying the context."""
+        params = {"ask": "1"}
+        if context.strip():
+            params["context"] = context.strip()
+        explicit_lang = normalize_language(request.query_params.get("lang"))
+        if explicit_lang is not None:
+            params["lang"] = explicit_lang
+        return RedirectResponse(url=f"/?{urlencode(params)}", status_code=303)
 
     @app.get("/entity/{entity_id}", response_class=HTMLResponse)
     def entity_page(request: Request, entity_id: str) -> HTMLResponse:
@@ -407,7 +411,6 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
 
         has_search_criteria = bool(q.strip() or active_filters)
         ctx = {
-            "active_nav": "search",
             "rail": rail,
             "query": q,
             "node_type": node_type,
@@ -481,7 +484,6 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
                 lang=lang,
             )
             ctx["rail"] = build_rail_context(db)
-            ctx["wide_layout"] = True
         return _render(request, "ontology.html", ctx, lang)
 
     @app.get("/api/health")
