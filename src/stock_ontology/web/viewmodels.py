@@ -243,6 +243,11 @@ def _load_themes_list(db: OntologyDB) -> list[dict[str, Any]]:
                     "relation": rel,
                 }
             )
+        neighbor_ids: dict[str, set[str]] = {"view": set(), "event": set()}
+        for item in db.get_incident_edges(thm.id):
+            nb = item["neighbor"]
+            if nb["node_type"] in neighbor_ids:
+                neighbor_ids[nb["node_type"]].add(str(nb["id"]))
         themes.append(
             {
                 "id": thm.id,
@@ -252,6 +257,8 @@ def _load_themes_list(db: OntologyDB) -> list[dict[str, Any]]:
                 "first_order_companies": first_companies,
                 "first_order_count": len(tc["first_order"]),
                 "second_order_count": len(tc["second_order"]),
+                "view_count": len(neighbor_ids["view"]),
+                "event_count": len(neighbor_ids["event"]),
             }
         )
 
@@ -276,7 +283,7 @@ def build_home_context(db: OntologyDB, lang: str = DEFAULT_LANGUAGE) -> dict[str
         "other_entities": other_entities,
         "themes": themes,
         "featured_companies": companies[:5],
-        "featured_themes": themes[:4],
+        "featured_themes": themes[:5],
         "total_companies": len(companies),
         "total_themes": len(themes),
         "total_other_entities": len(other_entities),

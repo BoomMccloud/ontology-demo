@@ -1434,3 +1434,42 @@ def test_web_chat_endpoint_uses_only_agent_chat() -> None:
         and id(node) not in chat_receivers
     ]
     assert other_uses == []
+
+
+def test_home_themes_table_counts_companies_views_and_events(tmp_path: Path) -> None:
+    db_path = tmp_path / "themes_table.db"
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        nodes = [
+            Node(id="thm_grid", node_type="theme", name="Grid Buildout", summary="s", facets={"stage": "emerging"}),
+            Node(id="ent_a", node_type="entity", name="Alpha Power", summary="s", facets={"entity_type": "company", "ticker": "ALP"}),
+            Node(id="ent_b", node_type="entity", name="Beta Wire", summary="s", facets={"entity_type": "company", "ticker": "BTW"}),
+            Node(id="vw_1", node_type="view", name="Grid Bull Case", summary="s", facets={"view_type": "analyst_report"}),
+            Node(id="vw_2", node_type="view", name="Grid Bear Case", summary="s", facets={"view_type": "analyst_report"}),
+            Node(id="evt_1", node_type="event", name="Interconnect Queue Report", summary="s", facets={"event_type": "fact"}),
+        ]
+        for idx, n in enumerate(nodes):
+            db.upsert_node(n, embedding=_unit_vec(idx))
+        for edge in [
+            Edge(id="e1", from_id="ent_a", to_id="thm_grid", relation="EXPOSED_TO"),
+            Edge(id="e2", from_id="ent_b", to_id="thm_grid", relation="EXPOSED_TO"),
+            Edge(id="e3", from_id="vw_1", to_id="thm_grid", relation="SUPPORTS"),
+            # A second edge to the same view must not double-count it.
+            Edge(id="e4", from_id="vw_1", to_id="thm_grid", relation="ABOUT"),
+            Edge(id="e5", from_id="vw_2", to_id="thm_grid", relation="CONTRADICTS"),
+            Edge(id="e6", from_id="evt_1", to_id="thm_grid", relation="ABOUT"),
+        ]:
+            db.upsert_edge(edge)
+
+    settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=tmp_path)
+    client = TestClient(create_app(settings, llm=FakeWebLLM()))
+    r_home = client.get("/")
+    assert r_home.status_code == 200
+
+    theme_section = r_home.text.split('aria-label="Browse by Investment Theme"', 1)[1]
+    assert '<table class="portal-table">' in theme_section
+    assert ">Companies<" in theme_section
+    assert ">Views<" in theme_section
+    assert ">Events<" in theme_section
+    row = theme_section.split('href="/theme/thm_grid"', 1)[1].split("</tr>", 1)[0]
+    counts = re.findall(r'<td class="mono u-num">(\d+)</td>', row)
+    assert counts == ["2", "2", "1"]
