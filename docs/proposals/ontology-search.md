@@ -9,7 +9,7 @@ candidate: "unassigned"
 
 ## Proposal
 
-Status: revised by the human on 2026-11-22, awaiting approval of the revision.
+Status: revised by the human on 2026-11-22, open choices decided, awaiting approval of the revision.
 
 ### Intent
 
@@ -81,15 +81,16 @@ Decided by the human on 2026-11-22, in answer to the draft's open choices.
     functional results, and that window invites the user to keep chatting with
     the agent. (Added 2026-11-22.)
 
+12. **Search page layout** is the mockup's layout A
+    (https://claude.ai/artifact/SJQ5oCUte9f5pbSpyYfvdt): the agent window is a
+    side column beside the functional results. In the human's words: "when
+    the window goes down, the side column remains, and has access to the
+    context of the window so user can ask questions", and it "can detach from
+    side window into floating". (Added 2026-11-22.)
+
 ### Open choices
 
-1. **The design of the new search results page.** The layout of the functional
-   results, the agent results window, and the invitation to chat, as a new
-   search result component and product behavior.
-   Mockup for review: https://claude.ai/artifact/SJQ5oCUte9f5pbSpyYfvdt,
-   with layout A (agent column beside the results), layout B (agent window
-   floating over the results), and the agent window's running, answered, and
-   failed states.
+None.
 
 ## Frame
 
