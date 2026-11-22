@@ -1706,8 +1706,8 @@ def test_entity_page_templates_only_see_presentation_models(tmp_path: Path) -> N
 #     (one of name, alias, relationship, note, semantic);
 #   - every grepped note passage is an element with `data-note-file` (path relative to
 #     ONTOLOGY_DATA_DIR), `data-note-line` (1-based), and `data-match-reason="note"`;
-#   - the agent side column is one element with `data-agent-column` and `data-agent-query`
-#     (the search word, empty when there is none), and holds a `data-agent-detach` control.
+#   - the agent note is one element with `data-agent-column` and `data-agent-query`
+#     (the search word, empty when there is none); clippy.js moves it into the Clippy dock.
 
 _SEARCH_NOTE_FILE = "Notes/2026-11-10_channel_check.md"
 _SEARCH_EVENT_FILE = "NVDA/2026-11-01_q3.md"
@@ -1839,11 +1839,11 @@ def test_web_search_entity_first_card_sections_notes_and_agent_column(tmp_path: 
     assert "NVIDIA lead times shortened." in r.text
     assert all(t["data-note-file"] != _SEARCH_EVENT_FILE for t in passages)
 
-    # Agent side column for this search, detachable, on the shared Clippy chat session.
+    # Agent note for this search, carried into the shared Clippy dock (no pinned column).
     columns = [t for t in tags if "data-agent-column" in t]
     assert len(columns) == 1
     assert columns[0].get("data-agent-query") == "nvidia"
-    assert any("data-agent-detach" in t for t in tags)
+    assert not any("data-agent-detach" in t for t in tags)
     assert "/static/clippy.js" in r.text
     assert "/api/chat" in client.get("/static/clippy.js").text
 

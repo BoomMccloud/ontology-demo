@@ -33,12 +33,11 @@ the page context carried. The Clippy dock is on every page.
 
 `/search` shows the functional results first: a best-match card, then
 sections for entities and themes, items connected through relationships,
-events and views, and note passages, each labeled with why it matched. Beside
-them, a pinned agent column holds the Clippy chat window. `clippy.js` moves the
-dock's window into the column, sends the search word to `/api/chat` once per
-word, and shows a failed state if the run fails. Detach turns the column into
-a floating window. The column, the floating window, and the dock on other
-pages share one chat session.
+events and views, and note passages, each labeled with why it matched. The
+Clippy dock behaves as on every other page: it floats in the lower right and
+can be minimized. `clippy.js` moves the search note into the dock, opens the
+dock, sends the search word to `/api/chat` once per word, and shows a failed
+state if the run fails. Every page shares one chat session.
 
 A new HTML route must be added to `NAV_ROUTES` in `navigation.py`.
 `tests/test_web_navigation.py` fails on an unregistered route, a page without
