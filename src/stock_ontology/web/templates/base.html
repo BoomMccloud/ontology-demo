@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="{{ html_lang }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}{{ t('site.title') }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/library.css">
+</head>
+<body data-page-context="{{ page_context | default(t('page_context.home')) }}" data-lang="{{ lang }}">
+  <div class="portal-frame {% if wide_layout %}portal-frame-wide{% endif %}">
+    <header class="portal-masthead">
+      <a href="/" class="portal-masthead-title">{{ t('site.portal_title') }}</a>
+    </header>
+
+    <div class="portal-grid">
+      <aside class="portal-rail" aria-label="Library Navigation">
+        <form class="portal-rail-search" action="/search" method="get">
+          <div class="portal-rail-search-row">
+            <input
+              id="rail-q"
+              name="q"
+              type="text"
+              value="{{ query | default('') }}"
+              aria-label="{{ t('rail.search_label') }}"
+              placeholder="{{ t('rail.search_placeholder') }}"
+            >
+            <button type="submit" class="portal-btn">{{ t('rail.search_go') }}</button>
+          </div>
+        </form>
+
+        <nav aria-label="Catalog Navigation">
+          {% if active_nav == 'home' %}
+            <span class="portal-rail-active">&rsaquo; {{ t('rail.home') }}</span>
+          {% else %}
+            <a href="/">{{ t('rail.home') }}</a>
+          {% endif %}
+
+          {% if active_nav == 'companies' %}
+            <span class="portal-rail-active">&rsaquo; {{ t('rail.companies') }}</span>
+          {% else %}
+            <a href="/companies">{{ t('rail.companies') }}</a>
+          {% endif %}
+
+          {% if active_nav == 'themes' %}
+            <span class="portal-rail-active">&rsaquo; {{ t('rail.themes') }}</span>
+          {% else %}
+            <a href="/themes">{{ t('rail.themes') }}</a>
+          {% endif %}
+
+          {% if active_nav == 'catalog' %}
+            <span class="portal-rail-active">&rsaquo; {{ t('rail.raw_notes') }}</span>
+          {% else %}
+            <a href="/catalog">{{ t('rail.raw_notes') }}</a>
+          {% endif %}
+
+          {% if active_nav == 'ontology' %}
+            <span class="portal-rail-active">&rsaquo; {{ t('rail.ontology') }}</span>
+          {% else %}
+            <a href="/ontology">{{ t('rail.ontology') }}</a>
+          {% endif %}
+
+          <hr class="portal-rail-divider">
+
+          {% if active_nav == 'ask' %}
+            <span class="portal-rail-active">&rsaquo; {{ t('rail.reference_desk') }}</span>
+          {% else %}
+            <a href="/ask">{{ t('rail.reference_desk') }}</a>
+          {% endif %}
+
+          {% if active_nav == 'search' %}
+            <span class="portal-rail-active">&rsaquo; {{ t('rail.advanced_search') }}</span>
+          {% else %}
+            <a href="/search">{{ t('rail.advanced_search') }}</a>
+          {% endif %}
+        </nav>
+
+        <hr class="portal-rail-divider">
+
+        <div class="portal-rail-langs" aria-label="{{ t('lang.selector_label') }}">
+          {% for item in languages %}
+            {% set lang_label = (item.code | upper) if item.code in ('en', 'es', 'fr') else item.native_name %}
+            {% if item.code == lang %}
+              <strong>{{ lang_label }}</strong>
+            {% else %}
+              <a href="/set-language?lang={{ item.code }}&amp;next={{ next_path | urlencode }}" title="{{ item.native_name }}">{{ lang_label }}</a>
+            {% endif %}
+            {% if not loop.last %} &middot; {% endif %}
+          {% endfor %}
+        </div>
+      </aside>
+
+      <main class="portal-pane">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

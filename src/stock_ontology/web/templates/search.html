@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}{% if query %}{{ t('search.page_title_query', query=query) }}{% else %}{{ t('search.page_title') }}{% endif %}{% endblock %}
+
+{% block content %}
+<h1>{{ t('rail.advanced_search') }}</h1>
+<p class="portal-intro">{{ t('search.page_desc') }}</p>
+
+{% include "partials/search_bar.html" %}
+
+{% if active_filters %}
+  <div class="active-filters-bar" aria-label="{{ t('search.active_filters_aria') }}">
+    <strong>{{ t('search.active_filters_label') }}</strong>
+    {% for label, val in active_filters %}
+      <span class="filter-pill mono">{{ label }}: {{ val }}</span>
+    {% endfor %}
+    <a href="/search" class="mono">{{ t('search.clear_all') }}</a>
+  </div>
+{% endif %}
+
+{% if has_search_criteria %}
+  <h2 style="font-size: 1.15rem; border-bottom: 1px solid #6e6759; padding-bottom: 4px;">
+    {% if query %}
+      {{ t('search.results_heading', query=query, count=results | length) }}
+    {% else %}
+      {{ t('search.results_heading_no_query', count=results | length) }}
+    {% endif %}
+  </h2>
+  {% if results %}
+    <table class="catalog-table">
+      <thead>
+        <tr>
+          <th style="width: 15%;">{{ t('search.col_type_subtype') }}</th>
+          <th style="width: 28%;">{{ t('search.col_title_signals') }}</th>
+          <th>{{ t('search.col_summary_source') }}</th>
+          <th style="width: 14%;">{{ t('search.col_match') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in results %}
+          <tr>
+            <td>
+              <div class="mono"><strong>{{ t_enum('node_type', item.node_type) }}</strong></div>
+              {% if item.subtype %}
+                <span class="badge">{{ t_subtype(item.subtype, item.node_type) }}</span>
+              {% endif %}
+            </td>
+            <td>
+              <a href="{{ item.href }}"><strong>{{ item.name }}</strong></a>
+              {% if item.aliases %}
+                <div class="source-cite">{{ t('search.aliases_label') }} {{ item.aliases | join(', ') }}</div>
+              {% endif %}
+              <div style="margin-top: 4px;">
+                {% if item.effective_sentiment %}
+                  <span class="badge badge-{{ item.effective_sentiment | lower }}">{{ t_enum('sentiment', item.effective_sentiment) }}</span>
+                {% endif %}
+                {% if item.stance %}
+                  <span class="badge badge-{{ item.stance | lower }}">{{ t_enum('stance', item.stance) }}</span>
+                {% endif %}
+                {% if item.date %}
+                  <span class="source-cite">{{ item.date }}</span>
+                {% endif %}
+              </div>
+            </td>
+            <td>
+              <div>{{ item.summary }}</div>
+              {% if item.source_label %}
+                <div class="source-cite" style="margin-top: 4px;">
+                  {{ t('common.source') }}
+                  {% if item.source_exists %}
+                    <a href="/catalog?file={{ item.source_file | urlencode }}">{{ item.source_label }}</a>
+                  {% else %}
+                    {{ item.source_label }}
+                  {% endif %}
+                </div>
+              {% endif %}
+            </td>
+            <td class="mono">
+              {{ t_enum('score_type', item.score_type) }}{% if item.distance is not none %} ({{ item.distance }}){% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>{{ t('search.no_results_filtered') }}</p>
+  {% endif %}
+{% endif %}
+{% endblock %}

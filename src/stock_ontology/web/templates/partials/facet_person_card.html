@@ -1,0 +1,13 @@
+{% if is_person and person_facets %}
+<section class="facet-card" aria-label="{{ t('entity.person_profile_aria') }}">
+  <h2>{{ t('entity.person_profile') }}</h2>
+  <div class="facet-grid">
+    {% for item in person_facets %}
+      <div>
+        <div class="facet-item-label">{{ item.label }}</div>
+        <div class="facet-item-value">{{ item.value }}</div>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('home.page_title') }}{% endblock %}
+
+{% block content %}
+<p class="portal-intro">
+  {{ t('home.product_desc') }}
+</p>
+
+<section aria-label="{{ t('home.browse_by_company') }}">
+  <h2>{{ t('rail.companies') }}</h2>
+  {% if featured_companies %}
+    <table class="portal-table">
+      <thead>
+        <tr>
+          <th style="width: 18%;">{{ t('home.col_ticker') }}</th>
+          <th style="width: 38%;">{{ t('home.col_company') }}</th>
+          <th style="width: 26%;">{{ t('home.col_consensus') }}</th>
+          <th style="width: 18%;">{{ t('home.col_updated') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for comp in featured_companies %}
+          <tr>
+            <td class="mono">{{ comp.ticker or t('common.none') }}</td>
+            <td><a href="/entity/{{ comp.id }}">{{ comp.name }}</a></td>
+            <td>
+              {% if comp.consensus and comp.consensus.stance %}
+                <span class="badge badge-{{ comp.consensus.stance | lower }}">{{ t_enum('stance', comp.consensus.stance) }}</span>
+                {% if comp.consensus.conviction %}
+                  <span class="source-cite">({{ t_enum('conviction', comp.consensus.conviction) }})</span>
+                {% endif %}
+              {% else %}
+                <span class="source-cite">{{ t('home.no_consensus') }}</span>
+              {% endif %}
+            </td>
+            <td class="mono">{{ comp.consensus.as_of if comp.consensus and comp.consensus.as_of else t('common.none') }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if total_companies > (featured_companies | length) %}
+      <p class="portal-more-link">
+        <a href="/companies">{{ t('home.all_companies_link') }}</a>
+      </p>
+    {% endif %}
+  {% else %}
+    <p>{{ t('home.empty_companies') }}</p>
+  {% endif %}
+</section>
+
+<section aria-label="{{ t('home.browse_by_theme') }}">
+  <h2>{{ t('rail.themes') }}</h2>
+  {% if featured_themes %}
+    <ul class="portal-list">
+      {% for thm in featured_themes %}
+        <li>
+          <a href="/theme/{{ thm.id }}">{{ thm.name }}</a>
+          {% if thm.stage %}
+            <span class="badge badge-{{ thm.stage | lower }}">{{ t_enum('stage', thm.stage) }}</span>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+    {% if total_themes > (featured_themes | length) %}
+      <p class="portal-more-link">
+        <a href="/themes">{{ t('home.all_themes_link') }}</a>
+      </p>
+    {% endif %}
+  {% else %}
+    <p>{{ t('home.empty_themes') }}</p>
+  {% endif %}
+</section>
+{% endblock %}

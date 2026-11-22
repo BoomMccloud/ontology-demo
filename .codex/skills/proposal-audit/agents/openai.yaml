@@ -1,0 +1,4 @@
+interface:
+  display_name: "Proposal Audit"
+  short_description: "Independently audit proposal evidence"
+  default_prompt: "Use $proposal-audit to independently audit this proposal candidate."

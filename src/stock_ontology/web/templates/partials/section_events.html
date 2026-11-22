@@ -1,0 +1,64 @@
+{% if events %}
+<section id="sec-events" class="section-block" aria-label="{{ t('section.events_aria') }}">
+  <h2>{{ t('section.events_heading') }} ({{ events | length }})</h2>
+  <table class="catalog-table">
+    <thead>
+      <tr>
+        <th style="width: 14%;">{{ t('section.events_col_date_type') }}</th>
+        <th style="width: 24%;">{{ t('section.events_col_event') }}</th>
+        <th>{{ t('section.events_col_details') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ev in events %}
+        {% set ev_sent = ev.effective_sentiment or ev.facets.get("sentiment") %}
+        <tr id="node-{{ ev.id }}">
+          <td>
+            <div class="mono">{{ ev.facets.get("event_date", "-") }}</div>
+            <div>
+              <span class="badge">{{ t_enum('event_type', ev.facets.get("event_type", "event")) }}</span>
+              {% if ev_sent %}
+                <span class="badge badge-{{ ev_sent | lower }}">{{ t_enum('sentiment', ev_sent) }}</span>
+              {% endif %}
+            </div>
+            {% if ev.facets.get("status") %}
+              <div class="source-cite">{{ t_enum('status', ev.facets.get("status")) }}</div>
+            {% endif %}
+            {% if ev.sentiment_source == "edge" %}
+              {% if ev.facets.get("sentiment") and ev.facets.get("sentiment") != ev_sent %}
+                <div class="source-cite">{{ t('sentiment.entity_impact_overall', overall=t_enum('sentiment', ev.facets.get("sentiment"))) }}</div>
+              {% else %}
+                <div class="source-cite">{{ t('sentiment.entity_impact') }}</div>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td>
+            <strong>{{ ev.name }}</strong>
+            <div class="source-cite">{{ t_enum('relation', ev.relation) }}</div>
+          </td>
+          <td>
+            <div>{{ ev.summary }}</div>
+            {% set ev_src = ev.facets.get("source") if ev.facets.get("source") is mapping else {} %}
+            {% set ev_author = ev_src.get("author") %}
+            {% set ev_kind = ev_src.get("kind") %}
+            {% if ev.source_label or ev_author or ev_kind %}
+              <div class="source-cite" style="margin-top: 4px;">
+                {% if ev.source_label %}
+                  {{ t('common.source') }}
+                  {% if ev.source_exists %}
+                    <a href="/catalog?file={{ ev.source_file | urlencode }}">{{ ev.source_label }}</a>
+                  {% else %}
+                    {{ ev.source_label }}
+                  {% endif %}
+                {% endif %}
+                {% if ev_author %}{% if ev.source_label %} &bull; {% endif %}{{ t('common.author') }} {{ ev_author }}{% endif %}
+                {% if ev_kind %}{% if ev.source_label or ev_author %} &bull; {% endif %}{{ t('common.kind') }} {{ ev_kind }}{% endif %}
+              </div>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}

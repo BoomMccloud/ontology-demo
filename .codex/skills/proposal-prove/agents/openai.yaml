@@ -1,0 +1,4 @@
+interface:
+  display_name: "Proposal Proof"
+  short_description: "Author independent decisive witnesses"
+  default_prompt: "Use $proposal-prove to author decisive RED witnesses for the framed claims."

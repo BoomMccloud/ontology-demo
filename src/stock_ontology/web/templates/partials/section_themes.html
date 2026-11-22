@@ -1,0 +1,31 @@
+{% if themes %}
+<section id="sec-themes" class="section-block" aria-label="{{ t('section.themes_aria') }}">
+  <h2>{{ t('section.themes_heading') }} ({{ themes | length }})</h2>
+  <table class="catalog-table">
+    <thead>
+      <tr>
+        <th>{{ t('section.themes_col_theme') }}</th>
+        <th>{{ t('section.themes_col_stage') }}</th>
+        <th>{{ t('section.themes_col_link') }}</th>
+        <th>{{ t('section.themes_col_summary') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for thm in themes %}
+        <tr>
+          <td><a href="/theme/{{ thm.id }}"><strong>{{ thm.name }}</strong></a></td>
+          <td>
+            {% if thm.facets.get("stage") %}
+              <span class="badge badge-{{ thm.facets.get('stage') | lower }}">{{ t_enum('stage', thm.facets.get("stage")) }}</span>
+            {% else %}
+              {{ t('common.none') }}
+            {% endif %}
+          </td>
+          <td class="mono">{{ t_enum('relation', thm.relation) }} ({{ format_via(thm.via) }})</td>
+          <td>{{ thm.summary }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}

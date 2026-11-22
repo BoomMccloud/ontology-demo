@@ -1,0 +1,1862 @@
+{
+  "version": 1,
+  "relations": [
+    {
+      "name": "ABOUT",
+      "description": "Connects an event or view to the entity or theme it concerns.",
+      "from_types": [
+        "event",
+        "view"
+      ],
+      "to_types": [
+        "entity",
+        "theme"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "core"
+    },
+    {
+      "name": "AUTHORED_BY",
+      "description": "Connects an event or view to the authoring person or institution.",
+      "from_types": [
+        "event",
+        "view"
+      ],
+      "to_types": [
+        "entity:person",
+        "entity:institution"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "provenance"
+    },
+    {
+      "name": "SUPPORTS",
+      "description": "Indicates an event, view, or theme provides supporting evidence.",
+      "from_types": [
+        "event",
+        "view",
+        "theme"
+      ],
+      "to_types": [
+        "view",
+        "theme"
+      ],
+      "aliases": [
+        "CORROBORATES"
+      ],
+      "inverse_aliases": [],
+      "traversal_group": "evidence"
+    },
+    {
+      "name": "CONTRADICTS",
+      "description": "Indicates an event, view, or theme challenges or weakens a view or theme.",
+      "from_types": [
+        "event",
+        "view",
+        "theme"
+      ],
+      "to_types": [
+        "view",
+        "theme"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "evidence"
+    },
+    {
+      "name": "SUPERSEDES",
+      "description": "Marks a newer consensus view replacing a prior consensus view.",
+      "from_types": [
+        "view"
+      ],
+      "to_types": [
+        "view"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "consensus"
+    },
+    {
+      "name": "SUPPLIES_TO",
+      "description": "Supply-chain relationship from supplier company to customer company.",
+      "from_types": [
+        "entity:company"
+      ],
+      "to_types": [
+        "entity:company"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "second_order_entity"
+    },
+    {
+      "name": "CUSTOMER_OF",
+      "description": "Demand relationship from customer company to supplier company.",
+      "from_types": [
+        "entity:company"
+      ],
+      "to_types": [
+        "entity:company"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "second_order_entity"
+    },
+    {
+      "name": "COMPETES_WITH",
+      "description": "Competitive rivalry between peer companies.",
+      "from_types": [
+        "entity:company"
+      ],
+      "to_types": [
+        "entity:company"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "second_order_entity"
+    },
+    {
+      "name": "PARTNERS_WITH",
+      "description": "Commercial or technical partnership between companies.",
+      "from_types": [
+        "entity:company"
+      ],
+      "to_types": [
+        "entity:company"
+      ],
+      "aliases": [
+        "PARTNER_WITH",
+        "PARTNER_OF"
+      ],
+      "inverse_aliases": [],
+      "traversal_group": "second_order_entity"
+    },
+    {
+      "name": "SUBSIDIARY_OF",
+      "description": "Corporate ownership link from subsidiary to parent company.",
+      "from_types": [
+        "entity:company"
+      ],
+      "to_types": [
+        "entity:company"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "second_order_entity"
+    },
+    {
+      "name": "OWNS",
+      "description": "Ownership stake from a parent company to a company or institution.",
+      "from_types": [
+        "entity:company"
+      ],
+      "to_types": [
+        "entity:company",
+        "entity:institution"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "second_order_entity"
+    },
+    {
+      "name": "WORKS_AT",
+      "description": "Employment or affiliation link from a person to a company or institution.",
+      "from_types": [
+        "entity:person"
+      ],
+      "to_types": [
+        "entity:company",
+        "entity:institution"
+      ],
+      "aliases": [],
+      "inverse_aliases": [
+        "HAS_EMPLOYEE"
+      ],
+      "traversal_group": "org"
+    },
+    {
+      "name": "BENEFITS_FROM",
+      "description": "Positive secular tailwind connecting an entity to a theme.",
+      "from_types": [
+        "entity"
+      ],
+      "to_types": [
+        "theme"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "theme_exposure"
+    },
+    {
+      "name": "HURT_BY",
+      "description": "Secular headwind connecting an entity to a theme.",
+      "from_types": [
+        "entity"
+      ],
+      "to_types": [
+        "theme"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "theme_exposure"
+    },
+    {
+      "name": "EXPOSED_TO",
+      "description": "Neutral or mixed exposure connecting an entity to a theme.",
+      "from_types": [
+        "entity"
+      ],
+      "to_types": [
+        "theme"
+      ],
+      "aliases": [],
+      "inverse_aliases": [],
+      "traversal_group": "theme_exposure"
+    },
+    {
+      "name": "RELATES_TO",
+      "description": "General thematic association between an event, view, or entity and a theme or entity.",
+      "from_types": [
+        "event",
+        "view",
+        "entity"
+      ],
+      "to_types": [
+        "theme",
+        "entity"
+      ],
+      "aliases": [
+        "RELATED_TO"
+      ],
+      "inverse_aliases": [],
+      "traversal_group": "theme_exposure"
+    }
+  ],
+  "companies": [
+    {
+      "name": "Apple",
+      "ticker": "AAPL",
+      "sector": "Technology",
+      "aliases": [
+        "AAPL",
+        "Apple Inc."
+      ]
+    },
+    {
+      "name": "Microsoft",
+      "ticker": "MSFT",
+      "sector": "Technology",
+      "aliases": [
+        "MSFT"
+      ]
+    },
+    {
+      "name": "NVIDIA",
+      "ticker": "NVDA",
+      "sector": "Semiconductors",
+      "aliases": [
+        "NVDA",
+        "Nvidia Corporation"
+      ]
+    },
+    {
+      "name": "TSMC",
+      "ticker": "TSM",
+      "sector": "Semiconductors",
+      "aliases": [
+        "TSM",
+        "Taiwan Semiconductor Manufacturing Company"
+      ]
+    },
+    {
+      "name": "Vertiv",
+      "ticker": "VRT",
+      "sector": "Industrials",
+      "aliases": [
+        "VRT",
+        "Vertiv Holdings Co."
+      ]
+    }
+  ],
+  "themes": [
+    {
+      "name": "AI Infrastructure & Capex",
+      "stage": "accelerating",
+      "description": "Hyperscaler capital expenditure on AI compute clusters, networking, and data centers.",
+      "aliases": [
+        "AI Data Center Buildout"
+      ]
+    },
+    {
+      "name": "AI Data Center Power & Cooling",
+      "stage": "accelerating",
+      "description": "Grid power, thermal density, and liquid cooling constraints in high-density AI racks.",
+      "aliases": [
+        "AI Data Center Power Bottleneck"
+      ]
+    },
+    {
+      "name": "Enterprise AI Monetization",
+      "stage": "accelerating",
+      "description": "Monetization of enterprise AI via cloud workloads, seats, and usage-based pricing.",
+      "aliases": []
+    },
+    {
+      "name": "On-Device AI & Edge Computing",
+      "stage": "accelerating",
+      "description": "Shift toward local inference on consumer devices and edge silicon.",
+      "aliases": [
+        "Local AI",
+        "Edge Intelligence"
+      ]
+    },
+    {
+      "name": "Semiconductor Supply Chain Diversification",
+      "stage": "consensus",
+      "description": "Geographic diversification of leading-edge semiconductor fabrication and assembly.",
+      "aliases": [
+        "Supply Chain Resilience"
+      ]
+    }
+  ],
+  "facet_aliases": {
+    "view": {
+      "catalyst_to_watch": "catalysts_to_watch",
+      "key_catalysts_to_watch": "catalysts_to_watch",
+      "primary_risk": "key_risks",
+      "risk": "key_risks",
+      "primary_driver": "driver"
+    }
+  },
+  "suggestions": {
+    "relations": [
+      {
+        "id": "sug_rel_operates",
+        "name": "OPERATES",
+        "status": "pending",
+        "edge_count": 6,
+        "observed_signatures": [
+          {
+            "from_type": "entity:company",
+            "to_type": "entity:institution",
+            "count": 6
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "TSMC",
+            "relation": "OPERATES",
+            "to_name": "JASM"
+          },
+          {
+            "from_name": "TSMC",
+            "relation": "OPERATES",
+            "to_name": "ESMC"
+          },
+          {
+            "from_name": "TSMC",
+            "relation": "OPERATES",
+            "to_name": "Fab 20"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_product_of",
+        "name": "PRODUCT_OF",
+        "status": "pending",
+        "edge_count": 5,
+        "observed_signatures": [
+          {
+            "from_type": "entity:product",
+            "to_type": "entity:company",
+            "count": 5
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "Azure Maia",
+            "relation": "PRODUCT_OF",
+            "to_name": "Microsoft"
+          },
+          {
+            "from_name": "A20 Pro",
+            "relation": "PRODUCT_OF",
+            "to_name": "Apple Inc."
+          },
+          {
+            "from_name": "iPhone Duo",
+            "relation": "PRODUCT_OF",
+            "to_name": "Apple Inc."
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_covers",
+        "name": "COVERS",
+        "status": "pending",
+        "edge_count": 4,
+        "observed_signatures": [
+          {
+            "from_type": "entity:person",
+            "to_type": "entity:company",
+            "count": 4
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "Vivek Arya",
+            "relation": "COVERS",
+            "to_name": "NVIDIA"
+          },
+          {
+            "from_name": "Joseph Moore",
+            "relation": "COVERS",
+            "to_name": "NVIDIA"
+          },
+          {
+            "from_name": "James Schneider",
+            "relation": "COVERS",
+            "to_name": "NVIDIA"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_develops",
+        "name": "DEVELOPS",
+        "status": "pending",
+        "edge_count": 4,
+        "observed_signatures": [
+          {
+            "from_type": "entity:company",
+            "to_type": "entity:product",
+            "count": 4
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "TSMC",
+            "relation": "DEVELOPS",
+            "to_name": "A16"
+          },
+          {
+            "from_name": "Microsoft",
+            "relation": "DEVELOPS",
+            "to_name": "Fairwater"
+          },
+          {
+            "from_name": "Microsoft",
+            "relation": "DEVELOPS",
+            "to_name": "Maia 300"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_designs",
+        "name": "DESIGNS",
+        "status": "pending",
+        "edge_count": 3,
+        "observed_signatures": [
+          {
+            "from_type": "entity:company",
+            "to_type": "entity:product",
+            "count": 3
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "NVIDIA",
+            "relation": "DESIGNS",
+            "to_name": "Vera Rubin DSX"
+          },
+          {
+            "from_name": "Apple Inc.",
+            "relation": "DESIGNS",
+            "to_name": "A20 Pro"
+          },
+          {
+            "from_name": "Apple Inc.",
+            "relation": "DESIGNS",
+            "to_name": "C2 Modem"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_analyst_of",
+        "name": "ANALYST_OF",
+        "status": "pending",
+        "edge_count": 2,
+        "observed_signatures": [
+          {
+            "from_type": "entity:person",
+            "to_type": "entity:company",
+            "count": 2
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "Brad Sills",
+            "relation": "ANALYST_OF",
+            "to_name": "Microsoft"
+          },
+          {
+            "from_name": "Samik Chatterjee",
+            "relation": "ANALYST_OF",
+            "to_name": "Microsoft"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_constrains",
+        "name": "CONSTRAINS",
+        "status": "pending",
+        "edge_count": 2,
+        "observed_signatures": [
+          {
+            "from_type": "entity:product",
+            "to_type": "entity:company",
+            "count": 2
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "CoWoS",
+            "relation": "CONSTRAINS",
+            "to_name": "NVIDIA"
+          },
+          {
+            "from_name": "ABF Substrates",
+            "relation": "CONSTRAINS",
+            "to_name": "TSMC"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_involves",
+        "name": "INVOLVES",
+        "status": "pending",
+        "edge_count": 2,
+        "observed_signatures": [
+          {
+            "from_type": "theme",
+            "to_type": "entity:company",
+            "count": 1
+          },
+          {
+            "from_type": "theme",
+            "to_type": "entity:institution",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "Supply Chain Geopolitical Hedging",
+            "relation": "INVOLVES",
+            "to_name": "TSMC Fab 21"
+          },
+          {
+            "from_name": "Supply Chain Geopolitical Hedging",
+            "relation": "INVOLVES",
+            "to_name": "Amkor"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_produces",
+        "name": "PRODUCES",
+        "status": "pending",
+        "edge_count": 2,
+        "observed_signatures": [
+          {
+            "from_type": "entity:company",
+            "to_type": "entity:product",
+            "count": 2
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "Apple Inc.",
+            "relation": "PRODUCES",
+            "to_name": "iPhone 18 Pro"
+          },
+          {
+            "from_name": "Apple Inc.",
+            "relation": "PRODUCES",
+            "to_name": "iPhone Duo"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_acquired_from",
+        "name": "ACQUIRED_FROM",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "entity:institution",
+            "to_type": "entity:company",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "AP8",
+            "relation": "ACQUIRED_FROM",
+            "to_name": "Innolux"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_collaborates_on",
+        "name": "COLLABORATES_ON",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "entity:company",
+            "to_type": "entity:product",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "Microsoft",
+            "relation": "COLLABORATES_ON",
+            "to_name": "Vera Rubin DSX"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_drives",
+        "name": "DRIVES",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "theme",
+            "to_type": "entity:company",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "AI Data Center Power & Cooling",
+            "relation": "DRIVES",
+            "to_name": "NVIDIA"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_enables",
+        "name": "ENABLES",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "entity:product",
+            "to_type": "theme",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "A20 Pro",
+            "relation": "ENABLES",
+            "to_name": "On-Device AI & Edge Computing"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_investigates",
+        "name": "INVESTIGATES",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "entity:person",
+            "to_type": "entity:company",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "Rob Bonta",
+            "relation": "INVESTIGATES",
+            "to_name": "NVIDIA"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_manufactures",
+        "name": "MANUFACTURES",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "entity:company",
+            "to_type": "entity:product",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "NVIDIA",
+            "relation": "MANUFACTURES",
+            "to_name": "Blackwell GB200 NVL72"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_mitigated_by",
+        "name": "MITIGATED_BY",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "theme",
+            "to_type": "entity:company",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "Supply Chain Geopolitical Hedging",
+            "relation": "MITIGATED_BY",
+            "to_name": "NVIDIA"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_offers",
+        "name": "OFFERS",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "entity:company",
+            "to_type": "entity:product",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "Microsoft",
+            "relation": "OFFERS",
+            "to_name": "Cobalt 200"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_produced_by",
+        "name": "PRODUCED_BY",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "entity:product",
+            "to_type": "entity:company",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "CoWoS",
+            "relation": "PRODUCED_BY",
+            "to_name": "TSMC"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_provided_by",
+        "name": "PROVIDED_BY",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "entity:product",
+            "to_type": "entity:company",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "WMCM",
+            "relation": "PROVIDED_BY",
+            "to_name": "TSMC"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_used_by",
+        "name": "USED_BY",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "entity:product",
+            "to_type": "entity:company",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "WMCM",
+            "relation": "USED_BY",
+            "to_name": "Apple Inc."
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_uses",
+        "name": "USES",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "entity:company",
+            "to_type": "entity:product",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "Microsoft",
+            "relation": "USES",
+            "to_name": "Blackwell GB200 NVL72"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_rel_uses_tech",
+        "name": "USES_TECH",
+        "status": "pending",
+        "edge_count": 1,
+        "observed_signatures": [
+          {
+            "from_type": "entity:product",
+            "to_type": "entity:product",
+            "count": 1
+          }
+        ],
+        "sample_edges": [
+          {
+            "from_name": "Azure Maia",
+            "relation": "USES_TECH",
+            "to_name": "N2P"
+          }
+        ],
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      }
+    ],
+    "companies": [
+      {
+        "id": "sug_co_king_environmental_services_ltd_kes",
+        "name": "King Environmental Services Ltd. (KES)",
+        "node_id": "ent_king_environmental_servi_68e9a7",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": null,
+        "aliases": [
+          "KES",
+          "King Environmental Services Ltd."
+        ],
+        "summary": "Ireland-based firm acquired by Vertiv in October 2026 to extend liquid-cooling fluid management into EMEA.",
+        "signal_count": 2,
+        "has_consensus": true,
+        "consensus_stance": "neutral",
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_openai",
+        "name": "OpenAI",
+        "node_id": "ent_openai_1ac54d",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Technology",
+        "aliases": [],
+        "summary": "Anchor Azure consumer and Frontier model partner driving Microsoft's RPO.",
+        "signal_count": 2,
+        "has_consensus": true,
+        "consensus_stance": "neutral",
+        "nearest_official": {
+          "name": "Microsoft",
+          "distance": 0.3348
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_utilityinnovation_group_uig",
+        "name": "UtilityInnovation Group (UIG)",
+        "node_id": "ent_utilityinnovation_group__104ba9",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": null,
+        "aliases": [
+          "UIG",
+          "UtilityInnovation Group"
+        ],
+        "summary": "Acquired by Vertiv for ~$1.45B to add microgrid controls and behind-the-meter power architectures.",
+        "signal_count": 2,
+        "has_consensus": true,
+        "consensus_stance": "neutral",
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_constellation_energy",
+        "name": "Constellation Energy",
+        "node_id": "ent_constellation_energy_dbfdb4",
+        "status": "pending",
+        "ticker": "CEG",
+        "raw_ticker": "NASDAQ: CEG",
+        "sector": "Utilities",
+        "aliases": [
+          "CEG"
+        ],
+        "summary": "Energy partner providing nuclear power via the Crane Clean Energy Center restart.",
+        "signal_count": 1,
+        "has_consensus": true,
+        "consensus_stance": "bullish",
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_foxconn",
+        "name": "Foxconn",
+        "node_id": "ent_foxconn_b2860b",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Technology Hardware",
+        "aliases": [],
+        "summary": "Major electronics contract manufacturer and key Apple supplier, shifting iPhone production to India.",
+        "signal_count": 1,
+        "has_consensus": true,
+        "consensus_stance": "neutral",
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_google",
+        "name": "Google",
+        "node_id": "ent_google_431b4f",
+        "status": "pending",
+        "ticker": "GOOGL",
+        "raw_ticker": "GOOGL",
+        "sector": "Technology",
+        "aliases": [
+          "GOOGL",
+          "Alphabet",
+          "Gemini"
+        ],
+        "summary": "Technology company partnering with Apple to integrate Gemini foundation model technology into Siri AI under Apple's privacy envelope.",
+        "signal_count": 1,
+        "has_consensus": true,
+        "consensus_stance": "bullish",
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_tata_group",
+        "name": "Tata Group",
+        "node_id": "ent_tata_group_626b96",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Conglomerate",
+        "aliases": [
+          "Tata"
+        ],
+        "summary": "Indian conglomerate partnering with Foxconn/Apple for local manufacturing in India.",
+        "signal_count": 1,
+        "has_consensus": true,
+        "consensus_stance": "neutral",
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_amazon",
+        "name": "Amazon",
+        "node_id": "ent_amazon_4e5972",
+        "status": "pending",
+        "ticker": "AMZN",
+        "raw_ticker": "NASDAQ: AMZN",
+        "sector": "Consumer Discretionary / Technology",
+        "aliases": [
+          "AMZN",
+          "AWS"
+        ],
+        "summary": "Hyperscale cloud competitor (AWS).",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_amd",
+        "name": "AMD",
+        "node_id": "ent_amd_299a95",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Semiconductors",
+        "aliases": [],
+        "summary": "Rival semiconductor company squeezed by NVIDIA's dominance of TSMC CoWoS capacity.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_amkor",
+        "name": "Amkor",
+        "node_id": "ent_amkor_649ce3",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Semiconductor Services",
+        "aliases": [
+          "Amkor Peoria"
+        ],
+        "summary": "OSAT partner qualifying U.S. reshoring for back-end packaging/testing at Peoria, AZ facility.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_anthropic",
+        "name": "Anthropic",
+        "node_id": "ent_anthropic_7dffec",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Technology",
+        "aliases": [],
+        "summary": "AI lab partner hosted in Microsoft Foundry.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_asml",
+        "name": "ASML",
+        "node_id": "ent_asml_b7f02e",
+        "status": "pending",
+        "ticker": "ASML",
+        "raw_ticker": "ASML",
+        "sector": "Semiconductor Equipment",
+        "aliases": [],
+        "summary": "Dutch semiconductor equipment manufacturer; critical supplier of EUV lithography systems required for TSMC's N2/N3 scaling.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": {
+          "name": "TSMC",
+          "distance": 0.3472
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_bosch",
+        "name": "Bosch",
+        "node_id": "ent_bosch_902eb3",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Automotive/Industrial",
+        "aliases": [],
+        "summary": "German engineering and electronics company; joint venture partner in ESMC (European Semiconductor Manufacturing Company) fab in Dresden.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_boyd_thermal",
+        "name": "Boyd Thermal",
+        "node_id": "ent_boyd_thermal_d42a00",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": null,
+        "aliases": [],
+        "summary": "Company acquired by Eaton to provide cold plates and chip-level loops.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_broadcom",
+        "name": "Broadcom",
+        "node_id": "ent_broadcom_d7f739",
+        "status": "pending",
+        "ticker": "AVGO",
+        "raw_ticker": "AVGO",
+        "sector": "Semiconductors",
+        "aliases": [
+          "AVGO"
+        ],
+        "summary": "Competitor mentioned in bear case as gaining narrative momentum for custom ASICs.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_coreweave",
+        "name": "CoreWeave",
+        "node_id": "ent_coreweave_fdd5ec",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Technology",
+        "aliases": [],
+        "summary": "Neocloud GPU-as-a-Service partner for Microsoft.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_dell",
+        "name": "Dell",
+        "node_id": "ent_dell_817733",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Hardware",
+        "aliases": [
+          "HPE"
+        ],
+        "summary": "Server OEM shipping Vera CPU MGX Racks starting early 2027.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_eaton_corporation",
+        "name": "Eaton Corporation",
+        "node_id": "ent_eaton_corporation_9eb75c",
+        "status": "pending",
+        "ticker": "ETN",
+        "raw_ticker": "ETN",
+        "sector": null,
+        "aliases": [
+          "ETN"
+        ],
+        "summary": "Competitor to Vertiv. Acquired Boyd Thermal to pair chip-level thermal integration with switchgear, UPS, and grid gear.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_huawei",
+        "name": "Huawei",
+        "node_id": "ent_huawei_24366a",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Telecommunications Equipment",
+        "aliases": [],
+        "summary": "Chinese technology company cited as a fierce domestic competitor impacting Apple's China revenue.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_infineon",
+        "name": "Infineon",
+        "node_id": "ent_infineon_d1124f",
+        "status": "pending",
+        "ticker": "IFX.DE",
+        "raw_ticker": "IFX.DE",
+        "sector": "Semiconductors",
+        "aliases": [],
+        "summary": "German semiconductor manufacturer; joint venture partner in ESMC fab in Dresden.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_innolux",
+        "name": "Innolux",
+        "node_id": "ent_innolux_d92ef0",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Display Panels",
+        "aliases": [],
+        "summary": "LCD panel manufacturer whose plant was acquired and converted by TSMC into the AP8 packaging hub.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_lenovo",
+        "name": "Lenovo",
+        "node_id": "ent_lenovo_3a39c3",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Hardware",
+        "aliases": [],
+        "summary": "Server OEM shipping Vera CPU MGX Racks starting early 2027.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_mediatek",
+        "name": "MediaTek",
+        "node_id": "ent_mediatek_392a75",
+        "status": "pending",
+        "ticker": "2454.TW",
+        "raw_ticker": "2454.TW",
+        "sector": "Semiconductors",
+        "aliases": [],
+        "summary": "Fabless semiconductor company ramping leading-edge N3/N2 silicon for smartphone AI workloads, contributing to TSMC's Edge AI revenue.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_megaspeed",
+        "name": "Megaspeed",
+        "node_id": "ent_megaspeed_e66ccc",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Data Center Infrastructure",
+        "aliases": [],
+        "summary": "Singapore-based data center operator suspected by U.S. officials of China links; former employer of Alice Huang.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_modine_manufacturing",
+        "name": "Modine Manufacturing",
+        "node_id": "ent_modine_manufacturing_e0e520",
+        "status": "pending",
+        "ticker": "MOD",
+        "raw_ticker": "MOD",
+        "sector": null,
+        "aliases": [
+          "MOD",
+          "Airedale"
+        ],
+        "summary": "Competitor to Vertiv. Specializes in ambient heat-rejection layer (chiller/dry-cooler side) with Airedale HVAC products.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_motivair_corp",
+        "name": "Motivair Corp.",
+        "node_id": "ent_motivair_corp_49b45b",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": null,
+        "aliases": [],
+        "summary": "Company acquired by Schneider Electric to provide CDUs and cold plates.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_nebius",
+        "name": "Nebius",
+        "node_id": "ent_nebius_625aad",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Technology",
+        "aliases": [],
+        "summary": "Neocloud GPU-as-a-Service partner with a contract in Vineland, NJ.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_nvent_electric",
+        "name": "nVent Electric",
+        "node_id": "ent_nvent_electric_d1b945",
+        "status": "pending",
+        "ticker": "NVT",
+        "raw_ticker": "NVT",
+        "sector": null,
+        "aliases": [
+          "NVT",
+          "RackChiller"
+        ],
+        "summary": "Competitor to Vertiv. Focuses on modular rack-level retrofits for colocation/enterprise with RackChiller enclosures and CDU100 series.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_nxp",
+        "name": "NXP",
+        "node_id": "ent_nxp_2344c4",
+        "status": "pending",
+        "ticker": "NXPI",
+        "raw_ticker": "NXPI",
+        "sector": "Semiconductors",
+        "aliases": [],
+        "summary": "Dutch semiconductor manufacturer; joint venture partner in ESMC fab in Dresden.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_oracle",
+        "name": "Oracle",
+        "node_id": "ent_oracle_229ae9",
+        "status": "pending",
+        "ticker": "ORCL",
+        "raw_ticker": "NYSE: ORCL",
+        "sector": "Technology",
+        "aliases": [
+          "ORCL"
+        ],
+        "summary": "Competitor overlapping on OpenAI and GPU cloud capacity.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_purgerite",
+        "name": "PurgeRite",
+        "node_id": "ent_purgerite_ed3c81",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": null,
+        "aliases": [],
+        "summary": "Previously acquired company providing North American capabilities complementing KES acquisition.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_qualcomm",
+        "name": "Qualcomm",
+        "node_id": "ent_qualcomm_ef3c09",
+        "status": "pending",
+        "ticker": "QCOM",
+        "raw_ticker": "QCOM",
+        "sector": "Semiconductors",
+        "aliases": [
+          "QCOM"
+        ],
+        "summary": "Semiconductor company whose cellular modems are being replaced by Apple's in-house C2 modem, reducing reliance.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_schneider_electric",
+        "name": "Schneider Electric",
+        "node_id": "ent_schneider_electric_f9ef3a",
+        "status": "pending",
+        "ticker": "SU.PA",
+        "raw_ticker": "SU.PA",
+        "sector": null,
+        "aliases": [
+          "SU.PA"
+        ],
+        "summary": "Competitor to Vertiv. Acquired Motivair Corp. to strengthen its CDU/cold plate offerings. Offers integrated electrical + automation bundles via EcoStruxure.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_sk_hynix",
+        "name": "SK Hynix",
+        "node_id": "ent_sk_hynix_6822c3",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Semiconductors",
+        "aliases": [],
+        "summary": "Memory supplier leading HBM4 supply and partnering with TSMC for custom logic base dies.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_spil",
+        "name": "SPIL",
+        "node_id": "ent_spil_bcf39b",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Semiconductor Services",
+        "aliases": [],
+        "summary": "OSAT partner qualifying U.S. reshoring for back-end packaging/testing.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_co_supermicro",
+        "name": "Supermicro",
+        "node_id": "ent_supermicro_0662fa",
+        "status": "pending",
+        "ticker": null,
+        "raw_ticker": null,
+        "sector": "Hardware",
+        "aliases": [],
+        "summary": "Server OEM shipping Vera CPU MGX Racks starting early 2027.",
+        "signal_count": 0,
+        "has_consensus": false,
+        "consensus_stance": null,
+        "nearest_official": null,
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      }
+    ],
+    "themes": [
+      {
+        "id": "sug_thm_supply_chain_geopolitical_hedging",
+        "name": "Supply Chain Geopolitical Hedging",
+        "node_id": "thm_supply_chain_geopolitica_e480d2",
+        "status": "pending",
+        "stage": "consensus",
+        "aliases": [],
+        "summary": "Strategy to mitigate tariff and geopolitical risks by shifting assembly to India (Foxconn/Tata) and leveraging TSMC Arizona for silicon, while acknowledging remaining concentration in Taiwan for leading-edge nodes.",
+        "company_count": 4,
+        "nearest_official": {
+          "name": "Semiconductor Supply Chain Diversification",
+          "distance": 0.1821
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_thm_enterprise_ai_monetization_shift",
+        "name": "Enterprise AI Monetization Shift",
+        "node_id": "thm_enterprise_ai_monetizati_951773",
+        "status": "pending",
+        "stage": "accelerating",
+        "aliases": [
+          "Metered AI Usage",
+          "ARPU Expansion"
+        ],
+        "summary": "Transition from flat per-seat subscriptions to metered consumption (Copilot Credits) and higher-tier bundles (E7) to expand ARPU.",
+        "company_count": 1,
+        "nearest_official": {
+          "name": "Enterprise AI Monetization",
+          "distance": 0.2463
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_thm_supply_chain_localization",
+        "name": "Supply Chain Localization",
+        "node_id": "thm_supply_chain_localizatio_9a807d",
+        "status": "pending",
+        "stage": "accelerating",
+        "aliases": [],
+        "summary": "Multi-billion-dollar fab commitments in Arizona, Japan, and Germany to hedge geopolitical risk, introducing near-term gross margin dilution.",
+        "company_count": 1,
+        "nearest_official": {
+          "name": "Semiconductor Supply Chain Diversification",
+          "distance": 0.2771
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_thm_edge_ai_monetization_via_installed_base",
+        "name": "Edge AI Monetization via Installed Base",
+        "node_id": "thm_edge_ai_monetization_via_aed2da",
+        "status": "pending",
+        "stage": "accelerating",
+        "aliases": [],
+        "summary": "Thesis that Apple can monetize its 2.5B+ active devices through hardware upgrades (iPhone 18/Duo) and Services attach using capital-efficient Edge AI, avoiding massive data-center CapEx.",
+        "company_count": 2,
+        "nearest_official": {
+          "name": "On-Device AI & Edge Computing",
+          "distance": 0.3273
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_thm_grid_to_chip_power_thermal_enablement",
+        "name": "Grid-to-Chip Power & Thermal Enablement",
+        "node_id": "thm_grid_to_chip_power_therm_c25917",
+        "status": "pending",
+        "stage": "accelerating",
+        "aliases": [
+          "Grid-to-Chip Integration"
+        ],
+        "summary": "The strategic integration of utility-scale power solutions (microgrids, behind-the-meter) directly with high-density compute cooling and power distribution architectures to overcome grid interconnection bottlenecks.",
+        "company_count": 2,
+        "nearest_official": {
+          "name": "AI Data Center Power & Cooling",
+          "distance": 0.3344
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_thm_custom_silicon_margin_defense",
+        "name": "Custom Silicon Margin Defense",
+        "node_id": "thm_custom_silicon_margin_de_95f34e",
+        "status": "pending",
+        "stage": "emerging",
+        "aliases": [
+          "In-house AI Accelerators",
+          "Cloud Margin Optimization"
+        ],
+        "summary": "Use of proprietary hardware (Maia 300, Cobalt 200) and model routing to reduce inference COGS and defend cloud margins against third-party dependency.",
+        "company_count": 0,
+        "nearest_official": {
+          "name": "AI Infrastructure & Capex",
+          "distance": 0.3983
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_thm_industrial_consolidation_in_liquid_cooling",
+        "name": "Industrial Consolidation in Liquid Cooling",
+        "node_id": "thm_industrial_consolidation_2920dd",
+        "status": "pending",
+        "stage": "accelerating",
+        "aliases": [],
+        "summary": "Trend of fragmented startups being acquired by consolidated global electrical/thermal incumbents (Vertiv, Schneider, Eaton) to capture market share.",
+        "company_count": 1,
+        "nearest_official": {
+          "name": "AI Data Center Power & Cooling",
+          "distance": 0.4564
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_thm_grid_regulatory_bottlenecks",
+        "name": "Grid & Regulatory Bottlenecks",
+        "node_id": "thm_grid_regulatory_bottlene_c13340",
+        "status": "pending",
+        "stage": "emerging",
+        "aliases": [],
+        "summary": "Investment thesis focusing on utility interconnection delays, permitting scrutiny, and local regulatory pushback against data centers, and how companies like Vertiv mitigate these via acquisitions (UIG).",
+        "company_count": 1,
+        "nearest_official": {
+          "name": "AI Data Center Power & Cooling",
+          "distance": 0.4668
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_thm_advanced_semiconductor_packaging",
+        "name": "Advanced Semiconductor Packaging",
+        "node_id": "thm_advanced_semiconductor_p_e50b7c",
+        "status": "pending",
+        "stage": "emerging",
+        "aliases": [],
+        "summary": "CoWoS-L and leading-edge nodes (3nm, 2nm) are the definitive volume gatekeepers. Substrate warpage and thermal limits in multi-die architectures (Rubin Ultra) represent key technical bottlenecks.",
+        "company_count": 2,
+        "nearest_official": {
+          "name": "AI Data Center Power & Cooling",
+          "distance": 0.5175
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      },
+      {
+        "id": "sug_thm_governance_key_man_risk",
+        "name": "Governance & Key-Man Risk",
+        "node_id": "thm_governance_key_man_risk_087e0e",
+        "status": "pending",
+        "stage": "emerging",
+        "aliases": [
+          "Succession Uncertainty",
+          "Regulatory Overhang"
+        ],
+        "summary": "Investment thesis focusing on execution, talent retention, and strategic cohesion risks arising from founder departure and regulatory probes.",
+        "company_count": 1,
+        "nearest_official": {
+          "name": "Semiconductor Supply Chain Diversification",
+          "distance": 0.6308
+        },
+        "mapped_to": null,
+        "reviewer_note": null,
+        "first_seen_at": "2026-11-22T01:16:23.348514+00:00",
+        "last_seen_at": "2026-11-22T01:16:30.194395+00:00"
+      }
+    ]
+  }
+}

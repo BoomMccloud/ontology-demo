@@ -1,0 +1,4 @@
+interface:
+  display_name: "Proposal Intake"
+  short_description: "Turn requests into human-owned proposals"
+  default_prompt: "Use $proposal-intake to turn this request into a concise Proposal section."

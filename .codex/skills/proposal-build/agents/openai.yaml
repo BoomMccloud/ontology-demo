@@ -1,0 +1,4 @@
+interface:
+  display_name: "Proposal Build"
+  short_description: "Implement approved proposal claims safely"
+  default_prompt: "Use $proposal-build to implement an approved Frame and Proof."

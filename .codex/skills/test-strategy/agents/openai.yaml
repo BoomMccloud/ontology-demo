@@ -1,0 +1,6 @@
+interface:
+  display_name: "Test Strategy"
+  short_description: "Audit proposal testing and evidence quality"
+  default_prompt: "Use $test-strategy to evaluate this proposal's testing and evidence strategy."
+policy:
+  allow_implicit_invocation: false

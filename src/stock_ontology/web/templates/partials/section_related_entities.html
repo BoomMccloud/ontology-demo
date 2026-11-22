@@ -1,0 +1,25 @@
+{% if related_entities %}
+<section id="sec-related" class="section-block" aria-label="{{ t('section.related_aria') }}">
+  <h2>{{ t('section.related_heading') }} ({{ related_entities | length }})</h2>
+  <table class="catalog-table">
+    <thead>
+      <tr>
+        <th>{{ t('section.related_col_entity') }}</th>
+        <th>{{ t('section.related_col_type') }}</th>
+        <th>{{ t('section.related_col_relationship') }}</th>
+        <th>{{ t('section.related_col_summary') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for rel in related_entities %}
+        <tr>
+          <td><a href="/entity/{{ rel.id }}"><strong>{{ rel.name }}</strong></a></td>
+          <td class="mono">{{ t_enum('entity_type', rel.facets.get("entity_type", "entity")) }}</td>
+          <td class="mono">{{ t_enum('relation', rel.relation) }} ({{ t_enum('direction', rel.direction) }})</td>
+          <td>{{ rel.summary }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}

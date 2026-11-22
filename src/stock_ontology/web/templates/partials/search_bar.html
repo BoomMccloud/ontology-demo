@@ -1,0 +1,137 @@
+{% set f = filters | default({}) %}
+{% set opts = search_options | default({}) %}
+{% set nt = node_type | default('') %}
+<section class="search-box" aria-label="{{ t('search.section_aria') }}">
+  <form class="search-form-wrapper" action="/search" method="get">
+    <div class="search-form">
+      <input
+        id="catalog-q"
+        name="q"
+        type="text"
+        value="{{ query | default('') }}"
+        aria-label="{{ t('search.query_label') }}"
+        placeholder="{{ t('home.search_placeholder') }}"
+      >
+      <select name="node_type" aria-label="{{ t('search.filter_aria') }}">
+        <option value="" {% if not nt %}selected{% endif %}>{{ t('search.node_type_all') }}</option>
+        <option value="entity" {% if nt == 'entity' %}selected{% endif %}>{{ t('search.node_type_entity') }}</option>
+        <option value="theme" {% if nt == 'theme' %}selected{% endif %}>{{ t('search.node_type_theme') }}</option>
+        <option value="event" {% if nt == 'event' %}selected{% endif %}>{{ t('search.node_type_event') }}</option>
+        <option value="view" {% if nt == 'view' %}selected{% endif %}>{{ t('search.node_type_view') }}</option>
+      </select>
+      <button class="retro-btn" type="submit">{{ t('home.search_btn') }}</button>
+    </div>
+
+    <details class="advanced-search-panel" {% if advanced_open %}open{% endif %}>
+      <summary class="advanced-search-toggle">
+        {{ t('search.advanced_toggle') }}{% if active_filters %}{{ t('search.advanced_active_suffix', count=active_filters | length) }}{% endif %}
+      </summary>
+
+      <div class="advanced-search-grid">
+        <div class="adv-field">
+          <label for="adv-subtype">{{ t('search.subtype_label') }}</label>
+          <select id="adv-subtype" name="subtype">
+            <option value="">{{ t('search.any_subtype') }}</option>
+            {% for group_label, group_key in [
+              (t('search.optgroup_entity_subtypes'), 'entity'),
+              (t('search.optgroup_event_subtypes'), 'event'),
+              (t('search.optgroup_view_subtypes'), 'view'),
+              (t('search.optgroup_theme_stages'), 'theme')
+            ] %}
+              {% set sub_list = opts.get('subtypes', {}).get(group_key, []) %}
+              {% if sub_list %}
+                <optgroup label="{{ group_label }}">
+                  {% for sub in sub_list %}
+                    <option value="{{ sub }}" {% if f.get('subtype') == sub %}selected{% endif %}>{{ t_subtype(sub, group_key) }}</option>
+                  {% endfor %}
+                </optgroup>
+              {% endif %}
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="adv-field">
+          <label for="adv-sentiment">{{ t('search.sentiment_label') }}</label>
+          <select id="adv-sentiment" name="sentiment">
+            <option value="">{{ t('search.any_sentiment') }}</option>
+            {% for sent in opts.get('sentiments', ['positive', 'negative', 'neutral', 'mixed', 'unclassified']) %}
+              <option value="{{ sent }}" {% if f.get('sentiment') == sent %}selected{% endif %}>{{ t_enum('sentiment', sent) }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="adv-field">
+          <label for="adv-stance">{{ t('search.stance_label') }}</label>
+          <select id="adv-stance" name="stance">
+            <option value="">{{ t('search.any_stance') }}</option>
+            {% for st in opts.get('stances', []) %}
+              <option value="{{ st }}" {% if f.get('stance') == st %}selected{% endif %}>{{ t_enum('stance', st) }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="adv-field">
+          <label for="adv-entity">{{ t('search.entity_label') }}</label>
+          <select id="adv-entity" name="entity_id">
+            <option value="">{{ t('search.any_entity') }}</option>
+            {% if opts.get('companies') %}
+              <optgroup label="{{ t('search.optgroup_companies') }}">
+                {% for c in opts.companies %}
+                  <option value="{{ c.id }}" {% if f.get('entity_id') == c.id %}selected{% endif %}>
+                    {{ c.name }}{% if c.ticker %} ({{ c.ticker }}){% endif %}
+                  </option>
+                {% endfor %}
+              </optgroup>
+            {% endif %}
+            {% if opts.get('people') %}
+              <optgroup label="{{ t('search.optgroup_people') }}">
+                {% for p in opts.people %}
+                  <option value="{{ p.id }}" {% if f.get('entity_id') == p.id %}selected{% endif %}>
+                    {{ p.name }}{% if p.role %} — {{ p.role }}{% endif %}
+                  </option>
+                {% endfor %}
+              </optgroup>
+            {% endif %}
+            {% if opts.get('other_entities') %}
+              <optgroup label="{{ t('search.optgroup_other_entities') }}">
+                {% for e in opts.other_entities %}
+                  <option value="{{ e.id }}" {% if f.get('entity_id') == e.id %}selected{% endif %}>
+                    {{ e.name }} [{{ t_enum('entity_type', e.entity_type) }}]
+                  </option>
+                {% endfor %}
+              </optgroup>
+            {% endif %}
+          </select>
+        </div>
+
+        <div class="adv-field">
+          <label for="adv-date-from">{{ t('search.date_from_label') }}</label>
+          <input id="adv-date-from" name="date_from" type="date" value="{{ f.get('date_from', '') }}">
+        </div>
+
+        <div class="adv-field">
+          <label for="adv-date-to">{{ t('search.date_to_label') }}</label>
+          <input id="adv-date-to" name="date_to" type="date" value="{{ f.get('date_to', '') }}">
+        </div>
+
+        <div class="adv-field">
+          <label for="adv-source-file">{{ t('search.source_file_label') }}</label>
+          <input id="adv-source-file" name="source_file" type="text" value="{{ f.get('source_file', '') }}" placeholder="{{ t('search.source_file_placeholder') }}">
+        </div>
+
+        <div class="adv-field">
+          <label for="adv-search-mode">{{ t('search.mode_label') }}</label>
+          <select id="adv-search-mode" name="search_mode">
+            <option value="hybrid" {% if f.get('search_mode', 'hybrid') != 'keyword' %}selected{% endif %}>{{ t('search.mode_hybrid') }}</option>
+            <option value="keyword" {% if f.get('search_mode') == 'keyword' %}selected{% endif %}>{{ t('search.mode_keyword') }}</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="advanced-search-actions">
+        <button class="retro-btn" type="submit">{{ t('search.apply_filters_btn') }}</button>
+        <a class="retro-link-btn" href="/search">{{ t('search.reset_all_btn') }}</a>
+      </div>
+    </details>
+  </form>
+</section>

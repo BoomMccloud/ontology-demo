@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "source_commit": "8ee77ad5316290543ed6170569f963171e4d39ac",
+  "files": {
+    ".codex/skills/first-principle/agents/openai.yaml": "e754e5d431927a6975ee4d35a549713f11cdaf146cbba2ffb0426e37c1e19e5d",
+    ".codex/skills/first-principle/SKILL.md": "f9c4492eba0543679deb4e7cf38e27ba89469461ecc5fe894f1207cfff31faef",
+    ".codex/skills/kiss/agents/openai.yaml": "6cfbd906260f47b888f0a8fb6e851a916d58e3540f31690fc7ab619d63f25487",
+    ".codex/skills/kiss/SKILL.md": "57ebfcb73c9ba2c7e3af560272eda866607699460582a5e2b5fcc4e25c6ecf05",
+    ".codex/skills/proposal-audit/agents/openai.yaml": "81b4faf1c5de1915bd8d37bb0c4629217dbe89f024775237d91329f5d4a8ed4b",
+    ".codex/skills/proposal-audit/references/baseline.md": "1b2ec011ba60307ed70496489cb375751482fe6abbe78b28a7ad3ea46d182eff",
+    ".codex/skills/proposal-audit/SKILL.md": "5975bbb03adc7f9b7f78f7b8c211b66fe66b174f3af2f82384277fb3de9d56ec",
+    ".codex/skills/proposal-build/agents/openai.yaml": "31a71d047564f515465f4fbc0c1b23c4950d6d187d83387d79ee4a34022d7d70",
+    ".codex/skills/proposal-build/references/baseline.md": "aa9a60a554aee914c39e68687d846752a2144e38e59b5cf14799fbc0fe9b21b9",
+    ".codex/skills/proposal-build/SKILL.md": "91db591c83a4465ca9338becf0dfa05ce0e72adf63483e55b8f78baa0b43dac9",
+    ".codex/skills/proposal-frame/agents/openai.yaml": "f17d63e57572faab05afe3ff3f825dbb2909bf1838189d89370e0d8f9d6bb993",
+    ".codex/skills/proposal-frame/references/baseline.md": "efe32b8f0d43dfc673e8bc5b5d439e1a5e94c9fc99f46a5e59e8305155dd7882",
+    ".codex/skills/proposal-frame/SKILL.md": "fb5ba1c83c210335e622129adfaf26110d34b225f0260d83de912d204dee887f",
+    ".codex/skills/proposal-intake/agents/openai.yaml": "bd49cba2ff872d08cd84c648b10bf1674e1756853d66936c4b6d88250f63fb58",
+    ".codex/skills/proposal-intake/references/baseline.md": "3936cca24842f2f9308eb27691ffadfe41368e33cc66d1fb0da3f2a1865148d8",
+    ".codex/skills/proposal-intake/SKILL.md": "f77e985a34299cf063bae2f6d3da948e60a3186a87085b1693736c34cb2ca581",
+    ".codex/skills/proposal-pipeline/agents/openai.yaml": "09fc3da0569ed7f64d9454d9eaf4dd92f017838406c0699e180a7385d287457b",
+    ".codex/skills/proposal-pipeline/assets/proposal-ledger.md": "3d1e042d40ef582c859a11a78909e8a12bc055bd52d6a8d9f4720180253fb929",
+    ".codex/skills/proposal-pipeline/references/baseline.md": "8abd5afce331aaa72fda90b62e2d7c3e2648168056b96d6896e5399a7acf66ae",
+    ".codex/skills/proposal-pipeline/SKILL.md": "565e7d8117b76153411c8f85e03436ea7eab70e0126ede4b59d736a1b62dd23f",
+    ".codex/skills/proposal-prove/agents/openai.yaml": "c1e1d5397068674fb568d9e0185ec1b5beafbd1cd33306af6917a84d143429ce",
+    ".codex/skills/proposal-prove/references/baseline.md": "f8b5a53f76dbb6182b3b8a62c1da19a3e8ce0bd30df8423d29dc16498fe4ab4f",
+    ".codex/skills/proposal-prove/SKILL.md": "bd54ac4d1589df76bf6cb2201231ad8f7bba5440c841e8fa6028e4a5101d3ef0",
+    ".codex/skills/test-strategy/agents/openai.yaml": "3a66a34ae00376e4aa627e3d0c87faf5cf8d41bccd3a286f897bf4306fb4073f",
+    ".codex/skills/test-strategy/SKILL.md": "612125d0e3e0a2cd860960706d26d14d74d303754797f24c2b244a080d46b445"
+  }
+}

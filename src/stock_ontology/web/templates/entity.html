@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('entity.page_title', name=entity.name) }}{% endblock %}
+
+{% block content %}
+  <div id="sec-overview">
+    {% include "partials/facet_header.html" %}
+    {% include "partials/facet_company_card.html" %}
+    {% include "partials/facet_person_card.html" %}
+    {% include "partials/facet_consensus_card.html" %}
+    {% include "partials/facet_generic_table.html" %}
+  </div>
+  {% include "partials/section_themes.html" %}
+  {% include "partials/section_events.html" %}
+  {% include "partials/section_views.html" %}
+  {% include "partials/section_related_entities.html" %}
+
+  <p class="portal-more-link">
+    <a href="/ask?context={{ page_context | urlencode }}">{{ t('ask.link_from_entity', name=entity.name) }}</a>
+  </p>
+{% endblock %}

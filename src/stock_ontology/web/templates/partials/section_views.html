@@ -1,0 +1,67 @@
+{% if views %}
+<section id="sec-views" class="section-block" aria-label="{{ t('section.views_aria') }}">
+  <h2>{{ t('section.views_heading') }} ({{ views | length }})</h2>
+  <table class="catalog-table">
+    <thead>
+      <tr>
+        <th style="width: 18%;">{{ t('section.views_col_stance') }}</th>
+        <th style="width: 24%;">{{ t('section.views_col_view') }}</th>
+        <th>{{ t('section.views_col_thesis') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for vw in views %}
+        {% set vw_sent = vw.effective_sentiment or vw.facets.get("sentiment") %}
+        <tr id="node-{{ vw.id }}">
+          <td>
+            {% if vw.facets.get("stance") %}
+              <span class="badge badge-{{ vw.facets.get('stance') | lower }}">{{ t_enum('stance', vw.facets.get("stance")) }}</span>
+            {% endif %}
+            {% if vw_sent %}
+              <span class="badge badge-{{ vw_sent | lower }}">{{ t_enum('sentiment', vw_sent) }}</span>
+            {% endif %}
+            {% if vw.facets.get("support_strength") %}
+              <span class="badge badge-{{ vw.facets.get('support_strength') | lower }}">{{ t_enum('support_strength', vw.facets.get("support_strength")) }}</span>
+            {% endif %}
+            <div class="source-cite" style="margin-top: 3px;">
+              {{ t_enum('view_type', vw.facets.get("view_type", "view")) }}
+              {% if vw.facets.get("as_of") %} &bull; {{ vw.facets.get("as_of") }}{% endif %}
+            </div>
+            {% if vw.sentiment_source == "edge" %}
+              {% if vw.facets.get("sentiment") and vw.facets.get("sentiment") != vw_sent %}
+                <div class="source-cite">{{ t('sentiment.entity_impact_overall', overall=t_enum('sentiment', vw.facets.get("sentiment"))) }}</div>
+              {% else %}
+                <div class="source-cite">{{ t('sentiment.entity_impact') }}</div>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td>
+            <strong>{{ vw.name }}</strong>
+            {% if vw.facets.get("conviction") %}
+              <div class="source-cite">{{ t('home.conviction_label') }} {{ t_enum('conviction', vw.facets.get("conviction")) }}</div>
+            {% endif %}
+          </td>
+          <td>
+            <div>{{ vw.summary }}</div>
+            {% set vw_src = vw.facets.get("source") if vw.facets.get("source") is mapping else {} %}
+            {% set vw_author = vw_src.get("author") %}
+            {% if vw.source_label or vw_author %}
+              <div class="source-cite" style="margin-top: 4px;">
+                {% if vw.source_label %}
+                  {{ t('common.source') }}
+                  {% if vw.source_exists %}
+                    <a href="/catalog?file={{ vw.source_file | urlencode }}">{{ vw.source_label }}</a>
+                  {% else %}
+                    {{ vw.source_label }}
+                  {% endif %}
+                {% endif %}
+                {% if vw_author %}{% if vw.source_label %} &bull; {% endif %}{{ t('common.author') }} {{ vw_author }}{% endif %}
+              </div>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}

@@ -1,0 +1,425 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('catalog.page_title') }}{% endblock %}
+
+{% macro alpha_filter_bar(view_name, total_count, letters, current_alpha) %}
+  {% if letters | length > 1 %}
+    <div class="catalog-context-bar" aria-label="{{ t('catalog.alpha_index_label') }}">
+      <div>
+        <strong>{{ t('catalog.alpha_index_label') }}</strong>
+        {% if not current_alpha %}
+          <strong>{{ t('catalog.alpha_all', count=total_count) }}</strong>
+        {% else %}
+          <a href="/catalog?view={{ view_name }}">{{ t('catalog.alpha_all', count=total_count) }}</a>
+        {% endif %}
+        {% for letter in letters %}
+          |
+          {% if current_alpha == letter %}
+            <strong>{{ letter }}</strong>
+          {% else %}
+            <a href="/catalog?view={{ view_name }}&amp;alpha={{ letter }}" class="mono">{{ letter }}</a>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+<h1>{{ t('catalog.heading') }}</h1>
+<p class="portal-intro">{{ t('catalog.page_desc') }}</p>
+
+{% if not data_dir_exists or total_notes == 0 %}
+  <h2>{{ t('catalog.no_notes_heading') }}</h2>
+  <p>{{ t('catalog.no_notes_body') }}</p>
+{% else %}
+  <div class="portal-jumpbar" role="tablist" aria-label="{{ t('catalog.view_mode_aria') }}">
+    [
+    {% if view_mode == 'company' and not active_group and not active_note and not selected_alpha %}
+      <strong>{{ t('catalog.by_company', count=company_groups | length) }}</strong>
+    {% else %}
+      <a href="/catalog?view=company">{{ t('catalog.by_company', count=company_groups | length) }}</a>
+    {% endif %}
+    |
+    {% if view_mode == 'author' and not active_group and not active_note and not selected_alpha %}
+      <strong>{{ t('catalog.by_author', count=author_groups | length) }}</strong>
+    {% else %}
+      <a href="/catalog?view=author">{{ t('catalog.by_author', count=author_groups | length) }}</a>
+    {% endif %}
+    |
+    {% if view_mode == 'all' and not active_note and not selected_alpha %}
+      <strong>{{ t('catalog.all_notes', count=total_notes) }}</strong>
+    {% else %}
+      <a href="/catalog?view=all">{{ t('catalog.all_notes', count=total_notes) }}</a>
+    {% endif %}
+    ]
+  </div>
+
+  {% if active_note %}
+    <div class="catalog-path-bar">
+      {% if view_mode == 'author' and active_group %}
+        <a href="/catalog?view=author">{{ t('catalog.dirs_by_author') }}</a>
+        &gt; <a href="/catalog?view=author&amp;author={{ active_group.id | urlencode }}">{{ active_group.label }}</a>
+        &gt; <strong>{{ active_note.title }}</strong>
+      {% elif view_mode == 'all' %}
+        <a href="/catalog?view=all">{{ t('catalog.all_notes', count=total_notes) }}</a>
+        &gt; <strong>{{ active_note.title }}</strong>
+      {% else %}
+        <a href="/catalog?view=company">{{ t('catalog.dirs_by_company') }}</a>
+        &gt; <a href="/catalog?view=company&amp;dir={{ active_note.folder | urlencode }}">{{ active_note.subject_label }}</a>
+        &gt; <strong>{{ active_note.title }}</strong>
+      {% endif %}
+    </div>
+
+    <section aria-label="{{ t('catalog.reader_aria') }}">
+      <div class="note-reader-header">
+        <div class="entry-title-row">
+          <h2 style="border: none; margin: 0; padding: 0; font-size: 1.25rem;">
+            {{ active_note.title }}
+          </h2>
+        </div>
+
+        {% if active_note.matched_company or active_note.linked_authors %}
+          <div class="note-entity-chips">
+            {% if active_note.matched_company %}
+              <span class="facet-chip">
+                {{ t('catalog.company_chip') }}
+                <a href="/entity/{{ active_note.matched_company.id }}">
+                  {{ active_note.matched_company.name }}{% if active_note.matched_company.ticker %} ({{ active_note.matched_company.ticker }}){% endif %}
+                </a>
+              </span>
+            {% endif %}
+            {% for author in active_note.linked_authors %}
+              <span class="facet-chip">
+                {{ t('catalog.author_chip') }}
+                {% if author.entity_href %}
+                  <a href="{{ author.entity_href }}">{{ author.name }}</a>
+                {% else %}
+                  {{ author.name }}
+                {% endif %}
+                {% if author.reasons %}
+                  <span class="mono">[{% for r in author.reasons %}{{ t_enum('link_reason', r) }}{% if not loop.last %}, {% endif %}{% endfor %}]</span>
+                {% endif %}
+              </span>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        <div class="note-toolbar">
+          {% if view_mode == 'author' and active_group %}
+            <a
+              href="/catalog?view=author&amp;author={{ active_group.id | urlencode }}"
+              class="retro-link-btn"
+            >{{ t('catalog.up_to_dir', label=active_group.label) }}</a>
+          {% elif view_mode == 'all' %}
+            <a href="/catalog?view=all" class="retro-link-btn">{{ t('catalog.back_to_all_notes') }}</a>
+          {% else %}
+            <a
+              href="/catalog?view=company&amp;dir={{ active_note.folder | urlencode }}"
+              class="retro-link-btn"
+            >{{ t('catalog.up_to_dir', label=active_note.subject_label) }}</a>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if note_format == 'raw' %}
+        <pre class="note-raw-pre">{{ active_note.raw_text }}</pre>
+      {% else %}
+        <div class="note-rendered">{{ active_note.rendered_html | safe }}</div>
+      {% endif %}
+
+      <div class="note-sibling-bar">
+        <div>
+          {% if active_note.prev_note %}
+            &laquo;
+            <a href="/catalog?view={{ view_mode }}{% if view_mode == 'company' %}&amp;dir={{ active_note.folder | urlencode }}{% elif view_mode == 'author' and active_group %}&amp;author={{ active_group.id | urlencode }}{% endif %}&amp;file={{ active_note.prev_note.rel_path | urlencode }}">
+              {{ active_note.prev_note.title }}
+            </a>
+          {% else %}
+            <span class="source-cite">{{ t('catalog.first_in_list') }}</span>
+          {% endif %}
+        </div>
+        <div>
+          {% if active_note.next_note %}
+            <a href="/catalog?view={{ view_mode }}{% if view_mode == 'company' %}&amp;dir={{ active_note.folder | urlencode }}{% elif view_mode == 'author' and active_group %}&amp;author={{ active_group.id | urlencode }}{% endif %}&amp;file={{ active_note.next_note.rel_path | urlencode }}">
+              {{ active_note.next_note.title }}
+            </a>
+            &raquo;
+          {% else %}
+            <span class="source-cite">{{ t('catalog.end_of_list') }}</span>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+  {% elif view_mode == 'company' and active_group %}
+    <div class="catalog-path-bar">
+      <a href="/catalog?view=company">{{ t('catalog.dirs_by_company') }}</a>
+      &gt; <strong>{{ active_group.dir_label }}</strong>
+    </div>
+
+    {% if active_group.entity %}
+      <div class="catalog-context-bar">
+        <div>
+          <strong>{{ active_group.entity.name }}</strong>
+          {% if active_group.entity.ticker %}<span class="mono">({{ active_group.entity.ticker }})</span>{% endif %}
+          {% if active_group.entity.consensus_stance %}
+            <span class="badge badge-{{ active_group.entity.consensus_stance | lower }}">{{ t_enum('stance', active_group.entity.consensus_stance) }}</span>
+          {% endif %}
+          {% if active_group.entity.sector %}
+            &bull; <span class="source-cite">{{ active_group.entity.sector }}</span>
+          {% endif %}
+        </div>
+        <a href="/entity/{{ active_group.entity.id }}">{{ t('catalog.open_entity_record') }}</a>
+      </div>
+    {% endif %}
+
+    <table class="portal-table">
+      <thead>
+        <tr>
+          <th>{{ t('catalog.col_note') }}</th>
+          <th style="width: 16%;">{{ t('catalog.col_date') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for note in visible_notes %}
+          <tr>
+            <td>
+              <a href="/catalog?view=company&amp;dir={{ active_group.key | urlencode }}&amp;file={{ note.rel_path | urlencode }}">
+                <strong>{{ note.title }}</strong>
+              </a>
+              {% if note.excerpt %}
+                <div class="catalog-excerpt">{{ note.excerpt }}</div>
+              {% endif %}
+            </td>
+            <td class="mono catalog-nowrap">{{ note.note_date or t('common.none') }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="2">{{ t('catalog.no_matching_notes') }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+  {% elif view_mode == 'company' %}
+    {{ alpha_filter_bar('company', company_groups | length, company_letters, selected_alpha) }}
+
+    <table class="portal-table" aria-label="{{ t('catalog.dirs_aria') }}">
+      <thead>
+        <tr>
+          <th>{{ t('catalog.col_company') }}</th>
+          <th style="width: 16%;">{{ t('catalog.col_consensus') }}</th>
+          <th style="width: 10%;">{{ t('catalog.col_notes') }}</th>
+          <th style="width: 16%;">{{ t('catalog.col_latest') }}</th>
+          <th style="width: 12%;">{{ t('catalog.col_profile') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for grp in filtered_company_groups %}
+          <tr>
+            <td>
+              <a href="/catalog?view=company&amp;dir={{ grp.key | urlencode }}"><strong>{{ grp.dir_label }}</strong></a>
+              {% if grp.entity and grp.entity.ticker %}
+                <span class="source-cite">({{ grp.entity.ticker }})</span>
+              {% endif %}
+            </td>
+            <td class="catalog-nowrap">
+              {% if grp.entity and grp.entity.consensus_stance %}
+                <span class="badge badge-{{ grp.entity.consensus_stance | lower }}">{{ t_enum('stance', grp.entity.consensus_stance) }}</span>
+              {% else %}
+                <span class="source-cite">{{ t('common.none') }}</span>
+              {% endif %}
+            </td>
+            <td class="mono catalog-nowrap">{{ grp.note_count }}</td>
+            <td class="mono catalog-nowrap">{{ grp.latest_date or t('common.none') }}</td>
+            <td class="catalog-nowrap">
+              {% if grp.entity %}
+                <a href="/entity/{{ grp.entity.id }}">{{ t('catalog.company_profile_link') }}</a>
+              {% else %}
+                <span class="source-cite">{{ t('common.none') }}</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="5">{{ t('catalog.no_matching_notes') }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if other_dir_groups and not selected_alpha %}
+      <h2>{{ t('catalog.other_dirs_heading') }}</h2>
+      <table class="portal-table">
+        <thead>
+          <tr>
+            <th>{{ t('catalog.col_subject') }}</th>
+            <th style="width: 10%;">{{ t('catalog.col_notes') }}</th>
+            <th style="width: 16%;">{{ t('catalog.col_latest') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for grp in other_dir_groups %}
+            <tr>
+              <td>
+                <a href="/catalog?view=company&amp;dir={{ grp.key | urlencode }}"><strong>{{ grp.dir_label }}</strong></a>
+              </td>
+              <td class="mono catalog-nowrap">{{ grp.note_count }}</td>
+              <td class="mono catalog-nowrap">{{ grp.latest_date or t('common.none') }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+  {% elif view_mode == 'author' and active_group %}
+    <div class="catalog-path-bar">
+      <a href="/catalog?view=author">{{ t('catalog.dirs_by_author') }}</a>
+      &gt; <strong>{{ active_group.label }}</strong>
+    </div>
+
+    <div class="catalog-context-bar">
+      <div>
+        <strong>{{ active_group.label }}</strong>
+        {% if active_group.id == '__unassigned__' %}
+          &bull; <span class="source-cite">{{ t('catalog.unassigned_authors_desc') }}</span>
+        {% elif active_group.get('role') or active_group.get('organization') %}
+          &bull; <span>{{ active_group.role }}{% if active_group.role and active_group.organization %} &bull; {% endif %}{{ active_group.organization }}</span>
+        {% endif %}
+      </div>
+      {% if active_group.get('entity_href') %}
+        <a href="{{ active_group.entity_href }}">{{ t('catalog.open_author_record') }}</a>
+      {% endif %}
+    </div>
+
+    <table class="portal-table">
+      <thead>
+        <tr>
+          <th style="width: 18%;">{{ t('catalog.col_subject') }}</th>
+          <th>{{ t('catalog.col_note') }}</th>
+          <th style="width: 16%;">{{ t('catalog.col_provenance') }}</th>
+          <th style="width: 14%;">{{ t('catalog.col_date') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for note in visible_notes %}
+          <tr>
+            <td>{{ note.subject_label }}</td>
+            <td>
+              <a href="/catalog?view=author&amp;author={{ active_group.id | urlencode }}&amp;file={{ note.rel_path | urlencode }}">
+                <strong>{{ note.title }}</strong>
+              </a>
+              {% if note.excerpt %}
+                <div class="catalog-excerpt">{{ note.excerpt }}</div>
+              {% endif %}
+            </td>
+            <td class="catalog-nowrap">
+              {% if note.link_reasons %}
+                {% for r in note.link_reasons %}
+                  <span class="badge badge-reason">{{ t_enum('link_reason', r) }}</span>
+                {% endfor %}
+              {% else %}
+                <span class="source-cite">{{ t('common.none') }}</span>
+              {% endif %}
+            </td>
+            <td class="mono catalog-nowrap">{{ note.note_date or t('common.none') }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="4">{{ t('catalog.no_matching_notes') }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+  {% elif view_mode == 'author' %}
+    {{ alpha_filter_bar('author', author_groups | length, author_letters, selected_alpha) }}
+
+    {% if filtered_author_groups or (unassigned_author_notes and not selected_alpha) %}
+      <table class="portal-table">
+        <thead>
+          <tr>
+            <th>{{ t('catalog.col_author') }}</th>
+            <th>{{ t('catalog.col_role_org') }}</th>
+            <th>{{ t('catalog.col_companies') }}</th>
+            <th style="width: 9%;">{{ t('catalog.col_notes') }}</th>
+            <th style="width: 14%;">{{ t('catalog.col_provenance') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for grp in filtered_author_groups %}
+            <tr>
+              <td class="catalog-nowrap">
+                <a href="/catalog?view=author&amp;author={{ grp.id | urlencode }}"><strong>{{ grp.name }}</strong></a>
+              </td>
+              <td>
+                {% if grp.role or grp.organization %}
+                  {{ grp.role or t('common.none') }}{% if grp.organization %} &bull; <span class="source-cite">{{ grp.organization }}</span>{% endif %}
+                {% else %}
+                  <span class="source-cite">{{ t('common.none') }}</span>
+                {% endif %}
+              </td>
+              <td>{{ grp.companies | join(', ') }}</td>
+              <td class="mono catalog-nowrap">{{ grp.note_count }}</td>
+              <td class="catalog-nowrap">
+                {% for r in grp.link_reasons %}
+                  <span class="badge badge-reason">{{ t_enum('link_reason', r) }}</span>
+                {% endfor %}
+              </td>
+            </tr>
+          {% endfor %}
+          {% if unassigned_author_notes and not selected_alpha %}
+            <tr>
+              <td class="catalog-nowrap">
+                <a href="/catalog?view=author&amp;author=__unassigned__"><strong>{{ t('catalog.unassigned_authors') }}</strong></a>
+              </td>
+              <td class="source-cite">{{ t('catalog.unassigned_authors_desc') }}</td>
+              <td>{{ unassigned_companies | join(', ') }}</td>
+              <td class="mono catalog-nowrap">{{ unassigned_author_notes | length }}</td>
+              <td class="source-cite">{{ t('common.none') }}</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="source-cite">{{ t('catalog.no_author_notes') }}</p>
+    {% endif %}
+
+  {% else %}
+    {{ alpha_filter_bar('all', all_notes | length, all_note_letters, selected_alpha) }}
+
+    <table class="portal-table">
+      <thead>
+        <tr>
+          <th style="width: 18%;">{{ t('catalog.col_subject') }}</th>
+          <th>{{ t('catalog.col_note') }}</th>
+          <th style="width: 16%;">{{ t('catalog.col_date') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for note in filtered_all_notes %}
+          <tr>
+            <td>
+              <a href="/catalog?view=company&amp;dir={{ note.folder | urlencode }}">{{ note.subject_label }}</a>
+            </td>
+            <td>
+              <a href="/catalog?view=all&amp;file={{ note.rel_path | urlencode }}">
+                <strong>{{ note.title }}</strong>
+              </a>
+              {% if note.excerpt %}
+                <div class="catalog-excerpt">{{ note.excerpt }}</div>
+              {% endif %}
+            </td>
+            <td class="mono catalog-nowrap">{{ note.note_date or t('common.none') }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="3">{{ t('catalog.no_matching_notes') }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endif %}
+{% endblock %}

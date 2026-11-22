@@ -1,0 +1,4 @@
+interface:
+  display_name: "Proposal Frame"
+  short_description: "Frame proposals from verified reality"
+  default_prompt: "Use $proposal-frame to verify and frame this proposal for delivery."

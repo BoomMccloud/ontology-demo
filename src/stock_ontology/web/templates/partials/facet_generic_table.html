@@ -1,0 +1,21 @@
+{% if extra_facets %}
+<section class="facet-card" aria-label="{{ t('facets.table_aria') }}">
+  <h2>{{ facet_table_title | default(t('facets.additional_heading')) }}</h2>
+  <table class="catalog-table">
+    <thead>
+      <tr>
+        <th style="width: 30%;">{{ t('facets.col_facet') }}</th>
+        <th>{{ t('facets.col_value') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in extra_facets %}
+        <tr>
+          <td><strong>{{ item.label }}</strong></td>
+          <td>{{ item.value }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}

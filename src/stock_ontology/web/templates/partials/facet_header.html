@@ -1,0 +1,19 @@
+<section class="facet-card">
+  <div class="entry-title-row">
+    <h1 style="margin: 0; font-size: 1.55rem;">
+      {{ entity.name }}
+      {% if entity.facets.get("ticker") %}
+        <span class="mono">({{ entity.facets.get("ticker") }})</span>
+      {% endif %}
+    </h1>
+    <div>
+      <span class="badge">{{ t_enum('entity_type', entity_type) }}</span>
+    </div>
+  </div>
+  {% if entity.aliases %}
+    <div class="entry-meta">
+      <strong>{{ t('common.also_catalogued_as') }}</strong> {{ entity.aliases | join(", ") }}
+    </div>
+  {% endif %}
+  <p style="margin: 10px 0 0;">{{ entity.summary }}</p>
+</section>

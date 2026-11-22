@@ -1,0 +1,6 @@
+interface:
+  display_name: "KISS Review"
+  short_description: "Review scope and solution simplicity"
+  default_prompt: "Use $kiss to evaluate whether this proposal is proportionate and simple."
+policy:
+  allow_implicit_invocation: false

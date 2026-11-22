@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('companies.page_title') }}{% endblock %}
+
+{% block content %}
+<h1>{{ t('rail.companies') }}</h1>
+<p class="portal-intro">{{ t('companies.page_desc') }}</p>
+
+<div class="portal-jumpbar">
+  [
+  {% if active_kind == 'companies' %}
+    <strong>{{ t('companies.tab_companies') }}</strong>
+  {% else %}
+    <a href="/companies?kind=companies">{{ t('companies.tab_companies') }}</a>
+  {% endif %}
+  |
+  {% if active_kind == 'other' %}
+    <strong>{{ t('companies.tab_other') }}</strong>
+  {% else %}
+    <a href="/companies?kind=other">{{ t('companies.tab_other') }}</a>
+  {% endif %}
+  ]
+</div>
+
+{% if active_kind == 'companies' %}
+  {% if companies %}
+    <table class="portal-table">
+      <thead>
+        <tr>
+          <th style="width: 15%;">{{ t('home.col_ticker') }}</th>
+          <th style="width: 30%;">{{ t('home.col_company') }}</th>
+          <th style="width: 22%;">{{ t('companies.col_sector') }}</th>
+          <th style="width: 18%;">{{ t('home.col_consensus') }}</th>
+          <th style="width: 15%;">{{ t('companies.col_signals') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for comp in companies %}
+          <tr>
+            <td class="mono">{{ comp.ticker or t('common.none') }}</td>
+            <td><a href="/entity/{{ comp.id }}">{{ comp.name }}</a></td>
+            <td>{{ comp.sector or t('common.none') }}</td>
+            <td>
+              {% if comp.consensus and comp.consensus.stance %}
+                <span class="badge badge-{{ comp.consensus.stance | lower }}">{{ t_enum('stance', comp.consensus.stance) }}</span>
+              {% else %}
+                <span class="source-cite">{{ t('home.no_consensus') }}</span>
+              {% endif %}
+            </td>
+            <td class="mono">{{ comp.event_count + comp.view_count }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>{{ t('home.empty_companies') }}</p>
+  {% endif %}
+{% else %}
+  {% if other_entities %}
+    <table class="portal-table">
+      <thead>
+        <tr>
+          <th style="width: 32%;">{{ t('companies.col_entity') }}</th>
+          <th style="width: 18%;">{{ t('companies.col_type') }}</th>
+          <th>{{ t('companies.col_details') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ent in other_entities %}
+          <tr>
+            <td><a href="/entity/{{ ent.id }}">{{ ent.name }}</a></td>
+            <td class="mono">{{ t_enum('entity_type', ent.entity_type) }}</td>
+            <td>
+              {% if ent.role %}
+                <span class="mono">{{ ent.role }}</span>{% if ent.organization %} &bull; {{ ent.organization }}{% endif %}
+              {% elif ent.organization %}
+                {{ ent.organization }}
+              {% elif ent.summary %}
+                {{ ent.summary }}
+              {% else %}
+                {{ t('common.none') }}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>{{ t('companies.empty_other') }}</p>
+  {% endif %}
+{% endif %}
+{% endblock %}

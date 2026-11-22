@@ -1,0 +1,928 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('ontology.page_title') }}{% endblock %}
+
+{% macro render_edge_cls(cls, sug_status='') %}
+  {% if cls %}
+    {% if cls.status == 'official' %}
+      <span class="badge badge-official">{{ t('ontology.badge_official') }}</span>
+    {% elif cls.status == 'alias' %}
+      <span class="badge badge-warn">{{ t('ontology.badge_alias') }}</span>
+      {% if cls.canonical_relation %}<span class="source-cite">&rarr; {{ cls.canonical_relation }}</span>{% endif %}
+    {% elif cls.status == 'inverse' %}
+      <span class="badge badge-warn">{{ t('ontology.badge_inverse') }}</span>
+      {% if cls.canonical_relation %}<span class="source-cite">&harr; {{ cls.canonical_relation }}</span>{% endif %}
+    {% elif cls.status == 'reversed' %}
+      <span class="badge badge-danger">{{ t('ontology.badge_reversed') }}</span>
+      {% if cls.expected_signature %}<div class="source-cite">{{ cls.expected_signature }}</div>{% endif %}
+    {% elif cls.status == 'mismatch' %}
+      <span class="badge badge-danger">{{ t('ontology.badge_mismatch') }}</span>
+      {% if cls.expected_signature %}<div class="source-cite">{{ cls.expected_signature }}</div>{% endif %}
+    {% else %}
+      <span class="badge badge-unmapped">{{ t('ontology.badge_unmapped') }}</span>
+      {% if sug_status %}
+        <span class="badge">{{ t_enum('suggestion_status', sug_status) }}</span>
+      {% endif %}
+    {% endif %}
+  {% else %}
+    <span class="source-cite">{{ t('common.none') }}</span>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+<section class="facet-card" aria-label="{{ t('ontology.header_aria') }}">
+  <div class="entry-title-row">
+    <div>
+      <h1 style="margin: 0; font-size: 1.45rem;">{{ t('ontology.heading') }}</h1>
+      <p class="entry-meta" style="margin-bottom: 0;">{{ t('ontology.page_desc') }}</p>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+      <span class="badge badge-consensus">{{ t('ontology.active_consensus_badge', count=stats.active_consensus_views) }}</span>
+      {% if registry_summary.loaded %}
+        <span class="badge badge-official">{{ t('ontology.registry_badge_loaded', version=registry_summary.version) }}</span>
+      {% else %}
+        <span class="badge">{{ t('ontology.registry_badge_missing') }}</span>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<!-- Registry & Audit Overview Card (aggregate counts only) -->
+<section class="facet-card registry-overview-card" aria-label="{{ t('ontology.registry_card_aria') }}">
+  <div class="entry-title-row">
+    <div>
+      <h2 style="margin: 0; border-bottom: none; padding-bottom: 0;">{{ t('ontology.registry_card_heading') }}</h2>
+    </div>
+    {% if registry_summary.loaded %}
+      <div class="registry-actions-row" style="margin-top: 0;">
+        <a href="/ontology?tab=registry#structure-explorer" class="retro-link-btn">{{ t('ontology.btn_open_registry') }}</a>
+        <a href="/ontology?tab=audit#structure-explorer" class="retro-link-btn">{{ t('ontology.btn_open_audit') }}</a>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if registry_summary.loaded %}
+    {% set a = registry_summary.audit %}
+    {% set mapped_rel_edges = a.mapped_exact_edges + a.mapped_alias_edges + a.mapped_inverse_edges %}
+    {% set alias_inv_edges = a.mapped_alias_edges + a.mapped_inverse_edges %}
+    <div class="registry-summary-grid">
+      <div class="registry-kpi-box">
+        <div class="facet-item-label">{{ t('ontology.kpi_relations') }}</div>
+        <div class="registry-kpi-value">{{ registry_summary.official_relations }}</div>
+        <div class="source-cite">
+          {{ t('ontology.kpi_relations_detail', mapped=mapped_rel_edges, alias=alias_inv_edges, unmapped=a.unmapped_edges, issues=a.direction_issue_edges) }}
+        </div>
+      </div>
+      <div class="registry-kpi-box">
+        <div class="facet-item-label">{{ t('ontology.kpi_companies') }}</div>
+        <div class="registry-kpi-value">{{ registry_summary.official_companies }}</div>
+        <div class="source-cite">
+          {{ t('ontology.kpi_companies_detail', mapped=a.mapped_companies, total=a.total_companies, unmapped=a.unmapped_companies, tickers=a.ticker_normalization_issue_count) }}
+        </div>
+      </div>
+      <div class="registry-kpi-box">
+        <div class="facet-item-label">{{ t('ontology.kpi_themes') }}</div>
+        <div class="registry-kpi-value">{{ registry_summary.official_themes }}</div>
+        <div class="source-cite">
+          {{ t('ontology.kpi_themes_detail', mapped=a.mapped_themes, total=a.total_themes, unmapped=a.unmapped_themes, dups=a.near_duplicate_theme_pairs) }}
+        </div>
+      </div>
+      <div class="registry-kpi-box">
+        <div class="facet-item-label">{{ t('ontology.kpi_suggestions') }}</div>
+        <div class="registry-kpi-value">{{ registry_summary.pending_total }}</div>
+        <div class="source-cite">
+          {{ t('ontology.kpi_suggestions_detail', rel=registry_summary.pending_relations, co=registry_summary.pending_companies, thm=registry_summary.pending_themes, aliases=a.suspicious_alias_count, facets=a.facet_alias_hit_count) }}
+        </div>
+      </div>
+    </div>
+  {% elif registry_summary.error %}
+    <p class="entry-meta" style="margin-bottom: 0;">
+      {{ t('ontology.registry_error_notice', path=registry_summary.path, error=registry_summary.error) }}
+    </p>
+  {% else %}
+    <p class="entry-meta" style="margin-bottom: 0;">
+      {{ t('ontology.registry_missing_notice', path=registry_summary.path) }}
+    </p>
+  {% endif %}
+</section>
+
+<!-- Section 1: 4-Node Architecture Blueprint (SVG) -->
+<section class="facet-card ontology-diagram-card" aria-label="{{ t('ontology.blueprint_aria') }}">
+  <h2>{{ t('ontology.blueprint_heading') }}</h2>
+
+  <div class="ontology-svg-wrap">
+    <svg viewBox="0 0 880 340" width="100%" style="max-width: 880px; height: auto; display: block; margin: 0 auto;" role="img" aria-label="{{ t('ontology.svg_aria') }}">
+      <defs>
+        <marker id="arrow-dark" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="#4a453b" />
+        </marker>
+      </defs>
+
+      <!-- Self-loop annotations -->
+      <text x="155" y="18" text-anchor="middle" font-family="Courier New, monospace" font-size="11" fill="#3a362e">
+        ENTITY &harr; ENTITY: {{ diagram_links.entity_entity.top_label }} ({{ diagram_links.entity_entity.count }})
+      </text>
+      <text x="725" y="330" text-anchor="middle" font-family="Courier New, monospace" font-size="11" fill="#3a362e">
+        VIEW &rarr; VIEW: {{ diagram_links.view_view.top_label }} ({{ diagram_links.view_view.count }})
+      </text>
+
+      <!-- Connector Lines -->
+      <!-- ENTITY <-> THEME (top horizontal) -->
+      <line x1="270" y1="73" x2="604" y2="73" stroke="#4a453b" stroke-width="1.8" {% if diagram_links.entity_theme.reversed_count %}marker-start="url(#arrow-dark)"{% endif %} marker-end="url(#arrow-dark)" />
+      <rect x="305" y="59" width="270" height="22" rx="3" fill="#fffdf7" stroke="#b8b09c" stroke-width="1" />
+      <text x="440" y="74" text-anchor="middle" font-family="Courier New, monospace" font-size="11" fill="#1e1c18">
+        {{ diagram_links.entity_theme.top_label }}{% if diagram_links.entity_theme.reversed_count %} &harr;{% endif %} ({{ diagram_links.entity_theme.count }})
+      </text>
+
+      <!-- EVENT -> ENTITY (left vertical up) -->
+      <line x1="155" y1="224" x2="155" y2="122" stroke="#4a453b" stroke-width="1.8" marker-end="url(#arrow-dark)" />
+      <rect x="50" y="158" width="210" height="22" rx="3" fill="#fffdf7" stroke="#b8b09c" stroke-width="1" />
+      <text x="155" y="173" text-anchor="middle" font-family="Courier New, monospace" font-size="11" fill="#1e1c18">
+        {{ diagram_links.event_entity.top_label }} ({{ diagram_links.event_entity.count }})
+      </text>
+
+      <!-- VIEW <-> THEME (right vertical) -->
+      <line x1="725" y1="224" x2="725" y2="122" stroke="#4a453b" stroke-width="1.8" {% if diagram_links.view_theme.reversed_count %}marker-start="url(#arrow-dark)"{% endif %} marker-end="url(#arrow-dark)" />
+      <rect x="620" y="158" width="210" height="22" rx="3" fill="#fffdf7" stroke="#b8b09c" stroke-width="1" />
+      <text x="725" y="173" text-anchor="middle" font-family="Courier New, monospace" font-size="11" fill="#1e1c18">
+        {{ diagram_links.view_theme.top_label }} ({{ diagram_links.view_theme.count }})
+      </text>
+
+      <!-- EVENT -> VIEW (bottom horizontal) -->
+      <line x1="270" y1="267" x2="604" y2="267" stroke="#4a453b" stroke-width="1.8" marker-end="url(#arrow-dark)" />
+      <rect x="315" y="253" width="250" height="22" rx="3" fill="#fffdf7" stroke="#b8b09c" stroke-width="1" />
+      <text x="440" y="268" text-anchor="middle" font-family="Courier New, monospace" font-size="11" fill="#1e1c18">
+        {{ diagram_links.event_view.top_label }} ({{ diagram_links.event_view.count }})
+      </text>
+
+      <!-- VIEW -> ENTITY (diagonal bottom-right to top-left) -->
+      <line x1="610" y1="238" x2="276" y2="104" stroke="#6e6759" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow-dark)" />
+      <rect x="275" y="123" width="170" height="22" rx="3" fill="#fffdf7" stroke="#b8b09c" stroke-width="1" />
+      <text x="360" y="138" text-anchor="middle" font-family="Courier New, monospace" font-size="10.5" fill="#1e1c18">
+        {{ diagram_links.view_entity.top_label }} ({{ diagram_links.view_entity.count }})
+      </text>
+
+      <!-- EVENT -> THEME (diagonal bottom-left to top-right) -->
+      <line x1="270" y1="238" x2="604" y2="104" stroke="#6e6759" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow-dark)" />
+      <rect x="435" y="123" width="170" height="22" rx="3" fill="#fffdf7" stroke="#b8b09c" stroke-width="1" />
+      <text x="520" y="138" text-anchor="middle" font-family="Courier New, monospace" font-size="10.5" fill="#1e1c18">
+        {{ diagram_links.event_theme.top_label }} ({{ diagram_links.event_theme.count }})
+      </text>
+
+      <!-- Structure 1: ENTITY (top-left) -->
+      <a href="/ontology?tab=entity#structure-explorer">
+        <rect x="40" y="30" width="230" height="86" fill="#fcfaf2" stroke="#2f5d50" stroke-width="2.5" />
+        <rect x="40" y="30" width="230" height="24" fill="#2f5d50" />
+        <text x="52" y="46" font-family="Georgia, serif" font-weight="bold" font-size="12.5" fill="#ffffff">{{ t('ontology.svg_entity_title') }}</text>
+        <text x="258" y="46" text-anchor="end" font-family="Courier New, monospace" font-weight="bold" font-size="11.5" fill="#ffffff">{{ t('ontology.svg_nodes_count', count=stats.nodes.entity) }}</text>
+        <text x="52" y="72" font-family="Georgia, serif" font-size="11.5" fill="#1e1c18">{{ t('ontology.svg_entity_sub') }}</text>
+        <text x="52" y="90" font-family="Courier New, monospace" font-size="10.5" fill="#595347">{{ t('ontology.svg_entity_meta') }}</text>
+      </a>
+
+      <!-- Structure 4: THEME (top-right) -->
+      <a href="/ontology?tab=theme#structure-explorer">
+        <rect x="610" y="30" width="230" height="86" fill="#fcfaf2" stroke="#6d4c3d" stroke-width="2.5" />
+        <rect x="610" y="30" width="230" height="24" fill="#6d4c3d" />
+        <text x="622" y="46" font-family="Georgia, serif" font-weight="bold" font-size="12.5" fill="#ffffff">{{ t('ontology.svg_theme_title') }}</text>
+        <text x="828" y="46" text-anchor="end" font-family="Courier New, monospace" font-weight="bold" font-size="11.5" fill="#ffffff">{{ t('ontology.svg_nodes_count', count=stats.nodes.theme) }}</text>
+        <text x="622" y="72" font-family="Georgia, serif" font-size="11.5" fill="#1e1c18">{{ t('ontology.svg_theme_sub') }}</text>
+        <text x="622" y="90" font-family="Courier New, monospace" font-size="10.5" fill="#595347">{{ t('ontology.svg_theme_meta') }}</text>
+      </a>
+
+      <!-- Structure 2: EVENT (bottom-left) -->
+      <a href="/ontology?tab=event#structure-explorer">
+        <rect x="40" y="224" width="230" height="86" fill="#fcfaf2" stroke="#3c4f76" stroke-width="2.5" />
+        <rect x="40" y="224" width="230" height="24" fill="#3c4f76" />
+        <text x="52" y="240" font-family="Georgia, serif" font-weight="bold" font-size="12.5" fill="#ffffff">{{ t('ontology.svg_event_title') }}</text>
+        <text x="258" y="240" text-anchor="end" font-family="Courier New, monospace" font-weight="bold" font-size="11.5" fill="#ffffff">{{ t('ontology.svg_nodes_count', count=stats.nodes.event) }}</text>
+        <text x="52" y="266" font-family="Georgia, serif" font-size="11.5" fill="#1e1c18">{{ t('ontology.svg_event_sub') }}</text>
+        <text x="52" y="284" font-family="Courier New, monospace" font-size="10.5" fill="#595347">{{ t('ontology.svg_event_meta') }}</text>
+      </a>
+
+      <!-- Structure 3: VIEW (bottom-right) -->
+      <a href="/ontology?tab=view#structure-explorer">
+        <rect x="610" y="224" width="230" height="86" fill="#fcfaf2" stroke="#7a5c1e" stroke-width="2.5" />
+        <rect x="610" y="224" width="230" height="24" fill="#7a5c1e" />
+        <text x="622" y="240" font-family="Georgia, serif" font-weight="bold" font-size="12.5" fill="#ffffff">{{ t('ontology.svg_view_title') }}</text>
+        <text x="828" y="240" text-anchor="end" font-family="Courier New, monospace" font-weight="bold" font-size="11.5" fill="#ffffff">{{ t('ontology.svg_nodes_count', count=stats.nodes.view) }}</text>
+        <text x="622" y="266" font-family="Georgia, serif" font-size="11.5" fill="#1e1c18">{{ t('ontology.svg_view_sub') }}</text>
+        <text x="622" y="284" font-family="Courier New, monospace" font-size="10.5" fill="#595347">{{ t('ontology.svg_view_meta') }}</text>
+      </a>
+    </svg>
+  </div>
+</section>
+
+<!-- Section 2: The 4 Ontology Structures (2x2 Grid) -->
+<section class="section-block" aria-label="{{ t('ontology.structures_aria') }}">
+  <h2>{{ t('ontology.structures_heading') }}</h2>
+  <div class="structure-grid">
+    {% for s in structures %}
+      <article class="structure-card structure-{{ s.key }}">
+        <div class="entry-title-row">
+          <h3 style="margin: 0; font-size: 1.15rem;">{{ s.number }}. {{ s.title }}</h3>
+          <span class="badge">{{ t('ontology.records_badge', count=s.count) }}</span>
+        </div>
+        <div class="entry-meta">
+          <strong>{{ s.subtitle }}</strong><br>
+          <span class="mono">{{ s.lifecycle }}</span>
+        </div>
+        <p class="entry-summary">{{ s.description }}</p>
+
+        {% if s.registry_coverage %}
+          <div class="registry-coverage-line">
+            {% if s.registry_coverage.kind == 'companies' %}
+              {{ t('ontology.coverage_companies', defined=s.registry_coverage.official_defined, mapped=s.registry_coverage.mapped, total=s.registry_coverage.total, unmapped=s.registry_coverage.unmapped) }}
+            {% elif s.registry_coverage.kind == 'themes' %}
+              {{ t('ontology.coverage_themes', defined=s.registry_coverage.official_defined, mapped=s.registry_coverage.mapped, total=s.registry_coverage.total, unmapped=s.registry_coverage.unmapped) }}
+            {% else %}
+              {{ t('ontology.coverage_sentiment', missing=s.registry_coverage.missing, total=s.registry_coverage.total) }}
+              {% if s.registry_coverage.facet_drift %}
+                &bull; {{ t('ontology.coverage_facet_drift', count=s.registry_coverage.facet_drift) }}
+              {% endif %}
+            {% endif %}
+          </div>
+        {% endif %}
+
+        <div class="structure-detail-block">
+          <div class="facet-item-label">{{ t('ontology.subtypes_label') }} (<code>{{ s.subtype_key }}</code>)</div>
+          <div class="subtype-pills">
+            {% for sub in s.subtype_counts %}
+              <a
+                href="/ontology?tab={{ s.key }}&amp;subtype={{ sub.name | urlencode }}#structure-explorer"
+                class="facet-chip mono"
+              >{{ t_subtype(sub.name, s.key) }} ({{ sub.count }})</a>
+            {% else %}
+              <span class="source-cite">{{ t('ontology.no_records_yet') }}</span>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="structure-detail-block">
+          <div class="facet-item-label">{{ t('ontology.active_facet_keys_label', count=s.facet_key_items | length) }}</div>
+          <div class="facet-chips-wrap">
+            {% for fk in s.facet_key_items %}
+              {% if fk.canonical_target %}
+                <span class="facet-chip mono facet-chip-warn" title="&rarr; {{ fk.canonical_target }}">{{ fk.key }} &rarr; {{ fk.canonical_target }}</span>
+              {% else %}
+                <span class="facet-chip mono">{{ fk.key }}</span>
+              {% endif %}
+            {% else %}
+              <span class="source-cite">{{ t('ontology.none_indexed') }}</span>
+            {% endfor %}
+          </div>
+        </div>
+
+        {% if s.top_relations %}
+          <div class="structure-detail-block">
+            <div class="facet-item-label">{{ t('ontology.top_relations_label') }}</div>
+            <div class="source-cite">
+              {% for rel in s.top_relations %}
+                {{ t_enum('relation', rel.relation) }} ({{ t_enum('direction', rel.direction) }} &rarr; {{ t_enum('node_type', rel.other_type) }}: {{ rel.count }}){% if not loop.last %}, {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
+
+        <div class="structure-card-footer">
+          <a href="/ontology?tab={{ s.key }}#structure-explorer" class="retro-link-btn">
+            {{ t('ontology.inspect_btn', plural=s.plural, count=s.count) }}
+          </a>
+        </div>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- Section 3: Live Structure, Registry & Audit Explorer -->
+<section id="structure-explorer" class="section-block" aria-label="{{ t('ontology.explorer_aria') }}">
+  <h2>{{ t('ontology.explorer_heading') }}</h2>
+
+  <div class="tab-bar" role="tablist" aria-label="{{ t('ontology.tabs_aria') }}">
+    {% for s in structures %}
+      <a
+        href="/ontology?tab={{ s.key }}#structure-explorer"
+        class="tab-btn {% if active_tab == s.key %}tab-btn-active{% endif %}"
+      >{{ s.plural }} ({{ s.count }})</a>
+    {% endfor %}
+    <a
+      href="/ontology?tab=edges#structure-explorer"
+      class="tab-btn {% if active_tab == 'edges' %}tab-btn-active{% endif %}"
+    >{{ t('ontology.tab_unified_edges', count=stats.total_edges) }}</a>
+    <a
+      href="/ontology?tab=registry#structure-explorer"
+      class="tab-btn {% if active_tab == 'registry' %}tab-btn-active{% endif %}"
+    >{{ t('ontology.tab_registry') }}{% if registry_summary.loaded %} ({{ registry_summary.official_relations + registry_summary.official_companies + registry_summary.official_themes }}){% endif %}</a>
+    <a
+      href="/ontology?tab=audit#structure-explorer"
+      class="tab-btn {% if active_tab == 'audit' %}tab-btn-active{% endif %}"
+    >{% if registry_summary.loaded %}{{ t('ontology.tab_audit_count', count=registry_summary.pending_total) }}{% else %}{{ t('ontology.tab_audit') }}{% endif %}</a>
+  </div>
+
+  {% if active_tab == 'registry' %}
+    {% if not registry_summary.loaded or not registry_view %}
+      <div class="facet-card">
+        <p>{{ t('ontology.registry_missing_notice', path=registry_summary.path) }}</p>
+      </div>
+    {% else %}
+      <div class="facet-card">
+        <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.registry_relations_heading', count=registry_view.relations | length) }}</h3>
+        <table class="catalog-table">
+          <thead>
+            <tr>
+              <th>{{ t('ontology.col_relation') }}</th>
+              <th>{{ t('ontology.col_domain_range') }}</th>
+              <th>{{ t('ontology.col_aliases_inverses') }}</th>
+              <th>{{ t('ontology.col_live_usage') }}</th>
+              <th>{{ t('ontology.col_description') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in registry_view.relations %}
+              <tr>
+                <td>
+                  <span class="badge badge-official">{{ t_enum('relation', r.name) }}</span>
+                  <div class="source-cite">{{ r.traversal_group }}</div>
+                </td>
+                <td class="mono" style="font-size: 0.82rem;">
+                  {{ r.from_types | join(' | ') or '*' }} &rarr; {{ r.to_types | join(' | ') or '*' }}
+                </td>
+                <td class="mono" style="font-size: 0.8rem;">
+                  {% if r.aliases %}<div>{{ t('ontology.badge_alias') }}: {{ r.aliases | join(', ') }}</div>{% endif %}
+                  {% if r.inverse_aliases %}<div>{{ t('ontology.badge_inverse') }}: {{ r.inverse_aliases | join(', ') }}</div>{% endif %}
+                  {% if not r.aliases and not r.inverse_aliases %}{{ t('common.none') }}{% endif %}
+                </td>
+                <td class="mono" style="font-size: 0.82rem;">
+                  <strong>{{ r.total_count }}</strong>
+                  <div class="source-cite">
+                    {{ t('ontology.registry_usage_summary', exact=r.exact_count, alias=r.alias_count, inverse=r.inverse_count) }}
+                    {% if r.issue_count %}
+                      <span class="badge badge-danger">{{ t('ontology.registry_usage_issues', count=r.issue_count) }}</span>
+                    {% endif %}
+                  </div>
+                </td>
+                <td>{{ r.description }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="facet-card">
+        <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.registry_companies_heading', count=registry_view.companies | length) }}</h3>
+        <table class="catalog-table">
+          <thead>
+            <tr>
+              <th>{{ t('theme.col_company') }}</th>
+              <th>{{ t('ontology.col_ticker') }}</th>
+              <th>{{ t('ontology.col_sector') }}</th>
+              <th>{{ t('ontology.col_aliases_inverses') }}</th>
+              <th>{{ t('ontology.col_live_db_match') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in registry_view.companies %}
+              <tr>
+                <td><strong>{{ c.name }}</strong></td>
+                <td class="mono">{{ c.ticker or t('common.none') }}</td>
+                <td>{{ c.sector or t('common.none') }}</td>
+                <td class="mono" style="font-size: 0.82rem;">{{ c.aliases | join(', ') or t('common.none') }}</td>
+                <td>
+                  {% for m in c.db_matches %}
+                    <div>
+                      <a href="{{ m.href }}"><strong>{{ m.name }}</strong></a>
+                      <span class="badge badge-official">{{ m.match_kind }}</span>
+                    </div>
+                  {% else %}
+                    <span class="source-cite">{{ t('ontology.registry_not_in_db') }}</span>
+                  {% endfor %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="facet-card">
+        <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.registry_themes_heading', count=registry_view.themes | length) }}</h3>
+        <table class="catalog-table">
+          <thead>
+            <tr>
+              <th>{{ t('section.themes_col_theme') }}</th>
+              <th>{{ t('ontology.col_stage') }}</th>
+              <th>{{ t('ontology.col_aliases_inverses') }}</th>
+              <th>{{ t('ontology.col_live_db_match') }}</th>
+              <th>{{ t('ontology.col_description') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for th in registry_view.themes %}
+              <tr>
+                <td><strong>{{ th.name }}</strong></td>
+                <td><span class="badge badge-{{ th.stage | lower }}">{{ t_enum('stage', th.stage) }}</span></td>
+                <td class="mono" style="font-size: 0.82rem;">{{ th.aliases | join(', ') or t('common.none') }}</td>
+                <td>
+                  {% for m in th.db_matches %}
+                    <div>
+                      <a href="{{ m.href }}"><strong>{{ m.name }}</strong></a>
+                      <span class="badge badge-official">{{ m.match_kind }}</span>
+                    </div>
+                  {% else %}
+                    <span class="source-cite">{{ t('ontology.registry_not_in_db') }}</span>
+                  {% endfor %}
+                </td>
+                <td>{{ th.description }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="facet-card">
+        <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.registry_facets_heading', count=registry_view.facet_aliases | length) }}</h3>
+        <table class="catalog-table">
+          <thead>
+            <tr>
+              <th>{{ t('ontology.col_node_type') }}</th>
+              <th>{{ t('ontology.col_facet_alias') }}</th>
+              <th>{{ t('ontology.col_live_usage') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for fa in registry_view.facet_aliases %}
+              <tr>
+                <td class="mono">{{ t_enum('node_type', fa.node_type) }}</td>
+                <td class="mono">{{ fa.raw_key }} &rarr; <strong>{{ fa.canonical_key }}</strong></td>
+                <td class="mono">{{ fa.hit_count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+
+  {% elif active_tab == 'audit' %}
+    {% if not registry_summary.loaded or not audit_view %}
+      <div class="facet-card">
+        <p>{{ t('ontology.registry_missing_notice', path=registry_summary.path) }}</p>
+      </div>
+    {% else %}
+      <div class="facet-card">
+        <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.audit_suggested_relations_heading', count=audit_view.unmapped_relations | length) }}</h3>
+        {% if audit_view.unmapped_relations %}
+          <table class="catalog-table">
+            <thead>
+              <tr>
+                <th>{{ t('ontology.col_relation') }}</th>
+                <th>{{ t('ontology.col_status') }}</th>
+                <th>{{ t('ontology.col_count') }}</th>
+                <th>{{ t('ontology.col_signatures') }}</th>
+                <th>{{ t('ontology.col_sample') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in audit_view.unmapped_relations %}
+                <tr>
+                  <td><span class="badge badge-unmapped">{{ r.name }}</span></td>
+                  <td><span class="badge">{{ t_enum('suggestion_status', r.suggestion_status) }}</span></td>
+                  <td class="mono">{{ r.edge_count }}</td>
+                  <td class="mono" style="font-size: 0.8rem;">
+                    {% for sig in r.observed_signatures[:3] %}
+                      <div>{{ sig.from_type }} &rarr; {{ sig.to_type }} ({{ sig.count }})</div>
+                    {% endfor %}
+                  </td>
+                  <td class="source-cite">
+                    {% if r.sample_edges %}
+                      {{ r.sample_edges[0].from_name }} -[{{ r.sample_edges[0].relation }}]-&gt; {{ r.sample_edges[0].to_name }}
+                    {% else %}{{ t('common.none') }}{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="source-cite">{{ t('ontology.audit_none_found') }}</p>
+        {% endif %}
+      </div>
+
+      <div class="facet-card">
+        <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.audit_suggested_companies_heading', count=audit_view.unmapped_companies | length) }}</h3>
+        {% if audit_view.unmapped_companies %}
+          <table class="catalog-table">
+            <thead>
+              <tr>
+                <th>{{ t('theme.col_company') }}</th>
+                <th>{{ t('ontology.col_status') }}</th>
+                <th>{{ t('ontology.col_ticker') }}</th>
+                <th>{{ t('ontology.col_signals') }}</th>
+                <th>{{ t('theme.col_consensus') }}</th>
+                <th>{{ t('ontology.col_nearest_official') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for c in audit_view.unmapped_companies %}
+                <tr>
+                  <td>
+                    <a href="{{ c.href }}"><strong>{{ c.name }}</strong></a>
+                    {% if c.aliases %}<div class="source-cite">{{ c.aliases | join(', ') }}</div>{% endif %}
+                  </td>
+                  <td><span class="badge">{{ t_enum('suggestion_status', c.suggestion_status) }}</span></td>
+                  <td class="mono">{{ c.ticker or t('common.none') }}</td>
+                  <td class="mono">{{ c.signal_count }}</td>
+                  <td>
+                    {% if c.consensus_stance %}
+                      <span class="badge badge-{{ c.consensus_stance | lower }}">{{ t_enum('stance', c.consensus_stance) }}</span>
+                    {% else %}{{ t('common.none') }}{% endif %}
+                  </td>
+                  <td class="mono" style="font-size: 0.82rem;">
+                    {% if c.nearest_official %}
+                      {{ c.nearest_official.name }} (d={{ '%.3f' | format(c.nearest_official.distance) }})
+                    {% else %}{{ t('common.none') }}{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="source-cite">{{ t('ontology.audit_none_found') }}</p>
+        {% endif %}
+      </div>
+
+      <div class="facet-card">
+        <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.audit_suggested_themes_heading', count=audit_view.unmapped_themes | length) }}</h3>
+        {% if audit_view.unmapped_themes %}
+          <table class="catalog-table">
+            <thead>
+              <tr>
+                <th>{{ t('section.themes_col_theme') }}</th>
+                <th>{{ t('ontology.col_status') }}</th>
+                <th>{{ t('ontology.col_stage') }}</th>
+                <th>{{ t('ontology.col_nearest_official') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for th in audit_view.unmapped_themes %}
+                <tr>
+                  <td>
+                    <a href="{{ th.href }}"><strong>{{ th.name }}</strong></a>
+                    <div class="source-cite">{{ th.summary[:120] }}{% if th.summary | length > 120 %}...{% endif %}</div>
+                  </td>
+                  <td><span class="badge">{{ t_enum('suggestion_status', th.suggestion_status) }}</span></td>
+                  <td>{% if th.stage %}<span class="badge badge-{{ th.stage | lower }}">{{ t_enum('stage', th.stage) }}</span>{% else %}{{ t('common.none') }}{% endif %}</td>
+                  <td class="mono" style="font-size: 0.82rem;">
+                    {% if th.nearest_official %}
+                      {{ th.nearest_official.name }} (d={{ '%.3f' | format(th.nearest_official.distance) }})
+                    {% else %}{{ t('common.none') }}{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="source-cite">{{ t('ontology.audit_none_found') }}</p>
+        {% endif %}
+      </div>
+
+      <div class="facet-card">
+        <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.audit_direction_issues_heading', count=(audit_view.normalization_hits | length) + (audit_view.direction_issues | length)) }}</h3>
+        {% if audit_view.normalization_hits or audit_view.direction_issues %}
+          <table class="catalog-table">
+            <thead>
+              <tr>
+                <th>{{ t('ontology.col_issue') }}</th>
+                <th>{{ t('ontology.col_relation') }}</th>
+                <th>{{ t('ontology.col_count') }}</th>
+                <th>{{ t('ontology.col_detail') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for hit in audit_view.normalization_hits %}
+                <tr>
+                  <td><span class="badge badge-warn">{{ hit.match_kind }}</span></td>
+                  <td class="mono">{{ hit.raw_relation }} &rarr; {{ hit.canonical_relation }}</td>
+                  <td class="mono">{{ hit.count }}</td>
+                  <td class="source-cite">{% if hit.flip_direction %}flip_direction=True{% else %}alias &rarr; canonical{% endif %}</td>
+                </tr>
+              {% endfor %}
+              {% for iss in audit_view.direction_issues %}
+                <tr>
+                  <td><span class="badge badge-danger">{{ iss.issue_type }}</span></td>
+                  <td class="mono">{{ iss.relation }}</td>
+                  <td class="mono">{{ iss.count }}</td>
+                  <td class="source-cite">
+                    {{ iss.observed_signature }} (expected {{ iss.expected_signature }})
+                    {% if iss.sample_edges %}
+                      &bull; {{ iss.sample_edges[0].from_name }} &rarr; {{ iss.sample_edges[0].to_name }}
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="source-cite">{{ t('ontology.audit_none_found') }}</p>
+        {% endif %}
+      </div>
+
+      <div class="facet-card">
+        <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.audit_near_dup_themes_heading', count=audit_view.near_duplicate_themes | length) }}</h3>
+        {% if audit_view.near_duplicate_themes %}
+          <table class="catalog-table">
+            <thead>
+              <tr>
+                <th>{{ t('ontology.col_theme_a') }}</th>
+                <th>{{ t('ontology.col_theme_b') }}</th>
+                <th>{{ t('ontology.col_distance') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in audit_view.near_duplicate_themes %}
+                <tr>
+                  <td><a href="{{ p.href_a }}"><strong>{{ p.node_a_name }}</strong></a></td>
+                  <td><a href="{{ p.href_b }}"><strong>{{ p.node_b_name }}</strong></a></td>
+                  <td class="mono">{{ '%.4f' | format(p.distance) if p.distance is not none else t('common.none') }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="source-cite">{{ t('ontology.audit_none_found') }}</p>
+        {% endif %}
+      </div>
+
+      <div class="facet-card">
+        <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.audit_suspicious_aliases_heading', count=(audit_view.suspicious_aliases | length) + (audit_view.duplicate_companies | length)) }}</h3>
+        {% if audit_view.suspicious_aliases or audit_view.duplicate_companies %}
+          <table class="catalog-table">
+            <thead>
+              <tr>
+                <th>{{ t('ontology.col_issue') }}</th>
+                <th>{{ t('ontology.col_entity') }}</th>
+                <th>{{ t('ontology.col_alias') }}</th>
+                <th>{{ t('ontology.col_reason') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for sa in audit_view.suspicious_aliases %}
+                <tr>
+                  <td><span class="badge badge-warn">alias</span></td>
+                  <td><a href="{{ sa.href }}"><strong>{{ sa.node_name }}</strong></a> <span class="mono">({{ sa.entity_type or 'entity' }})</span></td>
+                  <td class="mono">{{ sa.alias }}</td>
+                  <td class="source-cite">{{ sa.reason }}</td>
+                </tr>
+              {% endfor %}
+              {% for dup in audit_view.duplicate_companies %}
+                <tr>
+                  <td><span class="badge badge-warn">dup</span></td>
+                  <td><a href="{{ dup.href_a }}"><strong>{{ dup.node_a_name }}</strong></a> &harr; <a href="{{ dup.href_b }}"><strong>{{ dup.node_b_name }}</strong></a></td>
+                  <td class="mono">{{ 'd=%.4f' | format(dup.distance) if dup.distance is not none else dup.reason }}</td>
+                  <td class="source-cite">{{ dup.reason }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="source-cite">{{ t('ontology.audit_none_found') }}</p>
+        {% endif %}
+      </div>
+
+      <div class="facet-card">
+        <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.audit_ticker_facet_heading', count=(audit_view.ticker_issues | length) + (audit_view.facet_hits | length)) }}</h3>
+        <div class="source-cite" style="margin-bottom: 8px;">
+          {{ t('ontology.audit_sentiment_summary', ev_miss=audit_view.summary.events_missing_sentiment, ev_tot=audit_view.summary.total_events, vw_miss=audit_view.summary.views_missing_sentiment, vw_tot=audit_view.summary.total_views) }}
+        </div>
+        {% if audit_view.ticker_issues or audit_view.facet_hits %}
+          <table class="catalog-table">
+            <thead>
+              <tr>
+                <th>{{ t('ontology.col_issue') }}</th>
+                <th>{{ t('ontology.col_entity') }}</th>
+                <th>{{ t('ontology.col_detail') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for ti in audit_view.ticker_issues %}
+                <tr>
+                  <td><span class="badge badge-warn">ticker</span></td>
+                  <td><a href="{{ ti.href }}"><strong>{{ ti.name }}</strong></a></td>
+                  <td class="mono">{{ ti.raw_ticker }} &rarr; {{ ti.normalized_ticker }}</td>
+                </tr>
+              {% endfor %}
+              {% for fh in audit_view.facet_hits %}
+                <tr>
+                  <td><span class="badge badge-warn">facet:{{ fh.node_type }}</span></td>
+                  <td class="mono">{{ fh.count }}</td>
+                  <td class="mono">{{ fh.raw_key }} &rarr; {{ fh.canonical_key }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      </div>
+    {% endif %}
+
+  {% elif active_tab == 'edges' %}
+    {% if registry_summary.loaded %}
+      <div class="subtype-filter-bar">
+        <strong class="mono" style="font-size: 0.84rem;">{{ t('ontology.filter_registry_label') }}</strong>
+        <a href="/ontology?tab=edges#structure-explorer" class="facet-chip mono {% if not active_reg_status %}chip-active{% endif %}">{{ t('ontology.filter_all') }}</a>
+        <a href="/ontology?tab=edges&amp;reg_status=official#structure-explorer" class="facet-chip mono {% if active_reg_status == 'official' %}chip-active{% endif %}">{{ t('ontology.filter_official') }}</a>
+        <a href="/ontology?tab=edges&amp;reg_status=unmapped#structure-explorer" class="facet-chip mono {% if active_reg_status == 'unmapped' %}chip-active{% endif %}">{{ t('ontology.filter_unmapped') }}</a>
+      </div>
+    {% endif %}
+
+    <div class="facet-card">
+      <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.edge_schema_heading') }}</h3>
+      {% if edge_schema_detailed %}
+        <table class="catalog-table">
+          <thead>
+            <tr>
+              <th>{{ t('ontology.col_from_struct') }}</th>
+              <th>{{ t('ontology.col_relation') }}</th>
+              <th>{{ t('ontology.col_to_struct') }}</th>
+              <th>{{ t('ontology.col_count') }}</th>
+              {% if registry_summary.loaded %}
+                <th>{{ t('ontology.col_registry_status') }}</th>
+              {% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in edge_schema_detailed %}
+              <tr>
+                <td class="mono">{{ row.from_label }}</td>
+                <td><span class="badge">{{ t_enum('relation', row.relation) }}</span></td>
+                <td class="mono">{{ row.to_label }}</td>
+                <td class="mono">{{ row.count }}</td>
+                {% if registry_summary.loaded %}
+                  <td>{{ render_edge_cls(row.classification, row.suggestion_status or '') }}</td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p>{{ t('ontology.no_edges_stored') }}</p>
+      {% endif %}
+    </div>
+
+    <div class="facet-card">
+      <h3 style="margin: 0 0 8px; font-size: 1.02rem;">{{ t('ontology.recent_edges_heading', count=edge_samples | length) }}</h3>
+      {% if edge_samples %}
+        <table class="catalog-table">
+          <thead>
+            <tr>
+              <th>{{ t('ontology.col_from_node') }}</th>
+              <th>{{ t('ontology.col_relation') }}</th>
+              <th>{{ t('ontology.col_to_node') }}</th>
+              {% if registry_summary.loaded %}
+                <th>{{ t('ontology.col_registry_status') }}</th>
+              {% endif %}
+              <th>{{ t('ontology.col_edge_facets') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for e in edge_samples %}
+              <tr>
+                <td>
+                  <a href="{{ e.from_href }}"><strong>{{ e.from_name }}</strong></a>
+                  <span class="mono">[{{ e.from_label }}]</span>
+                </td>
+                <td><span class="badge">{{ t_enum('relation', e.relation) }}</span></td>
+                <td>
+                  <a href="{{ e.to_href }}"><strong>{{ e.to_name }}</strong></a>
+                  <span class="mono">[{{ e.to_label }}]</span>
+                </td>
+                {% if registry_summary.loaded %}
+                  <td>{{ render_edge_cls(e.classification) }}</td>
+                {% endif %}
+                <td class="mono" style="font-size: 0.82rem;">{{ e.facet_summary or t('common.none') }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p>{{ t('ontology.no_edge_instances') }}</p>
+      {% endif %}
+    </div>
+  {% else %}
+    {% if active_subtypes %}
+      <div class="subtype-filter-bar">
+        <strong class="mono" style="font-size: 0.84rem;">{{ t('ontology.filter_subtype_label') }}</strong>
+        <a
+          href="/ontology?tab={{ active_tab }}{% if active_reg_status %}&amp;reg_status={{ active_reg_status }}{% endif %}#structure-explorer"
+          class="facet-chip mono {% if not active_subtype %}chip-active{% endif %}"
+        >{{ t('ontology.filter_all') }}</a>
+        {% for sub in active_subtypes %}
+          <a
+            href="/ontology?tab={{ active_tab }}&amp;subtype={{ sub.name | urlencode }}{% if active_reg_status %}&amp;reg_status={{ active_reg_status }}{% endif %}#structure-explorer"
+            class="facet-chip mono {% if active_subtype == sub.name %}chip-active{% endif %}"
+          >{{ t_subtype(sub.name, active_tab) }} ({{ sub.count }})</a>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if registry_summary.loaded and active_tab in ('entity', 'theme') %}
+      <div class="subtype-filter-bar">
+        <strong class="mono" style="font-size: 0.84rem;">{{ t('ontology.filter_registry_label') }}</strong>
+        <a
+          href="/ontology?tab={{ active_tab }}{% if active_subtype %}&amp;subtype={{ active_subtype | urlencode }}{% endif %}#structure-explorer"
+          class="facet-chip mono {% if not active_reg_status %}chip-active{% endif %}"
+        >{{ t('ontology.filter_all') }}</a>
+        <a
+          href="/ontology?tab={{ active_tab }}{% if active_subtype %}&amp;subtype={{ active_subtype | urlencode }}{% endif %}&amp;reg_status=official#structure-explorer"
+          class="facet-chip mono {% if active_reg_status == 'official' %}chip-active{% endif %}"
+        >{{ t('ontology.filter_official') }}</a>
+        <a
+          href="/ontology?tab={{ active_tab }}{% if active_subtype %}&amp;subtype={{ active_subtype | urlencode }}{% endif %}&amp;reg_status=unmapped#structure-explorer"
+          class="facet-chip mono {% if active_reg_status == 'unmapped' %}chip-active{% endif %}"
+        >{{ t('ontology.filter_unmapped') }}</a>
+      </div>
+    {% endif %}
+
+    {% if tab_records %}
+      <table class="catalog-table">
+        <thead>
+          <tr>
+            <th style="width: 24%;">{{ t('ontology.col_name_id') }}</th>
+            <th style="width: 20%;">{{ t('ontology.col_subtype_signals') }}</th>
+            <th>{{ t('ontology.col_summary_facets') }}</th>
+            <th style="width: 10%;">{{ t('ontology.col_links') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for rec in tab_records %}
+            <tr>
+              <td>
+                <a href="{{ rec.href }}"><strong>{{ rec.name }}</strong></a>
+                <div class="source-cite">{{ rec.id }}</div>
+              </td>
+              <td>
+                <div>
+                  <span class="badge">{{ t_subtype(rec.subtype, active_tab) }}</span>
+                  {% if rec.registry_info %}
+                    {% if rec.registry_info.status == 'official' %}
+                      <span class="badge badge-official">{{ t('ontology.badge_official') }}</span>
+                    {% else %}
+                      <span class="badge badge-unmapped">{{ t('ontology.badge_unmapped') }}</span>
+                      <span class="badge">{{ t_enum('suggestion_status', rec.registry_info.suggestion_status) }}</span>
+                    {% endif %}
+                  {% endif %}
+                </div>
+                {% if rec.registry_info %}
+                  {% if rec.registry_info.status == 'official' and rec.registry_info.renamed %}
+                    <div class="source-cite">&rarr; {{ rec.registry_info.official_name }}</div>
+                  {% elif rec.registry_info.status == 'unmapped' and rec.registry_info.nearest_official %}
+                    <div class="source-cite">&approx; {{ rec.registry_info.nearest_official.name }} (d={{ '%.3f' | format(rec.registry_info.nearest_official.distance) }})</div>
+                  {% endif %}
+                {% endif %}
+                <div style="margin-top: 4px;">
+                  {% if rec.effective_sentiment %}
+                    <span class="badge badge-{{ rec.effective_sentiment | lower }}">{{ t_enum('sentiment', rec.effective_sentiment) }}</span>
+                  {% endif %}
+                  {% if rec.stance %}
+                    <span class="badge badge-{{ rec.stance | lower }}">{{ t_enum('stance', rec.stance) }}</span>
+                  {% endif %}
+                  {% if rec.status %}
+                    <span class="source-cite">{{ t_enum('status', rec.status) }}</span>
+                  {% endif %}
+                </div>
+                {% if rec.date %}
+                  <div class="source-cite">{{ rec.date }}</div>
+                {% endif %}
+              </td>
+              <td>
+                <div>{{ rec.summary }}</div>
+                {% if rec.facet_preview %}
+                  <div class="source-cite" style="margin-top: 4px;">
+                    {% for fp in rec.facet_preview %}
+                      <span><strong>{{ fp.key }}:</strong> {{ fp.value }}</span>{% if not loop.last %} &bull; {% endif %}
+                    {% endfor %}
+                  </div>
+                {% endif %}
+                {% if rec.source_file %}
+                  <div class="source-cite" style="margin-top: 3px;">
+                    {{ t('common.source') }}
+                    {% if rec.source_exists %}
+                      <a href="/catalog?file={{ rec.source_file | urlencode }}">{{ rec.source_file }}</a>
+                    {% else %}
+                      {{ rec.source_file }}
+                    {% endif %}
+                  </div>
+                {% endif %}
+              </td>
+              <td class="mono">{{ t('ontology.edges_count', count=rec.edge_count) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>
+        {% if active_subtype %}
+          {{ t('ontology.no_tab_records_subtype', subtype=t_subtype(active_subtype, active_tab)) }}
+        {% else %}
+          {{ t('ontology.no_tab_records') }}
+        {% endif %}
+      </p>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

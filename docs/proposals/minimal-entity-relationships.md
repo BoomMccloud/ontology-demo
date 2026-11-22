@@ -1,0 +1,173 @@
+---
+proposal_id: "minimal-entity-relationships"
+state: PROVED
+witness: independent
+candidate: "tree:66547840c4f7 @ /Users/jasonbxu/Documents/GitHub/stock_ontology"
+---
+
+# Proposal: Minimal, deduplicated entity relationships
+
+## Proposal
+
+Status: approved with choices resolved by the human on 2026-11-22:
+1. Minimal set — entity-to-entity: `BUY`, `COMPETE`, `OWNS`, `WORKS_AT` (human to company); entity-to-theme: `EXPOSED_TO` with a polarity facet; core structural plumbing preserved.
+2. Natural directional UX labels — UX reads canonical direction and displays natural labels (e.g., `"buys from"` / `"sells to"`).
+3. Out-of-vocabulary relations — store and queue for suggestion via the registry.
+4. Mention-count UX — deferred (answer later).
+5. Existing rows — clean up existing rows using the official registry as the source of truth (live DB run remains a human-authorized step).
+
+### Intent
+
+Entity and theme pages currently repeat the same relationships multiple times (for example, "AI Data Center Power & Cooling" appears multiple times on Vertiv's entity report) and expose too many overlapping, inconsistent relationship types—none of which are useful yet.
+
+We want to simplify and clean up relationships across all entities, covering both how relationships are consolidated when viewed/queried (Layer 1) and how they are defined, extracted, and normalized when written (Layer 2). In particular, we should start with the simplest and smallest possible set of relationships—replacing separate supply-chain relations (`SUPPLIES_TO` vs `CUSTOMER_OF`) with a single `"buy"` relationship with direction, using the official registry as the source of truth.
+
+### Tentative primary claim
+
+When viewing or querying any entity or theme, each related entity or theme appears once with clean, consistent relationships drawn from the minimal relationship vocabulary (`BUY`, `COMPETE`, `OWNS`, `WORKS_AT`, and `EXPOSED_TO` with a polarity facet) rendered with natural directional UX labels, newly ingested notes write relationships using that same minimal vocabulary and consistent direction (queueing unknown relations for suggestion), and deterministic repair cleans up legacy stored relationships against the registry.
+
+### Why now
+
+On Vertiv's entity report (`/entity/ent_vertiv_a919b5`), "AI Data Center Power & Cooling" appears multiple times, and across entities there are too many relationship types right now for any of them to be useful yet.
+
+### Known constraints
+
+- Cover all entity relationships, not only Vertiv or themes.
+- Include both Layer 1 (read-side consolidation and natural UX labels) and Layer 2 (write-side simplification, prompt rules, normalization, and registry-driven cleanup).
+- Minimal entity-to-entity relations: `BUY` (with direction, replacing `SUPPLIES_TO` and `CUSTOMER_OF`), `COMPETE`, `OWNS`, `WORKS_AT` (person to company/institution).
+- Minimal entity-to-theme relation: `EXPOSED_TO` with a polarity facet (`sentiment`: `positive` | `negative` | `neutral` | `mixed`).
+- Out-of-vocabulary relations are queued for suggestion rather than dropped.
+- The official registry (`ontology_registry.json`) is the single source of truth.
+
+### Non-goals
+
+- Mention-count badges or duplicate-count UI affordances (deferred UX decision).
+- Automatic mutation of the live `ontology.db` without separate human authorization.
+
+### Open choices
+
+None — all choices resolved by the human on 2026-11-22.
+
+## Frame
+
+Candidate: `tree:ac31e185b2f6 @ /Users/jasonbxu/Documents/GitHub/stock_ontology (no git; sha256 over sorted src/ files, tests/*.py, and ontology_registry.json)`
+
+### Verified reality
+- `uv run pytest -v` — 73 passed in 2.89s before any change; proves the full offline suite is green at baseline; limit: uses fake LLMs and temporary SQLite DBs, not live `ontology.db`.
+- `uv run ruff check src/ tests/` — 6 pre-existing errors in untouched files (`src/stock_ontology/llm/providers/gemini.py`, `src/stock_ontology/models.py:145`, `src/stock_ontology/web/catalog.py:145`), 0 errors in `db.py`, `registry.py`, `pipeline.py`, `repair.py`, `audit.py`, `prompts.py`, `i18n.py`, `cli.py`, `web/app.py`, `web/viewmodels.py`; limit: does not run static type checking.
+- Read-only query of `ontology.db` — 458 edges across 39 relation names; `get_entity_overview()` repeats rows on 23 entities (19 duplicate theme rows, 60 duplicate related-entity rows; Vertiv repeats `AI Data Center Power & Cooling` 6× across 5 notes); `run_ontology_audit()` reports 25 `reversed_direction` edges (15 `WORKS_AT`, 10 `theme -> entity`), 16 alias/inverse hits (`PARTNER_WITH` 7, `PARTNER_OF` 5, `HAS_EMPLOYEE` 3, `RELATED_TO` 1), and 8 reciprocal company-to-company `SUPPLIES_TO`/`CUSTOMER_OF` contradictions; limit: snapshot of current local DB only.
+- `src/stock_ontology/db.py:25-40,779-874,1080-1223` — `get_entity_overview()` appends direct theme edges without checking `seen_theme_ids`, never deduplicates `related_entities`/`events`/`views`, and `find_theme_companies()` duplicates 1st-order direct links and 2nd-order paths while hardcoding `SECOND_ORDER_ENTITY_RELATIONS` and `THEME_EXPOSURE_RELATIONS` instead of using `OntologyRegistry`; limit: `traverse_bfs()` also emits duplicate cross-doc edges.
+- `src/stock_ontology/registry.py:50-257,513-710` and `ontology_registry.json` — currently define 16 relations (`SUPPLIES_TO`, `CUSTOMER_OF`, `COMPETES_WITH`, `PARTNERS_WITH`, `SUBSIDIARY_OF`, `BENEFITS_FROM`, `HURT_BY`, etc.); `RelationSpec` lacks `symmetric` and `alias_facets`, and `OntologyRegistry` has no `canonicalize_edge()` helper; limit: `OntologyDB` does not accept an `OntologyRegistry` handle yet.
+- `src/stock_ontology/pipeline.py:88-147,237-246,430-455` and `src/stock_ontology/repair.py:79-98,174-185` — already accept `OntologyRegistry` and resolve aliases/inverses; `cli.py:805-840` already provides `stock-ontology repair`; limit: neither applies `alias_facets`, auto-flips unambiguous cross-type `reversed_direction` edges, promotes `entity <-> theme` `RELATES_TO` to `EXPOSED_TO`, canonicalizes symmetric endpoints, nor merges facets when collapsing duplicate edges (`repair._delete_duplicate_edges` uses `MIN(id)` and drops facets on deleted rows).
+- `src/stock_ontology/llm/prompts.py:11-36` and `src/stock_ontology/models.py:249-268` — list legacy relation names without explicit `from_ref -> to_ref` direction rules; limit: offline tests use fake LLMs and do not exercise live LLM compliance.
+- `src/stock_ontology/i18n.py`, `src/stock_ontology/locales/*.json`, `src/stock_ontology/web/templates/partials/section_themes.html`, `section_related_entities.html`, `theme.html`, `cli.py:396-466` — render raw `t_enum('relation', ...)` with `(outgoing)`/`(incoming)` instead of natural directional labels (`buys from` / `sells to`, `competes with`, `owns` / `owned by`, `works at` / `employs`, `exposed to` + polarity badge); `tests/test_i18n.py` enforces key parity across all 6 locale catalogs.
+
+### Final primary claim
+- With `ontology_registry.json` and `create_minimal_registry()` updated to the minimal canonical relationship set (`BUY`, `COMPETE`, `OWNS`, `WORKS_AT` for entity-to-entity; `EXPOSED_TO` with a `sentiment` facet for entity-to-theme; 6 core structural relations preserved), every entity and theme query/page surfaces each unique related entity and theme once using canonical relationships and natural directional UX labels (such as `buys from` / `sells to`), newly ingested notes write canonical normalized edges (leaving unmapped relations stored so `audit --sync` queues them as pending suggestions), and `repair_ontology()` deterministically migrates legacy edges against the registry while merging facets without data loss.
+
+### Routing
+- Witness: `independent`
+- Why: changes the canonical relation schema across the official registry, ingestion write path, stored-data `repair` command, read-side graph traversal, and web/CLI presentation.
+- Human-owned irreversible action: running `uv run stock-ontology repair` (and `uv run stock-ontology audit`) against the live `ontology.db` (or re-ingesting `data/`). No pipeline stage runs against live `ontology.db`; all automated verification uses temporary databases.
+
+### Decisive witness
+- Layer: offline pytest integration tests over temporary SQLite DBs exercising `OntologyDB`, FastAPI `TestClient`, `IngestionPipeline` (fake LLM), `repair_ontology`, and `run_ontology_audit`.
+- Permanent owner: `tests/test_relationships.py` (dedicated permanent owner because every existing DB/pipeline/repair/registry/web test file contains legacy 16-relation assertions listed under `Invariants changed` that Build must update; placing cross-boundary protected witnesses in `tests/test_relationships.py` keeps the Proof file strictly immutable through Build and Audit).
+- Witness:
+  1. **Read-side consolidation & natural UX labels**: on a temporary DB seeded with multi-doc duplicate theme links (including reversed `theme -> entity` `BENEFITS_FROM`, `RELATES_TO`, and `HURT_BY`) and multi-doc/symmetric/inverse entity links (`SUPPLIES_TO`, `CUSTOMER_OF`, `COMPETES_WITH` in both directions, `SUBSIDIARY_OF`, reversed `WORKS_AT`, `HAS_EMPLOYEE`), `get_entity_overview()` and `GET /entity/<id>` list each unique theme and related entity once with canonical relations, resolved `EXPOSED_TO` polarity (`positive` / `negative` / `mixed`), and natural English UX labels (`buys from`, `sells to`, `competes with`, `owns`, `owned by`, `works at`, `employs`, `exposed to`); `find_theme_companies()` and `GET /theme/<id>` deduplicate 1st-order direct links and 2nd-order paths while resolving `BUY`/`COMPETE`/`OWNS`.
+  2. **Write-side normalization & out-of-vocabulary queueing**: `IngestionPipeline` with a fake LLM emitting `SUPPLIES_TO`, `CUSTOMER_OF`, `COMPETES_WITH` (both directions), `SUBSIDIARY_OF`, `HAS_EMPLOYEE`, reversed `WORKS_AT`, `BENEFITS_FROM`, `HURT_BY`, reversed `EXPOSED_TO`, entity-theme `RELATES_TO`, and an out-of-vocabulary relation (`PARTNERS_WITH`) stores canonical `BUY` (`buyer -> seller`), canonical-order `COMPETE`, `OWNS`, `WORKS_AT` (`person -> org`), and `EXPOSED_TO` with merged `sentiment` facet; keeps `PARTNERS_WITH` unmapped so `run_ontology_audit` + `sync_suggestions` queues it as `pending`; and includes directed canonical signatures in the extraction catalog.
+  3. **Registry-driven repair & contradiction audit**: `repair_ontology(db, registry)` on a legacy temporary DB deterministically rewrites `SUPPLIES_TO`/`CUSTOMER_OF` -> `BUY`, `COMPETES_WITH` -> canonical-order `COMPETE`, `SUBSIDIARY_OF` -> `OWNS`, `HAS_EMPLOYEE` and reversed `WORKS_AT` -> `WORKS_AT`, `BENEFITS_FROM`/`HURT_BY`/reversed `EXPOSED_TO`/entity-theme `RELATES_TO` -> `EXPOSED_TO` with merged polarity facets, collapses resulting same-doc duplicate edges without losing facets, keeps unmapped relations intact, and is idempotent on rerun; `run_ontology_audit()` flags reciprocal `BUY` contradictions (`A BUY B` and `B BUY A`) without guessing direction.
+
+### Guardrail claims
+- `OntologyAgent`, the Web UI, `inspect`, and `audit` remain strictly read-only (`PRAGMA query_only = ON`) and never modify the DB or `ontology_registry.json` on read.
+- `get_entity_overview()` deduplicates `events` and `views` consistently with `query_entity_signals()`, and deleting a single note removes only that note's edges while retaining relationships attested by other notes.
+- All 6 locale catalogs (`en`, `zh`, `ko`, `ja`, `es`, `fr`) maintain full key parity and valid placeholders, and no mention-count badges are added to the UI.
+
+### Supporting obligations
+- `src/stock_ontology/registry.py` & `ontology_registry.json`:
+  - Add `symmetric: bool = False` and `alias_facets: dict[str, dict[str, Any]] = Field(default_factory=dict)` to `RelationSpec`, `default_facets: dict[str, Any] = Field(default_factory=dict)` to `RelationMatch`, and shared `matches_type_spec()` + `CanonicalEdgeResult` + `OntologyRegistry.canonicalize_edge()`.
+  - Define the 11 official relations in `create_minimal_registry()` and `ontology_registry.json`:
+    - Core plumbing (6): `ABOUT`, `AUTHORED_BY`, `SUPPORTS` (`aliases=["CORROBORATES"]`), `CONTRADICTS`, `SUPERSEDES`, `RELATES_TO` (`from_types=["event", "view"]`, `to_types=["theme"]`, `aliases=["RELATED_TO"]`, `traversal_group="core"`).
+    - Entity-to-entity (4): `BUY` (`entity:company -> entity:company`, `aliases=["CUSTOMER_OF", "BUYS_FROM"]`, `inverse_aliases=["SUPPLIES_TO"]`, `traversal_group="second_order_entity"`), `COMPETE` (`entity:company -> entity:company`, `aliases=["COMPETES_WITH"]`, `symmetric=True`, `traversal_group="second_order_entity"`), `OWNS` (`entity:company -> entity:company|entity:institution`, `inverse_aliases=["SUBSIDIARY_OF"]`, `traversal_group="second_order_entity"`), `WORKS_AT` (`entity:person -> entity:company|entity:institution`, `inverse_aliases=["HAS_EMPLOYEE"]`, `traversal_group="org"`).
+    - Entity-to-theme (1): `EXPOSED_TO` (`entity -> theme`, `aliases=["BENEFITS_FROM", "HURT_BY"]`, `alias_facets={"BENEFITS_FROM": {"sentiment": "positive"}, "HURT_BY": {"sentiment": "negative"}}`, `traversal_group="theme_exposure"`).
+  - Keep `companies`, `themes`, `facet_aliases`, and `suggestions` in `ontology_registry.json` intact.
+- `src/stock_ontology/db.py`:
+  - Accept optional `registry: OntologyRegistry | None = None` on `OntologyDB.__init__` (default `create_minimal_registry()`).
+  - Merge edge facets (reconciling `sentiment` without clobbering non-empty facets with `{}`) in `upsert_edge()` on `(from_id, to_id, relation, source_doc_id)` conflict.
+  - Canonicalize incident edges via `self.registry.canonicalize_edge()` and group/deduplicate:
+    - `get_entity_overview()`: 1 entry per unique `theme` (reconciling `sentiment`: `positive` + `negative` -> `mixed`, preferring canonical `EXPOSED_TO` over unmapped/indirect, setting `exposure_sentiment` and `edge_facets["sentiment"]`), 1 entry per unique `related_entity` (deduplicating `(relation, direction)` into `relationships`, using `direction="mutual"` for symmetric relations, keeping top-level `relation`/`direction`/`symmetric` for backward compatibility), and deduplicating `events`, `views`, `prior_consensuses` by `node_id` using `(has_edge_sentiment, is_ABOUT)` ranking.
+    - `find_theme_companies()`: canonicalize edges, deduplicate 1st-order direct links per canonical relation (merging `sentiment`) and indirect links per `(via_node_id, entity_relation, theme_relation)`; derive 2nd-order relations from `self.registry.get_relations_by_group("second_order_entity")` and compute path `direction` from the 2nd-order company's perspective, deduplicating per `(connected_to_id, relation, direction)`.
+    - `traverse_bfs()`: deduplicate emitted edges by `(canonical_from_id, canonical_to_id, canonical_relation)`.
+- `src/stock_ontology/pipeline.py`, `src/stock_ontology/llm/prompts.py`, `src/stock_ontology/models.py`:
+  - Include directed signatures (`REL (from -> to)`) in `IngestionPipeline._build_existing_catalog()` and update `EXTRACTION_SYSTEM_PROMPT` and `ExtractedEdge` descriptions to teach the minimal directed vocabulary (`buyer --BUY--> seller`, `COMPETE`, `parent --OWNS--> child`, `person --WORKS_AT--> company/institution`, `entity --EXPOSED_TO--> theme` with `sentiment` facet).
+  - In `_write_extraction()`, normalize every edge via `self.registry.canonicalize_edge()` using resolved endpoint node types and facets before `db.upsert_edge()`.
+- `src/stock_ontology/repair.py`:
+  - Canonicalize all stored edges using `registry.canonicalize_edge()` (applying aliases, inverse flips, `alias_facets`, unambiguous cross-type direction flips, entity-theme `RELATES_TO` -> `EXPOSED_TO`, and symmetric endpoint ordering).
+  - Upgrade `_delete_duplicate_edges()` to merge facets across colliding `(from_id, to_id, relation, IFNULL(source_doc_id, ''))` rows before deleting extras.
+- `src/stock_ontology/audit.py`:
+  - Reuse `matches_type_spec` from `registry.py` and add `ReciprocalContradiction` / `AuditReport.reciprocal_contradictions` + `AuditSummary.reciprocal_contradiction_pairs` for asymmetric official relations (`BUY`, `OWNS`) appearing in both directions between the same pair after canonicalization.
+- `src/stock_ontology/i18n.py`, `src/stock_ontology/locales/*.json`, `src/stock_ontology/web/app.py`, `src/stock_ontology/web/viewmodels.py`, templates, `src/stock_ontology/cli.py`:
+  - Add `format_relation_label(relation, direction=None, lang=DEFAULT_LANGUAGE)` in `i18n.py` backed by `enum.relation_dir.*` and `enum.relation.BUY` / `enum.relation.COMPETE` keys across all 6 locale files (`en`, `zh`, `ko`, `ja`, `es`, `fr`).
+  - Pass loaded optional registry into `OntologyDB(..., registry=reg)` in `web/app.py` (`_open_ro_db`) and `cli.py` (`_open_readonly_db`), and expose `format_relation` in Jinja template globals (`web/app.py:_render`).
+  - Update `section_themes.html` (show natural label + `exposure_sentiment` badge + `via`), `section_related_entities.html` (render deduplicated `relationships` with `format_relation(r.relation, r.direction)`), `theme.html` (show natural labels + exposure sentiment badge on 1st-order and natural directional labels on 2nd-order paths), `viewmodels.py` (deduplicate `build_theme_context` events/views; update `_build_diagram_links` fallbacks), and `cli.py` (`inspect` uses `format_relation_label`).
+- Keep `uv run ruff check` clean on every touched Python file (including fixing the existing `TRY300` at `models.py:145` when `models.py` is touched).
+
+### Allowed scope
+- Reuse: `OntologyRegistry` / `create_minimal_registry` in `registry.py`; `repair_ontology` in `repair.py`; `IngestionPipeline` and `OntologyDB.transaction()` in `pipeline.py`/`db.py`; `run_ontology_audit` in `audit.py`; `i18n.py` and `locales/*.json`; `web/app.py`, `web/viewmodels.py`, and existing templates.
+- Cheaper alternative: only add `if neighbor["id"] not in seen_theme_ids:` in `db.get_entity_overview()`. Rejected because the approved Proposal requires fixing all entity relationships across both Layer 1 (read-side consolidation + natural UX labels) and Layer 2 (minimal registry vocabulary, write-side normalization, and registry-driven `repair` cleanup).
+- Include: `src/stock_ontology/registry.py`, `ontology_registry.json`, `src/stock_ontology/db.py`, `src/stock_ontology/pipeline.py`, `src/stock_ontology/repair.py`, `src/stock_ontology/audit.py`, `src/stock_ontology/llm/prompts.py`, `src/stock_ontology/models.py`, `src/stock_ontology/i18n.py`, `src/stock_ontology/locales/en.json`, `src/stock_ontology/locales/zh.json`, `src/stock_ontology/locales/ko.json`, `src/stock_ontology/locales/ja.json`, `src/stock_ontology/locales/es.json`, `src/stock_ontology/locales/fr.json`, `src/stock_ontology/web/app.py`, `src/stock_ontology/web/viewmodels.py`, `src/stock_ontology/web/templates/partials/section_themes.html`, `src/stock_ontology/web/templates/partials/section_related_entities.html`, `src/stock_ontology/web/templates/theme.html`, `src/stock_ontology/cli.py`, `README.md`, `tests/test_relationships.py` (Proof-owned protected witness), and `Invariants changed` updates in `tests/test_registry_audit.py`, `tests/test_pipeline.py`, `tests/test_repair.py`, `tests/test_db.py`, `tests/test_web.py`.
+- Exclude/protect: `ontology.db` and `data/` must never be modified. `audit.py`, `agent.py`, and the Web UI stay strictly read-only. Mention-count UI badges are excluded (deferred UX choice). Untouched files (`gemini.py`, `catalog.py`) are excluded.
+
+### Invariants changed
+- `README.md:30` — today: lists `SUPPLIES_TO`, `COMPETES_WITH`, `BENEFITS_FROM`, `HURT_BY` as example unified edges; after: lists the minimal canonical relation set (`BUY`, `COMPETE`, `OWNS`, `WORKS_AT`, `EXPOSED_TO` with polarity facet, plus core plumbing).
+- `tests/test_registry_audit.py:297,313-317,367-386` — today: asserts 16 official relations, `partner_with -> PARTNERS_WITH`, and `BENEFITS_FROM` exact / `PARTNER_WITH` alias in `_seed_audit_db`; after: asserts 11 official relations, `SUPPLIES_TO` inverse -> `BUY`, `COMPETES_WITH` alias -> `COMPETE`, `BENEFITS_FROM` alias -> `EXPOSED_TO` with `{"sentiment": "positive"}`, and `PARTNER_WITH` unmapped/queued.
+- `tests/test_pipeline.py:1140-1185` — today: asserts `partner with` normalizes to `PARTNERS_WITH`; after: asserts a minimal-registry alias/inverse (`COMPETES_WITH` -> `COMPETE` and/or `SUPPLIES_TO` -> flipped `BUY`, plus `HAS_EMPLOYEE` -> flipped `WORKS_AT`), since `PARTNERS_WITH` is no longer official.
+- `tests/test_repair.py:70,106,122-124` — today: asserts `repair_ontology` rewrites `PARTNER_WITH -> PARTNERS_WITH`; after: asserts `repair_ontology` rewrites minimal-registry aliases/inverses (`SUPPLIES_TO` -> flipped `BUY` and/or `COMPETES_WITH` -> `COMPETE`, plus `HAS_EMPLOYEE` -> flipped `WORKS_AT`).
+- `tests/test_db.py:703-704,732` — today: asserts `"PARTNERS_WITH"` in extraction catalog and seeds `"PARTNER_WITH"` in CLI repair test; after: asserts `"BUY"`, `"COMPETE"`, `"WORKS_AT"`, `"EXPOSED_TO"` in catalog and seeds a minimal-registry alias/inverse (`COMPETES_WITH` or `SUPPLIES_TO`) in CLI repair test.
+- `tests/test_web.py:1073,1108-1109,1118,1141-1145,1150-1152` — today: asserts `official_relations == 16`, `pending_suggestions["relations"] == 1`, `"Official Edge Relations (16)"`, `"SUPPLIES_TO"` in Official Registry tab, and `PARTNER_WITH` as `ALIAS`; after: asserts `official_relations == 11`, `"Official Edge Relations (11)"`, `"BUY"` & `"WORKS_AT"` in Official Registry tab, uses a valid minimal-registry alias (e.g., `COMPETES_WITH`) to keep all 5 status badges (`OFFICIAL`, `ALIAS`, `INVERSE`, `REVERSED`, `UNMAPPED`) covered while `PRODUCES` (and `PARTNER_WITH` if seeded) is `UNMAPPED`.
+
+### Decisions required
+- None.
+
+## Proof
+
+Candidate: `tree:66547840c4f7 @ /Users/jasonbxu/Documents/GitHub/stock_ontology`
+
+**Protected witness**
+- `Read-side consolidation, canonical traversal & natural UX labels` — `tests/test_relationships.py` / `test_read_side_consolidation_and_natural_ux_labels`
+  - Defect and boundary: `OntologyDB.get_entity_overview()`, `find_theme_companies()`, `traverse_bfs()`, and web templates repeat multi-doc/reversed/symmetric/inverse links with raw legacy relation names; crosses `db.py` ↔ `registry.py` ↔ `web/viewmodels.py` ↔ HTML templates (`section_themes.html`, `section_related_entities.html`, `theme.html`).
+  - Assertion: On a seeded temp DB with multi-doc, reversed (`theme -> entity`, `company -> person`), inverse (`SUPPLIES_TO`, `SUBSIDIARY_OF`, `HAS_EMPLOYEE`), and bidirectional symmetric (`COMPETES_WITH`) edges, `get_entity_overview()`, `find_theme_companies()`, `traverse_bfs()`, `GET /entity/<id>`, and `GET /theme/<id>` each emit 1 entry per unique theme/entity/2nd-order path with canonical relations (`EXPOSED_TO` with resolved `positive`/`negative`/`mixed` polarity, `BUY`, `COMPETE` `mutual`, `OWNS`, `WORKS_AT`) and natural English labels (`buys from`, `sells to`, `competes with`, `owns`, `owned by`, `works at`, `employs`, `exposed to`); proves Layer 1 read-side deduplication and directional UX rendering; limit: uses a seeded temporary DB and fake LLM rather than live `ontology.db` or live browser DOM execution.
+- `Write-side normalization, out-of-vocabulary suggestion queueing & directed extraction catalog` — `tests/test_relationships.py` / `test_write_side_normalization_oov_queueing_and_catalog_signatures`
+  - Defect and boundary: `create_minimal_registry()`, `ontology_registry.json`, `IngestionPipeline._build_existing_catalog()`, and `_write_extraction()` expose and write legacy 16-relation shapes without full canonicalization/facet merging; crosses `registry.py` ↔ `pipeline.py` ↔ `db.py` ↔ `audit.py`.
+  - Assertion: Both `create_minimal_registry()` and `ontology_registry.json` define the 11 official relations, `IngestionPipeline.run()` emits directed canonical signatures (`->`) in `existing_catalog`, normalizes extracted `SUPPLIES_TO`/`CUSTOMER_OF`/`COMPETES_WITH`/`SUBSIDIARY_OF`/`HAS_EMPLOYEE`/reversed `WORKS_AT`/`BENEFITS_FROM`/`HURT_BY`/reversed `EXPOSED_TO`/entity-theme `RELATES_TO` into canonical stored edges with merged `sentiment` facets (including `mixed` and non-clobbered `positive`), retains out-of-vocabulary `PARTNERS_WITH`, and `run_ontology_audit()` + `sync_suggestions()` queues `PARTNERS_WITH` as `pending` with 0 direction issues; proves Layer 2 write-side normalization and OOV queueing; limit: uses a fake LLM stub (`_WriteNormalizationFakeLLM`) rather than live LLM extraction output.
+- `Registry-driven repair & reciprocal BUY contradiction audit` — `tests/test_relationships.py` / `test_registry_driven_repair_and_reciprocal_contradiction_audit`
+  - Defect and boundary: `repair_ontology()` lacks full minimal-registry canonicalization (e.g., `alias_facets`, reversed cross-type flips, entity-theme `RELATES_TO` promotion, symmetric ordering) and drops facets in `_delete_duplicate_edges()`, while `run_ontology_audit()` does not flag reciprocal asymmetric contradictions; crosses `repair.py` ↔ `registry.py` ↔ `db.py` ↔ `audit.py`.
+  - Assertion: `repair_ontology()` deterministically rewrites legacy edges into minimal canonical relations with merged facets (`positive`, `negative`, `mixed`, and preserved `evidence` when earliest edge ID had `{}`), collapses same-doc duplicates, preserves unmapped `PARTNERS_WITH` and both directions of reciprocal `BUY` edges, reports `total_changes == 0` on rerun, and `run_ontology_audit()` flags 1 `BUY` contradiction in `reciprocal_contradictions` (`reciprocal_contradiction_pairs == 1`); proves deterministic idempotent cleanup and contradiction surfacing; limit: exercised on a seeded temporary DB rather than live `ontology.db`.
+- `Guardrail: strictly read-only OntologyAgent, Web UI, inspect, and audit` — `tests/test_relationships.py` / `test_guardrail_read_only_agent_web_inspect_and_audit`
+  - Defect and boundary: Read surfaces (`inspect`, `OntologyAgent`, Web UI, `audit`) render legacy/duplicate edges and must remain strictly read-only when updated to use registry-driven canonicalization; crosses `agent.py` ↔ `web/app.py` ↔ `cli.py` ↔ `audit.py` ↔ `db.py`.
+  - Assertion: `OntologyAgent` rejects writable DBs, `PRAGMA query_only` equals `1` on read-only DBs, `agent.ask()` observes consolidated `EXPOSED_TO`/`BUY`, `TestClient` routes (`/entity/...`, `/theme/...`, `/ontology`, `/api/chat`), `stock-ontology inspect` (rendering `buys from` / `exposed to`), `run_ontology_audit()`, and `stock-ontology audit --no-sync-suggestions` leave `nodes`, `edges`, and the registry JSON file byte-identical; proves non-mutation across all read/query surfaces; limit: uses `CliRunner`, `TestClient`, and a fake agent LLM over temp files.
+- `Guardrail: event/view deduplication consistency & single-note deletion retention` — `tests/test_relationships.py` / `test_guardrail_event_view_dedup_and_single_note_deletion_retention`
+  - Defect and boundary: `get_entity_overview()` repeats an event/view when multiple incident edges exist (diverging from `query_entity_signals()`), and incremental note deletion must preserve relationships still backed by remaining notes; crosses `db.py` ↔ `pipeline.py`.
+  - Assertion: `get_entity_overview()` returns 1 `events` entry and 1 `views` entry (preferring `ABOUT` with edge sentiment override) matching `query_entity_signals()["items"]`, and deleting `note_a.md` followed by `IngestionPipeline.run()` removes `Note A Event` while retaining `Note B Event`, `Vertiv --BUY--> TSMC`, and `Vertiv --EXPOSED_TO--> AI Power` (`positive`); proves signal-list consistency and multi-note relationship retention; limit: uses a 2-note fake LLM scenario.
+- `Guardrail: 6-locale parity & no mention-count UI badges` — `tests/test_relationships.py` / `test_guardrail_locale_parity_and_no_mention_count_badges`
+  - Defect and boundary: Entity/theme pages must maintain full 6-locale parity (`en`, `zh`, `ko`, `ja`, `es`, `fr`), localize natural directional relationship labels, and omit deferred mention-count badges when collapsing duplicates; crosses `i18n.py` ↔ `locales/*.json` ↔ `web/app.py` ↔ Jinja templates.
+  - Assertion: All 6 locale files have matching keys, non-empty plain-Unicode strings, and identical placeholders; `GET /entity/ent_vrt?lang=en` and `GET /theme/thm_power?lang=en` render each consolidated link once without mention-count badges (`4x`, `4×`, `(4)`, `2x`, `2×`, `(2)`, `mentions`), and `zh`/`ko`/`ja`/`es`/`fr` render localized non-raw-uppercase directional labels without English fallback; proves i18n parity and exclusion of deferred count badges; limit: inspects rendered HTML substrings rather than browser layout.
+- Protected paths: `tests/test_relationships.py`.
+- Protected revision: `sha256:f40b40c82fe3e2bc27059da3e9c7c6e4efee40ebc598ae8d1391783ec7aa6bfb` (snapshot: `/Users/jasonbxu/.gemini/antigravity/brain/2978d7b9-b384-4ea7-a2f9-4fce5c6004c2/scratch/protected_witness/test_relationships.py`).
+
+**Red evidence**
+- `uv run pytest tests/test_relationships.py -v` → `6 failed in 0.47s`: every witness failed on missing proposed behavior (`assert 8 == 3` themes in `get_entity_overview("ent_vrt")`; legacy 16-relation set in `create_minimal_registry()`; `assert 0 == 1` `BUY` edges after `repair_ontology()`; `OntologyAgent` overview returning legacy `SUPPLIES_TO`/`BENEFITS_FROM` without `BUY`; `assert 2 == 1` duplicate `evt_multi` entries in `get_entity_overview()`; `assert 4 == 1` repeated `AI Data Center Power & Cooling` rows in `GET /entity/ent_vrt?lang=en`); log: `/Users/jasonbxu/.gemini/antigravity/brain/2978d7b9-b384-4ea7-a2f9-4fce5c6004c2/scratch/proof_red.log`.
+- All framed primary and guardrail claims have observed RED results on `tree:66547840c4f7`.
+
+**Supporting test plan**
+- `RelationSpec.symmetric` / `alias_facets`, `matches_type_spec()`, `OntologyRegistry.canonicalize_edge()`, and 11-relation registry alignment → Build: `tests/test_registry_audit.py`; catches edge-case polarity/direction canonicalization defects and updates legacy 16-relation assertions.
+- `OntologyDB.__init__(..., registry=...)`, `upsert_edge()` facet merging on conflict, and registry-backed `traversal_group` lookups → Build: `tests/test_db.py`; catches facet overwrite regressions (`{}` clobbering `sentiment`) and updates legacy catalog/CLI repair assertions.
+- `EXTRACTION_SYSTEM_PROMPT` / `ExtractedEdge` prompt rules and `_write_extraction()` normalization edge cases → Build: `tests/test_pipeline.py`; catches stale prompt relation guidance and updates legacy `PARTNERS_WITH` alias assertions.
+- `repair_ontology()` `_delete_duplicate_edges()` facet merge and `audit.py` `ReciprocalContradiction` edge cases (e.g. `OWNS` contradictions) → Build: `tests/test_repair.py` & `tests/test_registry_audit.py`; catches silent facet loss on collision and missed reciprocal asymmetric pairs.
+- `format_relation_label()` unit checks across all 6 locales and `/ontology` 11-relation UI badge/count updates → Build: `tests/test_i18n.py` & `tests/test_web.py`; catches fallback behavior on unknown directions/relations and updates legacy 16-relation `/ontology` assertions.
+
+## Build
+
+## Audit
+
+## Revisions

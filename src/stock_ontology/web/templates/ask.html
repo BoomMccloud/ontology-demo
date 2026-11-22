@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('ask.page_title') }}{% endblock %}
+
+{% block content %}
+<h1>{{ t('ask.heading') }}</h1>
+<p class="portal-intro">{{ t('ask.subtitle') }}</p>
+
+{% if custom_context %}
+  <div class="refdesk-context">
+    {{ t('ask.context_prefix') }} <span class="mono">{{ custom_context }}</span>
+    &middot; <a href="/ask">{{ t('ask.clear_context') }}</a>
+  </div>
+{% endif %}
+
+<div id="clippy-chips" class="refdesk-prompts">
+  <button
+    class="clippy-chip"
+    type="button"
+    data-fill-only="1"
+    data-prompt="{{ t('clippy.chip_meeting_prompt') }}"
+  >{{ t('clippy.chip_meeting_label') }}</button>
+  <button
+    class="clippy-chip"
+    type="button"
+    data-prompt="{{ t('clippy.chip_themes_prompt') }}"
+  >{{ t('clippy.chip_themes_label') }}</button>
+  <button
+    class="clippy-chip"
+    type="button"
+    data-prompt="{{ t('clippy.chip_summarize_prompt') }}"
+  >{{ t('clippy.chip_summarize_label') }}</button>
+  <button
+    class="clippy-chip"
+    type="button"
+    data-prompt="{{ t('clippy.chip_negative_prompt') }}"
+  >{{ t('clippy.chip_negative_label') }}</button>
+</div>
+
+<form id="clippy-form" class="refdesk-form">
+  <textarea
+    id="clippy-input"
+    rows="4"
+    placeholder="{{ t('clippy.input_placeholder') }}"
+  ></textarea>
+  <div class="refdesk-actions">
+    <div class="refdesk-buttons">
+      <button id="clippy-send-btn" class="portal-btn portal-btn-primary" type="submit">{{ t('clippy.send_btn') }}</button>
+      <button id="clippy-reset-btn" class="portal-btn" type="button" title="{{ t('clippy.reset_title') }}">{{ t('clippy.reset_btn') }}</button>
+    </div>
+  </div>
+</form>
+
+<div id="clippy-messages" class="refdesk-log" aria-live="polite">
+  <div class="clippy-msg clippy-msg-bot">
+    <div class="clippy-msg-role">{{ t('clippy.role_bot') }}</div>
+    <div>{{ t('clippy.welcome_intro') }}</div>
+  </div>
+</div>
+
+<script id="clippy-i18n-data" type="application/json">{{ clippy_i18n | tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/clippy.js"></script>
+{% endblock %}

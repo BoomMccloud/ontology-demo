@@ -1,0 +1,164 @@
+"""Offline tests for `stock_ontology.repair.repair_ontology` over temporary databases."""
+
+from __future__ import annotations
+
+import importlib
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from stock_ontology.db import OntologyDB
+from stock_ontology.models import Edge, Node
+from stock_ontology.registry import create_minimal_registry
+
+DIM = 8
+
+
+def _load_repair_ontology() -> Callable[..., Any]:
+    try:
+        module = importlib.import_module("stock_ontology.repair")
+    except ModuleNotFoundError:
+        pytest.fail("stock_ontology.repair.repair_ontology is missing: repair behavior not implemented")
+    fn = getattr(module, "repair_ontology", None)
+    assert callable(fn), "stock_ontology.repair has no callable repair_ontology"
+    return fn
+
+
+def _vec(idx: int) -> list[float]:
+    v = [0.0] * DIM
+    v[idx % DIM] = 1.0
+    return v
+
+
+def _entity(node_id: str, name: str, entity_type: str, aliases: list[str] | None = None) -> Node:
+    return Node(
+        id=node_id,
+        node_type="entity",
+        name=name,
+        summary=f"{name} summary.",
+        aliases=aliases or [],
+        facets={"entity_type": entity_type},
+    )
+
+
+def _event(node_id: str, name: str, doc_id: str) -> Node:
+    return Node(id=node_id, node_type="event", name=name, summary=f"{name}.", source_doc_id=doc_id)
+
+
+def _edge(edge_id: str, from_id: str, relation: str, to_id: str, doc_id: str | None) -> Edge:
+    return Edge(id=edge_id, from_id=from_id, to_id=to_id, relation=relation, source_doc_id=doc_id)
+
+
+def _seed(db: OntologyDB) -> None:
+    for i, node in enumerate(
+        [
+            _entity("ent_acme", "Acme Robotics", "company"),
+            _entity("ent_beta", "Beta Motion", "company"),
+            _entity("ent_jane", "Jane Roe", "person"),
+            _event("evt_live", "Live Event", "doc_live"),
+            _event("evt_orphan", "Orphan Event", "doc_orphan"),
+        ]
+    ):
+        db.upsert_node(node, embedding=_vec(i))
+    db.upsert_ingestion_log("notes/live.md", "doc_live", "hash_live", datetime.now(UTC).isoformat())
+    for edge in [
+        _edge("e_live_about", "evt_live", "ABOUT", "ent_acme", "doc_live"),
+        _edge("e_orphan_about", "evt_orphan", "ABOUT", "ent_beta", "doc_orphan"),
+        _edge("e_partner", "ent_acme", "PARTNER_WITH", "ent_beta", "doc_live"),
+        _edge("e_employee", "ent_acme", "HAS_EMPLOYEE", "ent_jane", "doc_live"),
+    ]:
+        db.upsert_edge(edge)
+
+
+def _edges(db: OntologyDB) -> set[tuple[str, str, str]]:
+    return {
+        (r["from_id"], r["relation"], r["to_id"])
+        for r in db.conn.execute("SELECT from_id, relation, to_id FROM edges").fetchall()
+    }
+
+
+def _has_vector(db: OntologyDB, node_id: str) -> bool:
+    row = db.conn.execute("SELECT COUNT(*) FROM node_vectors WHERE node_id = ?", (node_id,)).fetchone()
+    return int(row[0]) > 0
+
+
+def _snapshot(db: OntologyDB) -> tuple[Any, ...]:
+    nodes = sorted(
+        tuple(r) for r in db.conn.execute(
+            "SELECT id, node_type, name, aliases_json, facets_json, source_doc_id FROM nodes"
+        ).fetchall()
+    )
+    edges = sorted(
+        tuple(r) for r in db.conn.execute(
+            "SELECT from_id, to_id, relation, facets_json, source_doc_id FROM edges"
+        ).fetchall()
+    )
+    vectors = sorted(r[0] for r in db.conn.execute("SELECT node_id FROM node_vectors").fetchall())
+    return nodes, edges, vectors
+
+
+def test_repair_removes_orphan_artifacts_and_canonicalizes_edges(tmp_path: Path) -> None:
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
+        _seed(db)
+        assert ("ent_acme", "PARTNER_WITH", "ent_beta") in _edges(db)
+        repair_ontology = _load_repair_ontology()
+        repair_ontology(db, create_minimal_registry())
+
+        # Orphan doc (no ingestion log entry): its node, vector, and edges are gone.
+        assert db.get_node("evt_orphan") is None
+        assert not _has_vector(db, "evt_orphan")
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE source_doc_id = 'doc_orphan'"
+        ).fetchone()[0] == 0
+        # Logged doc artifacts and canonical entities are kept.
+        assert db.get_node("evt_live") is not None
+        assert db.get_node("ent_beta") is not None
+
+        edges = _edges(db)
+        assert ("evt_live", "ABOUT", "ent_acme") in edges
+        assert ("ent_acme", "PARTNERS_WITH", "ent_beta") in edges
+        assert ("ent_jane", "WORKS_AT", "ent_acme") in edges
+        assert {rel for _, rel, _ in edges}.isdisjoint({"PARTNER_WITH", "HAS_EMPLOYEE"})
+
+
+def test_repair_merges_exact_duplicates_within_same_type_only(tmp_path: Path) -> None:
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
+        db.upsert_node(_entity("ent_gamma_a", "Gamma Labs", "company", ["GML"]), embedding=_vec(0))
+        db.upsert_node(_entity("ent_gamma_b", "gamma labs", "company", ["Gamma Laboratories"]), embedding=_vec(1))
+        db.upsert_node(_entity("ent_gamma_person", "Gamma Labs", "person"), embedding=_vec(2))
+        db.upsert_node(_event("evt_g", "Gamma Event", "doc_g"), embedding=_vec(3))
+        db.upsert_ingestion_log("notes/g.md", "doc_g", "hash_g", datetime.now(UTC).isoformat())
+        db.upsert_edge(_edge("e_g_a", "evt_g", "ABOUT", "ent_gamma_a", "doc_g"))
+        db.upsert_edge(_edge("e_g_b", "evt_g", "MENTIONS", "ent_gamma_b", "doc_g"))
+
+        repair_ontology = _load_repair_ontology()
+        repair_ontology(db, create_minimal_registry())
+
+        companies = [
+            n for n in db.list_all_nodes()
+            if n.node_type == "entity" and n.facets.get("entity_type") == "company"
+        ]
+        assert len(companies) == 1
+        survivor = companies[0]
+        loser = ({"ent_gamma_a", "ent_gamma_b"} - {survivor.id}).pop()
+        assert db.get_node(loser) is None
+        assert not _has_vector(db, loser)
+        assert {"GML", "Gamma Laboratories"} <= set(survivor.aliases)
+        # Edges are repointed to the survivor, not dropped.
+        assert {("evt_g", "ABOUT", survivor.id), ("evt_g", "MENTIONS", survivor.id)} <= _edges(db)
+        # A same-named entity of a different entity_type is not merged.
+        assert db.get_node("ent_gamma_person") is not None
+
+
+def test_repair_is_idempotent(tmp_path: Path) -> None:
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
+        _seed(db)
+        repair_ontology = _load_repair_ontology()
+        registry = create_minimal_registry()
+        repair_ontology(db, registry)
+        after_first = _snapshot(db)
+        repair_ontology(db, registry)
+        assert _snapshot(db) == after_first

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Proposal Pipeline"
+  short_description: "Run a compact proposal ledger"
+  default_prompt: "Use $proposal-pipeline to take this proposal from framing through audit."

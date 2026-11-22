@@ -1,0 +1,6 @@
+interface:
+  display_name: "First Principle Review"
+  short_description: "Review architecture from first principles"
+  default_prompt: "Use $first-principle to evaluate this proposal's architecture and state model."
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('theme.page_title', name=theme.name) }}{% endblock %}
+
+{% block content %}
+<section class="facet-card">
+  <div class="entry-title-row">
+    <h1 style="margin: 0; font-size: 1.55rem;">{{ theme.name }}</h1>
+    <div>
+      {% if stage %}
+        <span class="badge badge-{{ stage | lower }}">{{ t('theme.stage_badge', value=t_enum('stage', stage)) }}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% if theme.aliases %}
+    <div class="entry-meta">
+      <strong>{{ t('common.also_catalogued_as') }}</strong> {{ theme.aliases | join(", ") }}
+    </div>
+  {% endif %}
+  <p style="margin: 10px 0 0;">{{ theme.summary }}</p>
+</section>
+
+{% with facet_table_title=t('theme.facets_heading') %}
+  {% include "partials/facet_generic_table.html" %}
+{% endwith %}
+
+<section class="section-block" aria-label="{{ t('theme.first_order_heading') }}">
+  <h2>{{ t('theme.first_order_heading') }} ({{ first_order | length }})</h2>
+  {% if first_order %}
+    <table class="catalog-table">
+      <thead>
+        <tr>
+          <th>{{ t('theme.col_company') }}</th>
+          <th>{{ t('theme.col_consensus') }}</th>
+          <th>{{ t('theme.col_exposure') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in first_order %}
+          <tr>
+            <td>
+              <a href="/entity/{{ row.company.id }}"><strong>{{ row.company.name }}</strong></a>
+              {% if row.company.facets.get("ticker") %}
+                <span class="mono">({{ row.company.facets.get("ticker") }})</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.consensus_stance %}
+                <span class="badge badge-{{ row.consensus_stance | lower }}">{{ t_enum('stance', row.consensus_stance) }}</span>
+              {% else %}
+                {{ t('common.none') }}
+              {% endif %}
+            </td>
+            <td>
+              <ul style="margin: 0; padding-left: 18px;">
+                {% for link in row.links %}
+                  <li>
+                    {% if link.via == "direct" %}
+                      <span class="mono">{{ t_enum('relation', link.relation) }}</span> ({{ t('theme.via_direct') }})
+                    {% else %}
+                      <span class="mono">{{ t_enum('relation', link.entity_relation) }} &rarr; {{ format_via(link.via) }} &rarr; {{ t_enum('relation', link.theme_relation) }}</span>
+                      {% if link.source_label %}
+                        <span class="source-cite">[{% if link.source_exists %}<a href="/catalog?file={{ link.source_file | urlencode }}">{{ link.source_label }}</a>{% else %}{{ link.source_label }}{% endif %}]</span>
+                      {% endif %}
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>{{ t('theme.first_order_empty') }}</p>
+  {% endif %}
+</section>
+
+<section class="section-block" aria-label="{{ t('theme.second_order_aria') }}">
+  <h2>{{ t('theme.second_order_heading') }} ({{ second_order | length }})</h2>
+  {% if second_order %}
+    <table class="catalog-table">
+      <thead>
+        <tr>
+          <th>{{ t('theme.col_company') }}</th>
+          <th>{{ t('theme.col_consensus') }}</th>
+          <th>{{ t('theme.col_paths') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in second_order %}
+          <tr>
+            <td>
+              <a href="/entity/{{ row.company.id }}"><strong>{{ row.company.name }}</strong></a>
+              {% if row.company.facets.get("ticker") %}
+                <span class="mono">({{ row.company.facets.get("ticker") }})</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.consensus_stance %}
+                <span class="badge badge-{{ row.consensus_stance | lower }}">{{ t_enum('stance', row.consensus_stance) }}</span>
+              {% else %}
+                {{ t('common.none') }}
+              {% endif %}
+            </td>
+            <td>
+              {% for path in row.paths %}
+                <div class="mono">
+                  {{ t_enum('relation', path.relation) }} ({{ t_enum('direction', path.direction) }}) &rarr;
+                  <a href="/entity/{{ path.connected_to_id }}">{{ path.connected_to }}</a>
+                </div>
+              {% endfor %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>{{ t('theme.second_order_empty') }}</p>
+  {% endif %}
+</section>
+
+{% include "partials/section_events.html" %}
+{% include "partials/section_views.html" %}
+
+<p class="portal-more-link">
+  <a href="/ask?context={{ page_context | urlencode }}">{{ t('ask.link_from_theme', name=theme.name) }}</a>
+</p>
+{% endblock %}
