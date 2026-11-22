@@ -10,12 +10,23 @@ that talks to the agent. It never writes to `ontology.db`.
   template contexts, including `run_hybrid_search`.
 - `src/stock_ontology/web/catalog.py`: the raw notes browser, path-safe note
   lookup, XSS-safe Markdown rendering, and source citations.
+- `src/stock_ontology/web/navigation.py`: the navigation registry. Every HTML
+  route maps to a workflow (top nav: Research, Ontology), an owning section
+  (left nav), an archetype (`page` or `component`), and a breadcrumb trail.
+  `_render` resolves it for every page, so templates never set navigation
+  state themselves.
 - `src/stock_ontology/web/templates/` and `src/stock_ontology/web/static/`.
 
 ## Routes
 
 Pages: `/`, `/companies`, `/themes`, `/entity/{id}`, `/theme/{id}`, `/search`,
-`/catalog`, `/ontology`, `/ask`.
+`/catalog`, `/ontology`. `/ask` redirects to `/` with the Clippy dock open and
+the page context carried. The Clippy dock is on every page.
+
+A new HTML route must be added to `NAV_ROUTES` in `navigation.py`.
+`tests/test_web_navigation.py` fails on an unregistered route, a page without
+exactly one current workflow and section, a detail page without a breadcrumb,
+an inline `style=` or `<style>`, or a class missing from `library.css`.
 
 API: `/api/chat`, `/api/chat/reset`, `/api/health` (LLM chain diagnostics
 without secrets), `/api/language`, and `/set-language`.
@@ -40,5 +51,5 @@ The CLI `serve` command.
 
 ## Tests
 
-`tests/test_web.py`, plus web cases in `tests/test_i18n.py` and
-`tests/test_relationships.py`.
+`tests/test_web.py` and `tests/test_web_navigation.py`, plus web cases in
+`tests/test_i18n.py` and `tests/test_relationships.py`.
