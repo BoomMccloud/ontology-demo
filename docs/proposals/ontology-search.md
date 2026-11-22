@@ -1,6 +1,6 @@
 ---
 proposal_id: "ontology-search"
-state: BUILT
+state: ACCEPTED
 witness: independent
 candidate: "b8f6839 @ .claude/worktrees/ontology-search"
 ---
@@ -252,5 +252,34 @@ Candidate: `b8f6839 @ .claude/worktrees/ontology-search (proposal/ontology-searc
 - None.
 
 ## Audit
+
+Candidate: `b8f6839 @ .claude/worktrees/ontology-search` (HEAD 57ec1bb; `git diff --stat b8f6839 57ec1bb` touches only `docs/proposals/ontology-search.md`)
+
+Independence: separate-context. This was a fresh subagent that did not author Frame, Proof, or Build. It had seen only the ledger, the repository, and the candidate.
+
+Primary-claim verdict: PROVED. Evidence: `uv run pytest tests/test_web.py tests/test_agent.py -k "search_" -v -rA` gave 7 passed. These include `test_web_search_entity_first_card_sections_notes_and_agent_column`, `test_agent_search_nodes_returns_entity_first_with_match_reasons`, and `test_agent_search_notes_greps_only_supported_notes_inside_data_dir`. RED checked independently: `git archive d2b2c2b` (the a8701d4 source plus the witnesses only) extracted to the scratchpad, `uv run pytest -q` gave `5 failed, 144 passed`, with exactly the five witnesses failing. `git diff d2b2c2b b8f6839 -- tests/test_web.py tests/test_agent.py` is empty, so the witnesses are unmodified. They still assert what the claim needs: a name-reason best-match card above a semantic Apple consensus, relationship expansion, a note passage with file and line and no duplicate for the event's source, a single agent column with the query and a detach control, an empty query carrying no agent query, and the agent's `search_nodes` putting `ent_nvda` first with reason `name`. Reading the code confirms that one function, `src/stock_ontology/search.py:search_ontology`, backs both `web/viewmodels.py:build_search_results` and `agent.py:_tool_search_nodes`. Limit: the page contract is data attributes. The client-side run, the shared session, the visible detach, and the failed state in `clippy.js` have no automated owner, and Build checked them only by hand. Live Gemini ranking on the real `ontology.db` is not measured.
+
+Guardrail verdicts:
+- Never writes the DB, never reads outside `ONTOLOGY_DATA_DIR` or hidden or unsupported files: PROVED. Evidence: `test_web_search_reads_only_data_dir_notes_and_never_writes_db` and the agent `search_notes` witness pass. The web test was RED through its positive control. Code inspection shows `_iter_note_files` prunes dot-dirs, `os.walk` does not follow symlinked dirs, every file goes through `resolve_safe_note_path` (resolve plus `is_relative_to` root, a supported-extension check, and no hidden parts), and `grep_notes` does only literal `casefold` `in` matching. Limit: the exclusion assertions held vacuously before the change, so they are regression guards, not RED-proven. Caps and regex-literal handling are covered only by Build-owned `tests/test_search.py::test_grep_is_literal_case_insensitive_capped_and_stays_in_data_dir`.
+- Functional results render when the agent or embedding provider fails: PROVED. Evidence: `test_web_search_functional_results_survive_embedding_and_agent_failure` passes after being RED. `search_ontology` catches embedding errors around the vector step. Limit: the visible failed state of the column is client JS and is not automated.
+- Existing advanced-search filters keep narrowing: PROVED. Evidence: `test_web_nav_and_advanced_search_filters` and `test_web_home_entity_theme_search_and_clippy_chat` pass unchanged. `SearchFilters.matches` carries over the removed `run_hybrid_search` rules. Limit: these are preservation tests, so they cannot be shown RED.
+
+Scope and duty verdict: scope HELD, duties HELD. Evidence: the changed files (`git diff --stat a8701d4 b8f6839`) all fall under Frame's Include list. There are no changes under `src/stock_ontology/db/` or `pipeline.py`, no schema change, no new route, and no reranker. The changes to `tests/test_architecture.py` `MODULE_OF`/`ALLOWED` and to the `docs/architecture/*` and README "Calling the Agent" text match Frame's `Invariants changed`. Frame allowed amending the two `test_web.py` tests, but they were left unchanged and their "after" condition holds as written. The work follows Frame's named reuse: storage lookups, `get_incident_edges` plus `registry.canonicalize_edge`, `resolve_safe_note_path` moved into `search`, `/api/chat` plus the `clippy.js` session, and tool registration through `TOOL_SCHEMAS`/`execute_tool`. The constraint-capture duty is met: `README.md` under Query Agent Constraints has an entry with `**Why:**` and `**Guarded by:**`, and the three tests it names exist and pass. `search.html` has no inline styles, and locale parity passes in the full suite. Limit: Proof's supporting plan called for a page assertion in `tests/test_web.py` for the event-to-note-line link "once the link format exists". It was not added. That file is protected, and the fold is covered at function level by `tests/test_search.py::test_item_and_passage_from_one_file_appear_once_with_line`.
+
+Test homes:
+- `tests/test_search.py` (new) is the permanent owner of the shared `search` module's unit behavior, as Proof's supporting test plan assigned. It covers ranking, alias, canonical expansion, semantic failure, keyword mode, filters, period and recency, grep literal handling, caps and path safety, the fold, and `chat_endpoint` passing `data_dir`.
+- `tests/test_architecture.py` (amended) remains the owner of the layering rules, and the amendment is the entry Frame listed.
+
+Full gates: PASS. `uv run pytest -q` gave 157 passed. The decisive witness command above gave 7 passed. The RED replay at `d2b2c2b` gave 5 failed, 144 passed. Limit: all offline with fake LLM clients. No JS test harness exists, and no live provider was called.
+
+Residual risks:
+- An event or view whose source note matches only shows "line N" text beside a link to `/catalog?file=...`, not a line-anchored link. That falls short of Decision 3's "links to the matching line", and no page-level test covers it.
+- `grep_notes` walks and reads the whole data directory synchronously on every `/search` with a word. Files over 5 MB are skipped, and passages are capped at 30 in total, but the number of files walked is not capped, so a large corpus could slow the page.
+- `clippy.js` runs the agent once per word and language per tab session (`SEARCH_RUN_KEY`). Revisiting the same word in that tab shows the earlier chat rather than a new run, a narrow reading of Decision 11.
+- Keyword hits found only in summaries or facets are labeled `note`, and filter-only listings use `filter`, which is outside the five stated reasons. Build disclosed both, and neither breaks a witness.
+- The client column behavior (pin, detach, shared session, failed state) has only a manual check.
+
+Recommendation: ACCEPT
+Packet: no repair is required. Merging `proposal/ontology-search` remains the human-owned irreversible action. A follow-up proposal could add a line-anchored note link with a page assertion and a cap on the number of files walked, if the human wants them.
 
 ## Revisions
