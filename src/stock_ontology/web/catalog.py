@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import html
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -455,6 +456,145 @@ def _scan_raw_notes(
     return notes, note_texts_lower
 
 
+# ---------------------------------------------------------------------------
+# Note page presentation models. `build_catalog_context` hands the note reader
+# (`partials/note_reader.html`) one `NoteDetail`, built by `_note_detail`, so the
+# template decides no links or labels. Enum codes (`reasons`) stay raw for `t_enum`.
+# `tests/test_web.py::test_note_page_templates_only_see_presentation_models` enforces this.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class NoteLink:
+    """A labeled link on the note page."""
+
+    label: str
+    href: str
+
+
+@dataclass(frozen=True)
+class NoteCompanyChip:
+    """The company the note's folder matches."""
+
+    label: str
+    href: str
+
+
+@dataclass(frozen=True)
+class NoteAuthorChip:
+    """An author linked to the note, with why it is linked."""
+
+    name: str
+    href: str | None
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class NoteDetail:
+    """Everything the note reader shows for one raw note."""
+
+    rel_path: str
+    title: str
+    folder: str
+    subject_label: str
+    company: NoteCompanyChip | None
+    authors: tuple[NoteAuthorChip, ...]
+    back_link: NoteLink
+    show_raw: bool
+    body_html: str
+    raw_lines: tuple[str, ...]
+    prev_link: NoteLink | None
+    next_link: NoteLink | None
+
+
+def _note_detail(
+    note_meta: dict[str, Any],
+    raw_text: str,
+    *,
+    fmt: str,
+    view_mode: str,
+    active_group: dict[str, Any] | None,
+    sibling_list: list[dict[str, Any]],
+    matched_company: dict[str, Any] | None,
+    author_groups: list[dict[str, Any]],
+    lang: str,
+) -> NoteDetail:
+    """Map a resolved note and its catalog lookups to the note reader's model."""
+    rel_path = str(note_meta["rel_path"])
+    folder = str(note_meta["folder"])
+    subject_label = str(note_meta["subject_label"])
+
+    company = None
+    if matched_company:
+        ticker = matched_company.get("ticker")
+        label = f"{matched_company['name']} ({ticker})" if ticker else str(matched_company["name"])
+        company = NoteCompanyChip(label=label, href=f"/entity/{matched_company['id']}")
+
+    authors = tuple(
+        NoteAuthorChip(
+            name=str(grp["name"]),
+            href=grp["entity_href"] or None,
+            reasons=tuple(
+                next((n["link_reasons"] for n in grp["notes"] if n["rel_path"] == rel_path), [])
+            ),
+        )
+        for grp in author_groups
+        if any(n["rel_path"] == rel_path for n in grp["notes"])
+    )
+
+    if view_mode == "author" and active_group:
+        author_query = f"view=author&author={quote(str(active_group['id']))}"
+        back_link = NoteLink(
+            label=translate("catalog.up_to_dir", lang=lang, label=active_group["label"]),
+            href=f"/catalog?{author_query}",
+        )
+    elif view_mode == "all":
+        back_link = NoteLink(label=translate("catalog.back_to_all_notes", lang=lang), href="/catalog?view=all")
+    else:
+        back_link = NoteLink(
+            label=translate("catalog.up_to_dir", lang=lang, label=subject_label),
+            href=f"/catalog?view=company&dir={quote(folder)}",
+        )
+
+    if view_mode == "company":
+        list_query = f"view=company&dir={quote(folder)}"
+    elif view_mode == "author" and active_group:
+        list_query = author_query
+    else:
+        list_query = f"view={view_mode}"
+
+    def _sibling(sib: dict[str, Any]) -> NoteLink:
+        return NoteLink(
+            label=str(sib["title"]), href=f"/catalog?{list_query}&file={quote(str(sib['rel_path']))}"
+        )
+
+    prev_link = None
+    next_link = None
+    for idx, sib in enumerate(sibling_list):
+        if sib["rel_path"] == rel_path:
+            if idx > 0:
+                prev_link = _sibling(sibling_list[idx - 1])
+            if idx + 1 < len(sibling_list):
+                next_link = _sibling(sibling_list[idx + 1])
+            break
+
+    show_raw = fmt == "raw"
+    return NoteDetail(
+        rel_path=rel_path,
+        title=str(note_meta["title"]),
+        folder=folder,
+        subject_label=subject_label,
+        company=company,
+        authors=authors,
+        back_link=back_link,
+        show_raw=show_raw,
+        body_html="" if show_raw else render_markdown_safe(raw_text),
+        raw_lines=tuple(raw_text.splitlines()) if show_raw else (),
+        prev_link=prev_link,
+        next_link=next_link,
+    )
+
+
 def build_catalog_context(
     db: OntologyDB,
     data_dir: Path,
@@ -789,7 +929,7 @@ def build_catalog_context(
                     break
 
     # 4. Optional selected raw note preview
-    active_note: dict[str, Any] | None = None
+    active_note: NoteDetail | None = None
     if selected_file.strip():
         candidate = resolve_safe_note_path(data_dir, selected_file.strip())
         if candidate is None:
@@ -824,23 +964,6 @@ def build_catalog_context(
                 "extracted_total": 0,
             }
 
-        linked_authors = [
-            {
-                "id": grp["id"],
-                "name": grp["name"],
-                "role": grp["role"],
-                "organization": grp.get("organization", ""),
-                "entity_href": grp["entity_href"],
-                "reasons": next(
-                    (n["link_reasons"] for n in grp["notes"] if n["rel_path"] == canonical_rel),
-                    [],
-                ),
-            }
-            for grp in author_groups
-            if any(n["rel_path"] == canonical_rel for n in grp["notes"])
-        ]
-        matched_company = company_lookup.get(_slug_key(note_meta["folder"]))
-
         sibling_list: list[dict[str, Any]] = []
         if active_group is not None:
             sibling_list = active_group["notes"]
@@ -852,34 +975,17 @@ def build_catalog_context(
                     sibling_list = grp["notes"]
                     break
 
-        prev_note = None
-        next_note = None
-        for idx, sib in enumerate(sibling_list):
-            if sib["rel_path"] == canonical_rel:
-                if idx > 0:
-                    prev_note = {
-                        "rel_path": sibling_list[idx - 1]["rel_path"],
-                        "title": sibling_list[idx - 1]["title"],
-                    }
-                if idx + 1 < len(sibling_list):
-                    next_note = {
-                        "rel_path": sibling_list[idx + 1]["rel_path"],
-                        "title": sibling_list[idx + 1]["title"],
-                    }
-                break
-
-        active_note = {
-            **note_meta,
-            "raw_text": raw_text,
-            "raw_lines": raw_text.splitlines(),
-            "rendered_html": render_markdown_safe(raw_text),
-            "matched_company": matched_company,
-            "linked_authors": linked_authors,
-            "linked_people": linked_authors,
-            "prev_note": prev_note,
-            "next_note": next_note,
-            "search_nodes_href": f"/search?source_file={quote(canonical_rel)}",
-        }
+        active_note = _note_detail(
+            note_meta,
+            raw_text,
+            fmt=fmt,
+            view_mode=view_mode,
+            active_group=active_group,
+            sibling_list=sibling_list,
+            matched_company=company_lookup.get(_slug_key(note_meta["folder"])),
+            author_groups=author_groups,
+            lang=lang,
+        )
 
     ingested_notes = sum(1 for n in notes if n["status"] == "ingested")
     total_dirs = len(company_groups) + len(other_dir_groups)
@@ -895,7 +1001,7 @@ def build_catalog_context(
     }.get(view_mode, "catalog.view_company")
     view_label = translate(view_key, lang=lang)
     page_context = (
-        translate("page_context.catalog_file", lang=lang, file=active_note["title"])
+        translate("page_context.catalog_file", lang=lang, file=active_note.title)
         if active_note is not None
         else translate("page_context.catalog_view", lang=lang, view=view_label)
     )
@@ -909,7 +1015,7 @@ def build_catalog_context(
         "selected_author": active_author,
         "selected_person": active_author,
         "selected_alpha": active_alpha,
-        "selected_file": active_note["rel_path"] if active_note else "",
+        "selected_file": active_note.rel_path if active_note else "",
         "note_format": fmt,
         "company_groups": company_groups,
         "filtered_company_groups": filtered_company_groups,

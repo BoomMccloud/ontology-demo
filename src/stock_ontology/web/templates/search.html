@@ -53,7 +53,7 @@
   </div>
 {% endif %}
 
-<div class="search-layout" data-search-layout>
+<div>
   <div class="search-results">
     {% if has_search_criteria %}
       <h2 class="u-fs-1p15rem u-bdb-1px-solid-6e6759 u-pb-4px">
@@ -114,16 +114,12 @@
     {% endif %}
   </div>
 
-  <aside class="search-agent-column" aria-label="{{ t('search.agent_title') }}" data-agent-column data-agent-query="{{ agent_query }}" data-agent-prompt="{{ agent_prompt }}" data-agent-state="{{ 'running' if agent_query else 'idle' }}">
-    <div class="search-agent-bar">
-      <strong>{{ t('search.agent_title') }}</strong>
-      <button type="button" class="portal-btn" aria-pressed="false" data-agent-detach data-label-detach="{{ t('search.agent_detach') }}" data-label-pin="{{ t('search.agent_pin') }}">{{ t('search.agent_detach') }}</button>
-    </div>
+  {# Moved into the Ask Clippy dock by clippy.js, which opens the dock and runs the search word once. #}
+  <div class="search-agent-note" data-agent-column data-agent-query="{{ agent_query }}" data-agent-prompt="{{ agent_prompt }}" data-agent-state="{{ 'running' if agent_query else 'idle' }}">
     <p class="search-agent-intro">
       {% if agent_query %}{{ t('search.agent_intro', query=agent_query) }}{% else %}{{ t('search.agent_idle') }}{% endif %}
     </p>
     <p class="search-agent-failed" data-agent-failed hidden>{{ t('search.agent_failed') }}</p>
-    <div class="search-agent-slot" data-agent-slot></div>
-  </aside>
+  </div>
 </div>
 {% endblock %}

@@ -17,7 +17,9 @@ that talks to the agent. It never writes to `ontology.db`.
   (with its `SecondOrderPath`s), `EventRow` and `ViewRow`.
 - `src/stock_ontology/web/catalog.py`: the raw notes browser, XSS-safe Markdown
   rendering, and source citations. Note paths go through the search module's
-  `resolve_safe_note_path`.
+  `resolve_safe_note_path`. The note page (`?file=`) hands its reader partial
+  one frozen `NoteDetail` (with `NoteCompanyChip`, `NoteAuthorChip` and
+  `NoteLink`s), built by `_note_detail`.
 - `src/stock_ontology/web/navigation.py`: the navigation registry. Every HTML
   route maps to a workflow (top nav: Research, Ontology), an owning section
   (left nav), an archetype (`page` or `component`), and a breadcrumb trail.
@@ -33,12 +35,11 @@ the page context carried. The Clippy dock is on every page.
 
 `/search` shows the functional results first: a best-match card, then
 sections for entities and themes, items connected through relationships,
-events and views, and note passages, each labeled with why it matched. Beside
-them, a pinned agent column holds the Clippy chat window. `clippy.js` moves the
-dock's window into the column, sends the search word to `/api/chat` once per
-word, and shows a failed state if the run fails. Detach turns the column into
-a floating window. The column, the floating window, and the dock on other
-pages share one chat session.
+events and views, and note passages, each labeled with why it matched. The
+Clippy dock behaves as on every other page: it floats in the lower right and
+can be minimized. `clippy.js` moves the search note into the dock, opens the
+dock, sends the search word to `/api/chat` once per word, and shows a failed
+state if the run fails. Every page shares one chat session.
 
 The advanced-search options come from `build_search_filter_options`: node
 types from `search.NODE_TYPES`, every enum from `vocab.py`, and relations from

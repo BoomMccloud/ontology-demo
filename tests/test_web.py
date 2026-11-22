@@ -1706,8 +1706,8 @@ def test_entity_page_templates_only_see_presentation_models(tmp_path: Path) -> N
 #     (one of name, alias, relationship, note, semantic);
 #   - every grepped note passage is an element with `data-note-file` (path relative to
 #     ONTOLOGY_DATA_DIR), `data-note-line` (1-based), and `data-match-reason="note"`;
-#   - the agent side column is one element with `data-agent-column` and `data-agent-query`
-#     (the search word, empty when there is none), and holds a `data-agent-detach` control.
+#   - the agent note is one element with `data-agent-column` and `data-agent-query`
+#     (the search word, empty when there is none); clippy.js moves it into the Clippy dock.
 
 _SEARCH_NOTE_FILE = "Notes/2026-11-10_channel_check.md"
 _SEARCH_EVENT_FILE = "NVDA/2026-11-01_q3.md"
@@ -1839,11 +1839,11 @@ def test_web_search_entity_first_card_sections_notes_and_agent_column(tmp_path: 
     assert "NVIDIA lead times shortened." in r.text
     assert all(t["data-note-file"] != _SEARCH_EVENT_FILE for t in passages)
 
-    # Agent side column for this search, detachable, on the shared Clippy chat session.
+    # Agent note for this search, carried into the shared Clippy dock (no pinned column).
     columns = [t for t in tags if "data-agent-column" in t]
     assert len(columns) == 1
     assert columns[0].get("data-agent-query") == "nvidia"
-    assert any("data-agent-detach" in t for t in tags)
+    assert not any("data-agent-detach" in t for t in tags)
     assert "/static/clippy.js" in r.text
     assert "/api/chat" in client.get("/static/clippy.js").text
 
@@ -2015,3 +2015,96 @@ def test_search_new_filter_chips_and_labels_in_every_locale(tmp_path: Path, lang
         label = translate(f"search.{key}", lang=lang)
         assert label != f"search.{key}"
         assert label in page, key
+
+
+# ---------------------------------------------------------------------------
+# Presentation-model contract for the catalog note page (proposal `event-view-separation`)
+# ---------------------------------------------------------------------------
+
+NOTE_READER_TEMPLATE = "partials/note_reader.html"
+NOTE_READER_NAMES = {"active_note", "t", "t_enum"}
+
+
+def _non_model_paths(value: Any, path: str) -> list[str]:
+    """List every place below `value` that is a raw dict, a list, or a mutable dataclass."""
+    found: list[str] = []
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        if not type(value).__dataclass_params__.frozen:
+            found.append(f"{path} (mutable {type(value).__name__})")
+        for field in dataclasses.fields(value):
+            found.extend(_non_model_paths(getattr(value, field.name), f"{path}.{field.name}"))
+    elif isinstance(value, dict):
+        found.append(f"{path} (dict)")
+    elif isinstance(value, list):
+        found.append(f"{path} (list)")
+    elif isinstance(value, tuple):
+        for idx, item in enumerate(value):
+            found.extend(_non_model_paths(item, f"{path}[{idx}]"))
+    return found
+
+
+def test_note_page_templates_only_see_presentation_models(tmp_path: Path) -> None:
+    """The catalog note page renders from a frozen presentation model built by a mapper."""
+    import jinja2
+    from jinja2 import meta
+
+    from stock_ontology.web.catalog import build_catalog_context
+
+    db_path = tmp_path / "web.db"
+    _seed_web_db(db_path)
+    data_dir = tmp_path / "data"
+    (data_dir / "NVDA").mkdir(parents=True)
+    (data_dir / "NVDA" / "2026-10-15_q3.md").write_text(
+        "# NVDA Q3 Preview\n\nBlackwell <script>alert(1)</script> ramp.\n\nThird & last.\n", encoding="utf-8"
+    )
+    (data_dir / "NVDA" / "2026-09-01_old.md").write_text("# NVDA Older Note\n\nOld.\n", encoding="utf-8")
+    (data_dir / "NVDA" / "2026-11-01_new.md").write_text("# NVDA Newer Note\n\nNew.\n", encoding="utf-8")
+    settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=data_dir)
+    client = TestClient(create_app(settings, llm=FakeWebLLM()))
+    note_file = "NVDA/2026-10-15_q3.md"
+
+    def reader(params: dict[str, str]) -> str:
+        """The note reader section, with whitespace runs squashed so markup layout does not matter."""
+        page = client.get("/catalog", params=params)
+        assert page.status_code == 200
+        section = page.text.split('<section aria-label="Raw Note Reader">', 1)[1].split("</section>", 1)[0]
+        return re.sub(r"\s+>", ">", re.sub(r"[ \t\n]+", " ", section))
+
+    # 1. The rendered note page still shows the note, its chips and its navigation.
+    rendered = reader({"file": note_file})
+    assert "<h2 class=\"u-bd-none u-m-0 u-p-0 u-fs-1p25rem\"> NVDA Q3 Preview </h2>" in rendered
+    assert 'Company: <a href="/entity/ent_nvda"> NVIDIA (NVDA) </a>' in rendered
+    assert 'Author: <a href="/entity/ent_kenji">Kenji Sato</a> </span>' in rendered
+    assert '<a href="/catalog?view=company&amp;dir=NVDA" class="retro-link-btn">← Back to NVIDIA</a>' in rendered
+    assert '<div class="note-rendered"><h1>NVDA Q3 Preview</h1>' in rendered
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered and "<script>" not in rendered
+    assert '&laquo; <a href="/catalog?view=company&amp;dir=NVDA&amp;file=NVDA/2026-11-01_new.md"> NVDA Newer Note </a>' in rendered
+    assert '<a href="/catalog?view=company&amp;dir=NVDA&amp;file=NVDA/2026-09-01_old.md"> NVDA Older Note </a> &raquo;' in rendered
+
+    raw = reader({"view": "author", "author": "Kenji Sato", "file": note_file, "format": "raw"})
+    assert '<a href="/catalog?view=author&amp;author=ent_kenji" class="retro-link-btn">← Back to Kenji Sato</a>' in raw
+    assert '<span id="L3" class="note-line">Blackwell &lt;script&gt;alert(1)&lt;/script&gt; ramp. </span>' in raw
+    assert '<span id="L5" class="note-line">Third &amp; last. </span></pre>' in raw
+    assert "note-rendered" not in raw
+    assert '<span class="source-cite">Start of list</span>' in raw and '<span class="source-cite">End of list</span>' in raw
+
+    all_view = reader({"view": "all", "file": note_file})
+    assert '<a href="/catalog?view=all" class="retro-link-btn">← Back to All Notes</a>' in all_view
+    assert '<a href="/catalog?view=all&amp;file=NVDA/2026-11-01_new.md">' in all_view
+
+    # 2. The view model hands the note reader one frozen presentation model, with no raw dicts or lists.
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        for view, author in (("company", ""), ("author", "Kenji Sato"), ("all", "")):
+            ctx = build_catalog_context(db, data_dir, view=view, selected_author=author, selected_file=note_file)
+            note = ctx["active_note"]
+            assert dataclasses.is_dataclass(note), view
+            assert _non_model_paths(note, "active_note") == [], view
+
+    # 3. The note reader is a partial that reads only that model, and catalog.html only includes it.
+    catalog_src = (TEMPLATES_DIR / "catalog.html").read_text(encoding="utf-8")
+    assert '{% include "' + NOTE_READER_TEMPLATE + '" %}' in catalog_src
+    assert re.search(r"active_note\s*[.\[]", catalog_src) is None
+    reader_src = (TEMPLATES_DIR / NOTE_READER_TEMPLATE).read_text(encoding="utf-8")
+    names = meta.find_undeclared_variables(jinja2.Environment().parse(reader_src))
+    assert names <= NOTE_READER_NAMES, sorted(names - NOTE_READER_NAMES)
+    assert RAW_FACET_TOKEN.search(reader_src) is None
