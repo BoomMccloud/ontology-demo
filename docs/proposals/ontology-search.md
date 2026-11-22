@@ -86,6 +86,10 @@ Decided by the human on 2026-11-22, in answer to the draft's open choices.
 1. **The design of the new search results page.** The layout of the functional
    results, the agent results window, and the invitation to chat, as a new
    search result component and product behavior.
+   Mockup for review: https://claude.ai/artifact/SJQ5oCUte9f5pbSpyYfvdt,
+   with layout A (agent column beside the results), layout B (agent window
+   floating over the results), and the agent window's running, answered, and
+   failed states.
 
 ## Frame
 
