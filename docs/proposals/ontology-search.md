@@ -9,7 +9,7 @@ candidate: "unassigned"
 
 ## Proposal
 
-Status: draft, awaiting human approval.
+Status: open choices decided, awaiting human approval.
 
 ### Intent
 
@@ -44,36 +44,31 @@ than the NVIDIA company, and the earlier proposal framed the fix too narrowly.
 
 None stated.
 
-### Open choices
+### Decisions
 
-1. **What "entities first" means.** List entity matches at the top of the
-   results, or resolve the search word to entities first and use them to find
-   the related relationships, events, views, and notes, or both.
-2. **Whether edges are searched at all.** The request marks this with "?".
-   Options: search relationships as results of their own (for example
-   "NVIDIA supplies Apple"), use them only to expand from matched entities, or
-   leave them out.
-3. **Raw notes versus extracted items.** Whether raw note results are the note
-   files themselves, passages from them, or the events and views extracted from
-   them, and what happens when a raw note and an item extracted from it both
-   match.
-4. **How results are presented.** One ranked list mixing all kinds, or grouped
-   sections (entities, relationships, notes), or a top "best match" card for
-   the matched entity followed by the rest.
-5. **Which surfaces use it.** The Web UI search, the PM agent's search tool, or
-   both.
-6. **Whether results explain why they matched** (name, alias, relationship,
-   text in a note, or semantic similarity).
-7. **Sequence.** These parts could ship separately: entity search, relationship
-   search, raw note search, and the new presentation.
-8. **The `entity-first-search` ledger.** Abandon it in favor of this proposal,
-   or keep it as a first step.
-9. **Time as a ranking signal.** Whether how recent a result is, or whether
-   it falls in a time range the search word implies (such as an earnings
-   quarter), affects its rank, or time stays only a manual filter.
-10. **A reranking step after results are combined.** Whether combined results
-    are reordered by a dedicated reranking model, as Hindsight does, which adds
-    a model the product depends on, or are presented in their combined order.
+Decided by the human on 2026-11-22, in answer to the draft's open choices.
+
+1. **Entities first** means both: matched entities are listed at the top, and
+   they are also used to find the related relationships, events, views, and
+   notes.
+2. **Edges** are used only to expand from matched entities. Relationships are
+   not results of their own.
+3. **Raw notes** results are passages from the note files. When an event or
+   view extracted from a note also matches, the extracted item is shown and
+   links to its source passage instead of the passage appearing twice.
+4. **Presentation** is a top "best match" card for the matched entity, followed
+   by grouped sections (entities, relationships, notes).
+5. **Surfaces**: both the Web UI search and the PM agent's search tool use it.
+6. **Each result explains why it matched** (name, alias, relationship, text in
+   a note, or semantic similarity).
+7. **Sequence**: entity search, edge expansion, raw note search, and the new
+   presentation ship as one change.
+8. **The `entity-first-search` ledger** is abandoned in favor of this proposal.
+   It was removed in commit `b8444a2`.
+9. **Time is a ranking signal**: recency, and a time range the search word
+   implies (such as an earnings quarter), affect rank.
+10. **A reranking step** reorders the combined results with a dedicated
+    reranking model, as Hindsight does.
 
 ## Frame
 
