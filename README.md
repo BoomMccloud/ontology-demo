@@ -99,6 +99,12 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
   **Why:** a 5,000-node scan ordered by recency let newer events and views push old entities out of the window, so ingestion created duplicate entities (proposal `ingestion-write-integrity`, 2026-11-22).
   **Guarded by:** `tests/test_pipeline.py::test_pipeline_resolves_old_entity_past_5000_newer_nodes`.
 
+## Query Agent Constraints
+
+- Register the ontology tools on the Pydantic AI agent as `async` functions with `sequential=True`, so they run on the thread that opened the `OntologyDB`. Never register a plain `def` tool that touches the DB.
+  **Why:** Pydantic AI runs sync tools in worker threads, and the SQLite connection refused them ("objects created in a thread can only be used in that same thread"), so every ontology tool returned an error (proposal `pydantic-ai-agent`, 2026-11-22).
+  **Guarded by:** `tests/test_agent.py::test_agent_ux1_meeting_note_consensus_check`.
+
 ## Tests (Offline)
 
 ```bash
