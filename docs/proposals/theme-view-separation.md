@@ -1,6 +1,6 @@
 ---
 proposal_id: "theme-view-separation"
-state: BUILT
+state: ACCEPTED
 witness: builder
 candidate: "2abd270 @ /Users/jasonbxu/Documents/GitHub/stock_ontology/.claude/worktrees/theme-view-separation (branch proposal/theme-view-separation)"
 ---
@@ -129,9 +129,51 @@ Logs and scratch scripts live in the session scratchpad `/private/tmp/claude-502
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+Candidate: `2abd270 @ /Users/jasonbxu/Documents/GitHub/stock_ontology/.claude/worktrees/theme-view-separation (branch proposal/theme-view-separation)`, base `27ffbcb`. The ledger-only commit `559e364` was read, not audited as code.
+
+Independence: fresh-context. The auditing context had seen only the orchestrator's task brief, the repo, the ledger and the candidate diff. It did not build the candidate or see the builder's logs.
+
+Primary-claim verdict: PROVED. Evidence:
+- `uv run pytest tests/test_web.py tests/test_web_navigation.py -v`: 54 passed.
+- On a `git archive 27ffbcb` copy with the candidate's `tests/test_web.py` dropped in, `test_theme_page_templates_only_see_presentation_models` is RED. The render part passes, then the context walk fails with 7 raw facet paths, starting at `ctx['theme']['facets']`. A static grep of the base `theme.html` shows `.facets` reads at lines 43, 44, 60, 100 and 101.
+- On the candidate, `theme.html` has no `.facets` or `edge_facets` read. The only hit is the i18n key `theme.facets_heading`, which `RAW_FACET_TOKEN` correctly ignores.
+- `build_theme_context` now returns `ThemeHeader`, `FirstOrderRow`/`ExposureLink`, `SecondOrderRow`/`SecondOrderPath`, `EventRow`, `ViewRow`, a plain `stage` string and prepared pairs. The company cell reuses `_entity_header` and indirect sources reuse `_source_citation`, as the Frame required.
+- Mutation check on a scratch copy: adding `row.company.facets` back into `theme.html` fails part 3 with `['theme.html']`. Passing raw `second_order` rows fails part 1, because the ticker is lost. With both mutations reverted, the witness passes again. The witness does not pass trivially.
+- Same-information evidence comes from an independent pytest plugin that captured every `/theme/` and `/entity/` page requested by `tests/test_web.py`, `tests/test_web_navigation.py`, `tests/test_relationships.py` and `tests/test_i18n.py`, at base and at candidate, twice each. Run 1: 48 pages, 39 identical and 9 equal as sorted lines, 0 different. Run 2: 47 identical and 1 equal as sorted lines, 0 different. Base against base also gives 1 sorted-equal page, so the row-order variance is already present at 27ffbcb.
+- A scratch edge-case seed on both trees covered theme aliases and extra facets in en and zh; a non-string ticker and a company with no ticker; an incoming direct link; unnormalizable and normalizable direct sentiment; an event link whose cited note is missing and a view link with no source; second-order owns, sells-to and competes paths; and three entity pages. The entity pages are byte-identical. The theme pages differ only by two blank lines from the removed `{% set %}` line, and are identical once blank lines are dropped.
+
+Limit: the direct-link fallback to the link facets `sentiment` is preserved in `_exposure_link`, but storage (`_merge_exposure`) seems to make it unreachable. With an unnormalizable value, neither tree renders a badge, so that branch has equal behavior but no live path exercises it.
+
+Guardrail verdicts:
+- Entity pages render unchanged and the entity witness still passes: PROVED. Evidence: `uv run pytest tests/test_web.py -k presentation_models` gives 2 passed. Every `/entity/` capture in both runs matches the base, and the scratch entity pages are byte-identical. No entity template or partial changed in the diff. Limit: this covers only the entity pages the suites and the scratch seed request.
+- The web UI opens `ontology.db` read-only and adds no write path: PROVED. Evidence: `git diff 27ffbcb 2abd270 -- src/stock_ontology/db` is empty. `app.py::theme_page` is unchanged and still uses `_open_ro_db`. The new witness opens the DB with `read_only=True` and uses `FakeWebLLM`, and nothing in the diff calls a live provider. `tests/test_relationships.py::test_guardrail_read_only_agent_web_inspect_and_audit` passes in the full gate.
+
+Scope and duty verdict: scope HELD; duties HELD. Evidence:
+- All six changed files are in Frame's Include list: `viewmodels.py`, `theme.html`, `navigation.py::_theme`, `tests/test_web.py`, one note in `docs/architecture/web.md`, and the Web UI Constraints entry in `README.md`.
+- Nothing under `src/stock_ontology/db/`, CSS, locales, entity templates or event pages changed.
+- `_seed_presentation_db` and the entity witness are unchanged. The test diff only adds lines.
+- Supporting obligations are met: raw enum codes are kept, `_theme` reads the header's `name`, and no extra unit tests were added.
+- The constraint-capture duty is met. The README entry names both witnesses, and both exist and pass.
+
+Limit: Frame records `Invariants changed: None`, yet the README invariant was widened to cover `theme.html`. This is in scope because Frame's Include list names exactly this README edit, and the rule only gets stricter.
+
+Test homes: `tests/test_web.py`, the permanent owner of web page and presentation-model witnesses, next to the entity witness and reusing its helpers.
+
+Full gates: PASS.
+- `uv sync`: resolved, no changes.
+- `uv run pytest tests/test_web.py tests/test_web_navigation.py -v`: 54 passed.
+- `uv run pytest -v`: 147 passed.
+- `uv run ruff check` on the changed Python files: all checks passed.
+
+Limit: the gates are offline only. No live DB under `ONTOLOGY_DATA_DIR` was rendered.
+
+Residual risks:
+- `_raw_facet_paths` walks only the `build_theme_context` output. `app.py` then adds `rail`, which today holds only counts, so a future raw field added there would not be caught.
+- The candidate drops `consensus_summary` and `via_node_id`, which no template reads today. A later template need would require a model field.
+- Mappers coerce some values with `str()`, for example `summary`. That matches how Jinja renders the same values today, but it hides type problems at the model boundary.
+
+Recommendation: ACCEPT
+Packet: no change is required. Merging `proposal/theme-view-separation` into `main` is the human-owned irreversible step.
 
 ## Revisions
 
