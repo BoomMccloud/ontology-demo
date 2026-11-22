@@ -162,3 +162,83 @@ def test_repair_is_idempotent(tmp_path: Path) -> None:
         after_first = _snapshot(db)
         repair_ontology(db, registry)
         assert _snapshot(db) == after_first
+
+
+# ---------------------------------------------------------------------------
+# Ingestion follow-ups: self-loop counts, merged survivors, re-embedding
+# ---------------------------------------------------------------------------
+
+
+def _seed_duplicates_with_cross_edge(db: OntologyDB) -> None:
+    """Two exact-duplicate companies joined by an edge that becomes a self-loop after merge."""
+    db.upsert_node(_entity("ent_delta_a", "Delta Power", "company", ["DPW"]), embedding=_vec(0))
+    db.upsert_node(_entity("ent_delta_b", "delta power", "company", ["Delta Power Systems"]), embedding=_vec(1))
+    db.upsert_edge(_edge("e_delta_loop", "ent_delta_a", "SUPPLIES_TO", "ent_delta_b", None))
+
+
+def test_repair_counts_self_loops_and_lists_merged_survivors(tmp_path: Path) -> None:
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
+        _seed_duplicates_with_cross_edge(db)
+        report = _load_repair_ontology()(db, create_minimal_registry())
+
+        survivors = [n.id for n in db.list_all_nodes() if n.node_type == "entity"]
+        assert len(survivors) == 1
+        assert db.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 0
+        assert report.nodes_merged == 1
+
+        assert getattr(report, "self_loops_deleted", None) == 1, (
+            "repair deleted a self-loop edge but did not count it"
+        )
+        assert getattr(report, "merged_survivor_ids", None) == survivors, (
+            "repair does not report the IDs of merged survivors"
+        )
+        assert report.total_changes == 2
+
+
+class _RepairEmbedLLM:
+    def __init__(self) -> None:
+        self.seen_texts: list[str] = []
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        self.seen_texts.extend(texts)
+        out = []
+        for text in texts:
+            v = [0.0] * DIM
+            v[(len(text) % (DIM - 2)) + 2] = 1.0
+            out.append(v)
+        return out
+
+
+def _load_reembed_nodes() -> Callable[..., Any] | None:
+    for module_name in ("stock_ontology.repair", "stock_ontology.pipeline"):
+        fn = getattr(importlib.import_module(module_name), "reembed_nodes", None)
+        if callable(fn):
+            return fn
+    return None
+
+
+def test_reembed_gives_merged_survivor_a_fresh_embedding(tmp_path: Path) -> None:
+    from stock_ontology.pipeline import node_embedding_text
+
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
+        _seed_duplicates_with_cross_edge(db)
+        report = _load_repair_ontology()(db, create_minimal_registry())
+        survivor_id = next(n.id for n in db.list_all_nodes() if n.node_type == "entity")
+        stale = db.get_node_embeddings([survivor_id])[survivor_id]
+
+        reembed_nodes = _load_reembed_nodes()
+        assert reembed_nodes is not None, (
+            "no reembed_nodes(db, llm, node_ids) to recompute merged survivors' embeddings"
+        )
+        llm = _RepairEmbedLLM()
+        reembed_nodes(db, llm, getattr(report, "merged_survivor_ids", [survivor_id]))
+
+        survivor = db.get_node(survivor_id)
+        assert survivor is not None
+        expected_text = node_embedding_text(survivor)
+        # The fresh text includes the loser's labels unioned into the survivor.
+        assert "Delta Power Systems" in expected_text
+        assert expected_text in llm.seen_texts
+        fresh = db.get_node_embeddings([survivor_id])[survivor_id]
+        assert fresh == pytest.approx(llm.embed_texts([expected_text])[0])
+        assert fresh != pytest.approx(stale)

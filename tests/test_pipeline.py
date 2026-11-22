@@ -1313,3 +1313,235 @@ def test_pipeline_watch_continues_after_a_run_raises(tmp_path: Path, monkeypatch
         except RuntimeError as exc:
             pytest.fail(f"watch() stopped after a failing tick: {exc}")
         assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Ingestion follow-ups: unchanged and moved notes, consensus targets, catalog
+# ---------------------------------------------------------------------------
+
+
+def _record_data_reads(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> list[str]:
+    """Record every file under `data_dir` opened through pathlib or builtin open."""
+    import builtins
+    import io
+
+    root = data_dir.resolve()
+    reads: list[str] = []
+
+    def _note(target: Any) -> None:
+        try:
+            resolved = Path(target).resolve()
+        except TypeError:
+            return
+        if resolved.is_relative_to(root):
+            reads.append(resolved.relative_to(root).as_posix())
+
+    orig_read_text = Path.read_text
+    orig_read_bytes = Path.read_bytes
+    orig_path_open = Path.open
+    orig_open = builtins.open
+
+    def read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        _note(self)
+        return orig_read_text(self, *args, **kwargs)
+
+    def read_bytes(self: Path) -> bytes:
+        _note(self)
+        return orig_read_bytes(self)
+
+    def path_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        _note(self)
+        return orig_path_open(self, *args, **kwargs)
+
+    def any_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if isinstance(file, (str, Path)):
+            _note(file)
+        return orig_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(Path, "open", path_open)
+    monkeypatch.setattr(builtins, "open", any_open)
+    monkeypatch.setattr(io, "open", any_open)
+    return reads
+
+
+def test_pipeline_rerun_does_not_read_unchanged_notes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_copy = tmp_path / "data"
+    shutil.copytree(REPO_DATA_DIR, data_copy)
+    llm = FakePipelineLLM()
+
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
+        pipeline = IngestionPipeline(db, llm, data_copy)
+        first = pipeline.run()
+        assert first.errors == []
+        assert first.files_processed == 5
+
+        llm.extract_calls.clear()
+        reads = _record_data_reads(monkeypatch, data_copy)
+        second = pipeline.run()
+        monkeypatch.undo()
+
+        assert second.errors == []
+        assert second.files_scanned == 5
+        assert second.files_skipped == 5
+        assert llm.extract_calls == []
+        assert sorted(set(reads)) == [], (
+            "unchanged notes (same size and mtime) were read again on rerun"
+        )
+
+
+def test_pipeline_moved_note_keeps_doc_and_skips_extraction(tmp_path: Path) -> None:
+    data_copy = tmp_path / "data"
+    shutil.copytree(REPO_DATA_DIR, data_copy)
+    old_rel = "TSMC/2026-11-05_cowos_capacity_note.md"
+    new_rel = "archive/2026-11-05_cowos_capacity_note.md"
+    llm = FakePipelineLLM()
+
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
+        pipeline = IngestionPipeline(db, llm, data_copy)
+        assert pipeline.run().errors == []
+        old_doc_id = db.get_ingestion_log()[old_rel]["doc_id"]
+        before = _count_rows_for_doc(db, old_doc_id)
+        assert before[0] > 0
+        assert _count_nodes_for_file(db, old_rel) == before[0]
+
+        (data_copy / "archive").mkdir()
+        (data_copy / old_rel).rename(data_copy / new_rel)
+        llm.extract_calls.clear()
+        report = pipeline.run()
+
+        assert report.errors == []
+        assert llm.extract_calls == [], "a moved note with identical content was re-extracted"
+        log = db.get_ingestion_log()
+        assert old_rel not in log
+        assert log[new_rel]["doc_id"] == old_doc_id
+        # Exactly one artifact set, now pointing at the new path and folder.
+        assert _count_rows_for_doc(db, old_doc_id) == before
+        assert _count_nodes_for_file(db, old_rel) == 0
+        assert _count_nodes_for_file(db, new_rel) == before[0]
+        folders = {
+            r[0]
+            for r in db.conn.execute(
+                "SELECT json_extract(facets_json, '$.source.folder') FROM nodes WHERE source_doc_id = ?",
+                (old_doc_id,),
+            ).fetchall()
+        }
+        assert folders == {"archive"}
+
+
+class _RolledBackNoteFakeLLM(_MidNoteFailureFakeLLM):
+    """First note ingests Zeta Optics cleanly; the second mentions it and then fails mid-write."""
+
+    def extract_document(
+        self,
+        *,
+        text: str,
+        source_meta: dict[str, Any],
+        existing_catalog: str,
+        known_facets: dict[str, list[str]],
+    ) -> ExtractionResult:
+        self.extract_calls.append(source_meta["file_path"])
+        event_name = "Zeta POISON Launch" if "poison" in source_meta["file_path"] else "Zeta Order Win"
+        return ExtractionResult(
+            entities=[
+                ExtractedEntity(
+                    temp_id="e_zeta",
+                    name="Zeta Optics",
+                    summary="Optical interconnect supplier.",
+                    aliases=["ZOPT"],
+                    entity_type="company",
+                )
+            ],
+            events=[ExtractedEvent(temp_id="ev1", name=event_name, summary="Zeta update.")],
+            edges=[ExtractedEdge(from_ref="ev1", to_ref="e_zeta", relation="ABOUT")],
+        )
+
+
+def test_pipeline_rolled_back_note_adds_no_consensus_target(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "zeta_order.md").write_text("Zeta Optics won an order.", encoding="utf-8")
+    llm = _RolledBackNoteFakeLLM()
+
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
+        pipeline = IngestionPipeline(db, llm, data_dir)
+        first = pipeline.run()
+        assert first.errors == []
+        assert first.consensus_updated_for == ["Zeta Optics"]
+
+        (data_dir / "zeta_poison.md").write_text("Zeta Optics launched a module.", encoding="utf-8")
+        llm.consensus_calls.clear()
+        report = pipeline.run()
+
+        assert [path for path, _ in report.errors] == ["zeta_poison.md"]
+        assert "zeta_poison.md" not in db.get_ingestion_log()
+        # The only note touching Zeta in this run rolled back, so its consensus is not rebuilt.
+        assert llm.consensus_calls == [], (
+            "a rolled-back note still added its company to the consensus targets"
+        )
+        assert report.consensus_updated_for == []
+
+
+class _CatalogCaptureFakeLLM(FakePipelineLLM):
+    def __init__(self) -> None:
+        super().__init__()
+        self.catalogs: list[str] = []
+
+    def extract_document(
+        self,
+        *,
+        text: str,
+        source_meta: dict[str, Any],
+        existing_catalog: str,
+        known_facets: dict[str, list[str]],
+    ) -> ExtractionResult:
+        self.extract_calls.append(source_meta["file_path"])
+        self.catalogs.append(existing_catalog)
+        return ExtractionResult()
+
+
+def test_pipeline_catalog_lists_old_entities_named_in_note(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "old_names.md").write_text(
+        "Legacy Corp raised its dividend; OMGH trimmed guidance.", encoding="utf-8"
+    )
+    old = datetime(2020, 1, 1, tzinfo=UTC)
+    now_iso = datetime.now(UTC).isoformat()
+    llm = _CatalogCaptureFakeLLM()
+
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
+        for node_id, name, aliases in (
+            ("ent_legacy", "Legacy Corp", ["LGC"]),
+            ("ent_omega", "Omega Holdings", ["OMGH"]),
+        ):
+            db.upsert_node(
+                Node(
+                    id=node_id,
+                    node_type="entity",
+                    name=name,
+                    summary=f"{name} summary.",
+                    aliases=aliases,
+                    facets={"entity_type": "company"},
+                    created_at=old,
+                    updated_at=old,
+                )
+            )
+        with db.conn:
+            db.conn.executemany(
+                "INSERT INTO nodes (id, node_type, name, summary, aliases_json, facets_json, "
+                "source_doc_id, created_at, updated_at) "
+                "VALUES (?, 'entity', ?, 'filler', '[]', '{\"entity_type\": \"person\"}', NULL, ?, ?)",
+                [(f"filler_entity_{i}", f"Filler Person {i}", now_iso, now_iso) for i in range(600)],
+            )
+
+        report = IngestionPipeline(db, llm, data_dir).run()
+        assert report.errors == []
+        assert len(llm.catalogs) == 1
+        catalog = llm.catalogs[0]
+        # Matched by name, and by alias, despite 600 newer entities.
+        assert "[ent_legacy]" in catalog, "entity named in the note is missing from the catalog"
+        assert "[ent_omega]" in catalog, "entity whose alias appears in the note is missing from the catalog"
