@@ -54,7 +54,6 @@ WORKFLOWS: tuple[NavItem, ...] = (
 _OVERVIEW = NavItem("overview", "nav.overview", "/")
 _COMPANIES = NavItem("companies", "rail.companies", "/companies")
 _THEMES = NavItem("themes", "rail.themes", "/themes")
-_AUTHORS = NavItem("authors", "nav.authors", "/catalog?view=author")
 _OTHER = NavItem("other_entities", "nav.other_entities", "/companies?kind=other")
 _NOTES_BY_COMPANY = NavItem("notes_by_company", "nav.notes_by_company", "/catalog?view=company")
 _NOTES_BY_AUTHOR = NavItem("notes_by_author", "nav.notes_by_author", "/catalog?view=author")
@@ -63,7 +62,7 @@ _SEARCH = NavItem("search", "nav.search", "/search")
 
 LEFT_NAV: dict[str, tuple[NavGroup, ...]] = {
     "research": (
-        NavGroup(None, (_OVERVIEW, _COMPANIES, _THEMES, _AUTHORS, _OTHER)),
+        NavGroup(None, (_OVERVIEW, _COMPANIES, _THEMES, _OTHER)),
         NavGroup("nav.notes", (_NOTES_BY_COMPANY, _NOTES_BY_AUTHOR, _NOTES_ALL)),
         NavGroup(None, (_SEARCH,)),
     ),
@@ -155,16 +154,12 @@ def _catalog(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
         crumbs.append(Crumb(label=str(note.get("title", ""))))
         return NavState("research", notes_item.key, "component", crumbs)
 
-    if group and view_mode == "author":
-        crumbs = [_ROOT, _crumb(_AUTHORS), Crumb(label=str(group.get("label", "")))]
-        return NavState("research", "authors", "component", crumbs)
+    notes_item = _NOTES_BY_VIEW.get(view_mode, _NOTES_BY_COMPANY)
+    if group and view_mode in ("author", "company"):
+        crumbs = [_ROOT, _NOTES_ROOT, _crumb(notes_item), Crumb(label=str(group.get("label", "")))]
+        return NavState("research", notes_item.key, "component", crumbs)
 
-    if group and view_mode == "company":
-        crumbs = [_ROOT, _NOTES_ROOT, _crumb(_NOTES_BY_COMPANY), Crumb(label=str(group.get("label", "")))]
-        return NavState("research", "notes_by_company", "component", crumbs)
-
-    section = {"author": "authors", "all": "notes_all"}.get(view_mode, "notes_by_company")
-    return NavState("research", section, "component")
+    return NavState("research", notes_item.key, "component")
 
 
 _ONTOLOGY_TABS = {item.key for group in LEFT_NAV["ontology"] for item in group.items}
