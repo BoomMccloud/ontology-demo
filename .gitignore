@@ -12,3 +12,4 @@ build/
 .DS_Store
 *.db.bak
 ontology.db.bak*
+.claude/worktrees/

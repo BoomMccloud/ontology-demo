@@ -14,6 +14,8 @@
       ],
       "aliases": [],
       "inverse_aliases": [],
+      "alias_facets": {},
+      "symmetric": false,
       "traversal_group": "core"
     },
     {
@@ -29,6 +31,8 @@
       ],
       "aliases": [],
       "inverse_aliases": [],
+      "alias_facets": {},
+      "symmetric": false,
       "traversal_group": "provenance"
     },
     {
@@ -47,6 +51,8 @@
         "CORROBORATES"
       ],
       "inverse_aliases": [],
+      "alias_facets": {},
+      "symmetric": false,
       "traversal_group": "evidence"
     },
     {
@@ -63,6 +69,8 @@
       ],
       "aliases": [],
       "inverse_aliases": [],
+      "alias_facets": {},
+      "symmetric": false,
       "traversal_group": "evidence"
     },
     {
@@ -76,50 +84,31 @@
       ],
       "aliases": [],
       "inverse_aliases": [],
+      "alias_facets": {},
+      "symmetric": false,
       "traversal_group": "consensus"
     },
     {
-      "name": "SUPPLIES_TO",
-      "description": "Supply-chain relationship from supplier company to customer company.",
+      "name": "RELATES_TO",
+      "description": "Connects an event or view to a theme.",
       "from_types": [
-        "entity:company"
+        "event",
+        "view"
       ],
       "to_types": [
-        "entity:company"
+        "theme"
       ],
-      "aliases": [],
+      "aliases": [
+        "RELATED_TO"
+      ],
       "inverse_aliases": [],
-      "traversal_group": "second_order_entity"
+      "alias_facets": {},
+      "symmetric": false,
+      "traversal_group": "core"
     },
     {
-      "name": "CUSTOMER_OF",
-      "description": "Demand relationship from customer company to supplier company.",
-      "from_types": [
-        "entity:company"
-      ],
-      "to_types": [
-        "entity:company"
-      ],
-      "aliases": [],
-      "inverse_aliases": [],
-      "traversal_group": "second_order_entity"
-    },
-    {
-      "name": "COMPETES_WITH",
-      "description": "Competitive rivalry between peer companies.",
-      "from_types": [
-        "entity:company"
-      ],
-      "to_types": [
-        "entity:company"
-      ],
-      "aliases": [],
-      "inverse_aliases": [],
-      "traversal_group": "second_order_entity"
-    },
-    {
-      "name": "PARTNERS_WITH",
-      "description": "Commercial or technical partnership between companies.",
+      "name": "BUY",
+      "description": "Purchasing relationship from buyer company to seller company.",
       "from_types": [
         "entity:company"
       ],
@@ -127,23 +116,31 @@
         "entity:company"
       ],
       "aliases": [
-        "PARTNER_WITH",
-        "PARTNER_OF"
+        "CUSTOMER_OF",
+        "BUYS_FROM"
       ],
-      "inverse_aliases": [],
+      "inverse_aliases": [
+        "SUPPLIES_TO"
+      ],
+      "alias_facets": {},
+      "symmetric": false,
       "traversal_group": "second_order_entity"
     },
     {
-      "name": "SUBSIDIARY_OF",
-      "description": "Corporate ownership link from subsidiary to parent company.",
+      "name": "COMPETE",
+      "description": "Competitive rivalry between peer companies.",
       "from_types": [
         "entity:company"
       ],
       "to_types": [
         "entity:company"
       ],
-      "aliases": [],
+      "aliases": [
+        "COMPETES_WITH"
+      ],
       "inverse_aliases": [],
+      "alias_facets": {},
+      "symmetric": true,
       "traversal_group": "second_order_entity"
     },
     {
@@ -157,7 +154,11 @@
         "entity:institution"
       ],
       "aliases": [],
-      "inverse_aliases": [],
+      "inverse_aliases": [
+        "SUBSIDIARY_OF"
+      ],
+      "alias_facets": {},
+      "symmetric": false,
       "traversal_group": "second_order_entity"
     },
     {
@@ -174,63 +175,33 @@
       "inverse_aliases": [
         "HAS_EMPLOYEE"
       ],
+      "alias_facets": {},
+      "symmetric": false,
       "traversal_group": "org"
     },
     {
-      "name": "BENEFITS_FROM",
-      "description": "Positive secular tailwind connecting an entity to a theme.",
-      "from_types": [
-        "entity"
-      ],
-      "to_types": [
-        "theme"
-      ],
-      "aliases": [],
-      "inverse_aliases": [],
-      "traversal_group": "theme_exposure"
-    },
-    {
-      "name": "HURT_BY",
-      "description": "Secular headwind connecting an entity to a theme.",
-      "from_types": [
-        "entity"
-      ],
-      "to_types": [
-        "theme"
-      ],
-      "aliases": [],
-      "inverse_aliases": [],
-      "traversal_group": "theme_exposure"
-    },
-    {
       "name": "EXPOSED_TO",
-      "description": "Neutral or mixed exposure connecting an entity to a theme.",
+      "description": "Thematic exposure connecting an entity to a theme with a polarity sentiment facet.",
       "from_types": [
         "entity"
       ],
       "to_types": [
         "theme"
-      ],
-      "aliases": [],
-      "inverse_aliases": [],
-      "traversal_group": "theme_exposure"
-    },
-    {
-      "name": "RELATES_TO",
-      "description": "General thematic association between an event, view, or entity and a theme or entity.",
-      "from_types": [
-        "event",
-        "view",
-        "entity"
-      ],
-      "to_types": [
-        "theme",
-        "entity"
       ],
       "aliases": [
-        "RELATED_TO"
+        "BENEFITS_FROM",
+        "HURT_BY"
       ],
       "inverse_aliases": [],
+      "alias_facets": {
+        "BENEFITS_FROM": {
+          "sentiment": "positive"
+        },
+        "HURT_BY": {
+          "sentiment": "negative"
+        }
+      },
+      "symmetric": false,
       "traversal_group": "theme_exposure"
     }
   ],
