@@ -1,6 +1,6 @@
 ---
 proposal_id: "ingestion-followups"
-state: BUILT
+state: ACCEPTED
 witness: independent
 candidate: "12187d1 @ worktree/proposal-ingestion-followups"
 ---
@@ -230,9 +230,47 @@ Candidate: `12187d1 @ worktree/proposal-ingestion-followups` (branch `proposal/i
 
 ## Audit
 
+Candidate: `12187d1` on branch `proposal/ingestion-followups`, audited in the `ingestion-followups` worktree at HEAD `3c8ef59`. `git diff --quiet 12187d1 HEAD -- src tests README.md pyproject.toml uv.lock` passes, so commits after `12187d1` change only the ledger (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit2/r1/identity.log`). The tree is clean.
+
+Independence: fresh-context. This context audited `c6375e6` earlier and issued R1. It has never framed, proved, or built this proposal.
+
+Primary-claim verdict: PROVED. Evidence: the protected witnesses are unchanged since Proof (`git diff --quiet dc5c34a 12187d1 -- tests/test_pipeline.py tests/test_repair.py`, `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit2/r1/protected.log`). In the first audit I reproduced RED on `dc5c34a` myself: all 6 witnesses failed (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit2/red_dc5c34a.log`). On `12187d1`, `uv run pytest -v tests/test_pipeline.py -k "rerun_does_not_read or moved_note or rolled_back_note_adds or catalog_lists_old"` gives 4 passed (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit2/r1/witness_pipeline.log`). R1 changed nothing in `pipeline.py`. Limit: the read recorder doesn't see reads through `os.open` or mmap. The ambiguous-move fallback is covered only by a supporting test that was never observed RED.
+
+Guardrail verdicts:
+- `repair` counts self-loops and lists merged survivors: PROVED. Evidence: `test_repair_counts_self_loops_and_lists_merged_survivors` was RED on `dc5c34a` and passes on `12187d1` (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit2/r1/witness_repair.log`, 2 passed). Limit: it checks the report object, not the CLI table output.
+- `reembed_nodes` gives each merged survivor a fresh embedding: PROVED. Evidence: `test_reembed_gives_merged_survivor_a_fresh_embedding` was RED, now passes (same log). Limit: the CLI `--reembed` wiring is covered only by `tests/test_db.py::test_cli_repair_builds_llm_only_with_reembed`, which was never observed RED.
+- A rolled-back note adds no consensus target: PROVED. Evidence: `test_pipeline_rolled_back_note_adds_no_consensus_target` was RED, now passes. Limit: the "exactly one error" assertion already passed before the change. The RED came from the spurious consensus rebuild.
+- An old entity named in the note is listed in the catalog: PROVED. Evidence: `test_pipeline_catalog_lists_old_entities_named_in_note` was RED, now passes. It matches by name and by alias. Limit: it doesn't cover themes, the recent-node budget, or ordering.
+
+Scope and duty verdict: scope HELD; duties HELD. Evidence:
+- R1 fixed what it claims. `git diff c6375e6 12187d1` touches only `src/stock_ontology/db.py`, `tests/test_db.py`, `README.md`, and the ledger, all within Frame's Include list.
+- `_migrate_schema` now rebuilds `node_lookup` when the table is new or any node lacks a lookup row. My earlier probe `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit2/probe_lookup.py` now finds both nodes. The empty-table case has 2 lookup rows after reopen, and the node written by pre-change code is found (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit2/r1/probe_lookup.log`).
+- I confirmed the new test is RED on its own: `test_node_lookup_backfills_when_table_exists_but_misses_nodes` fails against `c6375e6` source (1 failed, `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit2/r1/red_new_test_on_c6375e6.log`).
+- Build Deviations now records the probe-batching test home.
+- The reworded README `upsert_node` rule is an entry this proposal added, not a pre-existing invariant. It now matches `relink_document`, which updates only `facets_json`. Both `**Guarded by:**` tests exist in `tests/test_db.py`.
+- Existing tests gained additions only. Frame lists no invariants changed, and none were.
+
+Limit: the smallest-change and reuse checks come from reading the code, not from a measurement.
+
+Test homes:
+- `tests/test_pipeline.py` and `tests/test_repair.py`: hold the six witnesses Proof authored, in their permanent owners. Unchanged since `dc5c34a`.
+- `tests/test_db.py`: holds the supporting tests, including the new R1 test. It already owns DB tests and earlier pipeline and CLI wiring tests. The probe-batching test landed here instead of the plan's `tests/test_pipeline.py`, and Build now records that deviation.
+
+Full gates: PASS. `uv run pytest -q` gives 95 passed (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit2/r1/full_suite.log`). `uv run ruff check` on the four changed source files and three test files reports "All checks passed!" (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit2/r1/ruff.log`). Limit: offline fake-LLM suites only. No live DB or LLM was used.
+
+Residual risks:
+- Unchanged notes are detected by size and mtime only. An edit that keeps both (for example `cp -p`, or a restored mtime) is skipped until `--force`. A logged file that becomes unreadable through chmod is skipped silently instead of reported.
+- The new completeness check scans `nodes` on every writable open. A node whose name and aliases all normalize to empty strings gets no lookup row, so every writable open would run a full `rebuild_node_lookup`. That costs time but doesn't make results wrong.
+- A raw SQL rename of an existing node's name or aliases leaves its lookup rows stale, and the completeness check doesn't catch that. The README rule forbids such writes, but no test guards the rule.
+- `test_node_lookup_uses_index_and_tracks_alias_edits_and_deletes` accepts the primary-key autoindex in its query plan and checks a hand-written query, not `find_by_name_or_alias`'s own SQL.
+- `_batch_probe_vectors` keys probes by `(node_type, temp_id)`. If the LLM repeats a temp_id within one note, the earlier entity gets the later entity's probe vector.
+
+Recommendation: ACCEPT
+Packet: no rework needed. ACCEPT says only that the claims are proved. Merging `proposal/ingestion-followups`, and any `ingest`, `repair`, or `repair --reembed` run against the real `ontology.db`, still need the human's separate authorization.
+
 ## Revisions
 
 ### R1 — 2026-11-22 — Supporting obligation: backfill `node_lookup` when missing or empty
 - Verdict: REVISE — primary claim and all four guardrails PROVED (RED reproduced on `dc5c34a`), scope HELD, gates PASS on `c6375e6`; duty VIOLATED because `node_lookup` was backfilled only when the table was missing, not when it existed but was empty, so an interrupted first open left lookups empty and ingestion would create duplicates (probe `scratchpad/audit2/probe_lookup.log`). Also: the probe-batching test home moved without a recorded deviation. Independence: fresh-context.
 - Changed: `src/stock_ontology/db.py` — writable open rebuilds `node_lookup` when the table is new or any node lacks a lookup row (also covers nodes written by older code, the audit's first residual risk). `tests/test_db.py` — `test_node_lookup_backfills_when_table_exists_but_misses_nodes`, RED before and GREEN after. `README.md` — the `upsert_node` rule now matches the code (raw deletes and other-column updates such as `relink_document`'s `facets_json` changes are allowed). Build records the test-home deviation. Candidate is now `12187d1`.
-- Re-audit: pending; candidate `12187d1`
+- Re-audit: ACCEPT — claims and guardrails PROVED, scope and duties HELD, gates PASS (95 passed); candidate `12187d1`
