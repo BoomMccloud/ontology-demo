@@ -1,8 +1,8 @@
 ---
 proposal_id: "company-view-separation"
-state: FRAMED
+state: BUILT
 witness: builder
-candidate: "unassigned"
+candidate: "4d0e55c @ .claude/worktrees/agent-aff71a0ff67ea7b3b (branch worktree-agent-aff71a0ff67ea7b3b)"
 ---
 
 # Proposal: Company View: Separate Data from Presentation
@@ -80,7 +80,7 @@ Candidate: `5aceabc @ .claude/worktrees/agent-aff71a0ff67ea7b3b (branch worktree
 - Exclude/protect: `OntologyDB` and everything under `src/stock_ontology/db/`; the rest of `theme.html` and `build_theme_context` beyond events/views (left to `theme-view-separation`); event pages (left to `event-view-separation`); CSS and locale files; any visible change to page content or markup.
 
 ### Invariants changed
-- `tests/test_web_navigation.py:299` (`test_navigation_registry_lookup`) — today: the nav resolver is called with the entity as a raw dict, `{"entity": {"name": "NVIDIA"}, "is_company": True}`; after: it is called with the `EntityHeader` presentation model the view model now supplies, and still expects `("research", "companies", "component")`.
+- `tests/test_web_navigation.py:299` (`test_navigation_registry_lookup`): today: the nav resolver is called with the entity as a raw dict, `{"entity": {"name": "NVIDIA"}, "is_company": True}`; after: it is called with the `EntityHeader` presentation model the view model now supplies, and still expects `("research", "companies", "component")`.
 
 ### Decisions required
 - None.
@@ -95,8 +95,40 @@ Route is `builder`. The decisive witness named in Frame is builder-owned and def
 
 ## Build
 
-<!-- Replaced only by proposal-build. Reference changed paths, protected witnesses,
-exact GREEN command(s), concise result, candidate identity, and deviations. -->
+Candidate: `4d0e55c @ .claude/worktrees/agent-aff71a0ff67ea7b3b (branch worktree-agent-aff71a0ff67ea7b3b)`
+
+Logs live in the session scratchpad `/private/tmp/claude-502/-Users-jasonbxu--claude-spares-spare-FpkZNh/4fb6f79d-a7f6-4555-b469-2d18b87dd45e/scratchpad/logs/` and may be cleared; every command below reruns offline.
+
+### Files changed
+
+- `src/stock_ontology/web/viewmodels.py`: adds frozen presentation models (`SourceCitation`, `EventRow`, `ViewRow`, `EntityHeader`, `ConsensusSummary`, `PriorConsensusRow`, `ThemeLinkRow`, `RelationLink`, `RelatedEntityRow`) and one mapper each; `build_entity_context` returns only these plus the existing prepared pairs, and drops the unused `sentiment_summary`; `build_theme_context` maps its events and views through the same `_event_row`/`_view_row`. The sentiment and "entity impact" decision moves from the templates into `_sentiment_display`. `_attach_source_display` is replaced by `_source_citation`. Satisfies the primary claim and the theme guardrail.
+- `src/stock_ontology/web/templates/partials/facet_header.html`, `facet_consensus_card.html`, `section_events.html`, `section_views.html`, `section_themes.html`, `section_related_entities.html`: read model fields instead of `.facets`, `.edge_facets` and inline fallbacks. Primary claim.
+- `src/stock_ontology/web/navigation.py`: `_entity` reads the breadcrumb name from the `EntityHeader` attribute. Primary claim.
+- `tests/test_web.py`: new builder-owned witness `test_entity_page_templates_only_see_presentation_models` with its seed `_seed_presentation_db`. Primary claim and theme guardrail.
+- `tests/test_web_navigation.py`: `test_navigation_registry_lookup` passes an `EntityHeader`, as listed under Frame's Invariants changed; same expected nav state.
+- `docs/architecture/web.md`: one sentence on the presentation-model contract.
+- `README.md`: one Web UI Constraints entry: entity page templates get only presentation models, guarded by the new witness.
+
+### Unit evidence
+
+- Builder-owned decisive witness: `uv run pytest tests/test_web.py::test_entity_page_templates_only_see_presentation_models -q` on 5aceabc code: RED: 1 failed; the render assertions (part 1) passed, then the context walk failed with 20 raw facet paths starting at `ctx['entity']['facets']`; log: `logs/witness_red.log`.
+- Static part of the witness applied to the 5aceabc templates with `uv run python scratchpad/static_red.py`: RED: offenders `facet_consensus_card.html`, `facet_header.html`, `section_events.html`, `section_related_entities.html`, `section_themes.html`, `section_views.html`; log: `logs/static_red.log`. The token regex was narrowed before implementation so translation keys like `'facets.col_value'` in `facet_generic_table.html` don't count; this RED run uses the narrowed regex.
+- No separate unit tests: the mappers carry no branching beyond the template logic they replace, and the witness plus the existing page tests cover them.
+
+### Green evidence
+
+- Decisive witness and focused web suites: `uv run pytest tests/test_web.py tests/test_web_navigation.py -v`: 53 passed; log: `logs/web_green.log`.
+- Gate: `uv run pytest -v`: 146 passed (145 before plus the new witness); log: `logs/full_gate.log`.
+- Same-information check: a scratch pytest plugin (`scratchpad/plug/snapplug.py`, driven by `scratchpad/snap.sh`) captured every `/entity/` and `/theme/` page requested by `tests/test_web.py`, `tests/test_web_navigation.py`, `tests/test_relationships.py` and `tests/test_i18n.py`, at 5aceabc (with the new witness's pages) and at the candidate. `python3 scratchpad/compare.py <scratchpad>`: 45 pages compared, 45 identical after stripping lines and dropping whitespace-only lines; log: `logs/render_compare.log`. The four pages seeded by `_seed_read_consolidation_db` compare as sorted lines because their row order already varies run to run at 5aceabc.
+- `uv run ruff check src/stock_ontology/web tests/test_web.py tests/test_web_navigation.py`: 2 findings, both in `src/stock_ontology/web/catalog.py`, untouched and present before.
+
+### Intervention record
+
+- None: the change has no user-facing outcome to measure, since rendered pages are unchanged.
+
+### Deviations
+
+- None.
 
 ## Audit
 
