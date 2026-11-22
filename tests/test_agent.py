@@ -151,10 +151,7 @@ class ScriptedAgentLLM:
                     tool_calls=[
                         ToolCall(
                             name="find_theme_companies",
-                            args={
-                                "theme_query": "AI Data Center Power Bottleneck",
-                                "include_second_order": True,
-                            },
+                            args={"theme_query": "AI Data Center Power Bottleneck"},
                         )
                     ]
                 )
@@ -208,14 +205,8 @@ class ScriptedAgentLLM:
                     )
                 )
             if tool_name == "find_theme_companies":
-                first = [c["company"]["name"] for c in payload["first_order"]]
-                second = [c["company"]["name"] for c in payload["second_order"]]
-                return AgentTurn(
-                    text=(
-                        f"1st-order companies: {', '.join(sorted(first))}. "
-                        f"2nd-order companies: {', '.join(sorted(second))}."
-                    )
-                )
+                names = [c["company"]["name"] for c in payload["companies"]]
+                return AgentTurn(text=f"Affected companies: {', '.join(sorted(names))}.")
             return AgentTurn(text=json.dumps(payload))
 
         return AgentTurn(text="No action.")
@@ -260,7 +251,7 @@ def test_agent_ux2_theme_related_companies(tmp_path: Path) -> None:
         )
 
         assert "NVIDIA" in reply and "Vertiv" in reply
-        assert "TSMC" in reply
+        assert "TSMC" not in reply  # a supplier, not an affected company
         assert agent.tool_trace[0]["tool"] == "find_theme_companies"
 
 
@@ -619,7 +610,7 @@ def test_agent_chat_returns_immutable_turn_contract(tmp_path: Path) -> None:
         first.reply = "changed"  # type: ignore[misc]
 
     assert "Keep (BUY)" in first.reply
-    assert "1st-order companies" in second.reply
+    assert "Affected companies" in second.reply
 
     # History is an opaque tuple handed back unchanged; it grows across turns.
     assert isinstance(first.history, tuple) and isinstance(second.history, tuple)

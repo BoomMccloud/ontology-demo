@@ -3,6 +3,7 @@
 {% set nt = node_type | default('') %}
 <section class="search-box" aria-label="{{ t('search.section_aria') }}">
   <form class="search-form-wrapper" action="/search" method="get">
+    {% if nav.workflow == 'notes' %}<input type="hidden" name="in" value="notes">{% endif %}
     <div class="search-form">
       <input
         id="catalog-q"

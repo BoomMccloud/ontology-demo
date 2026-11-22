@@ -28,14 +28,6 @@
   </h2>
   {% if results %}
     <table class="catalog-table">
-      <thead>
-        <tr>
-          <th class="u-w-15pct">{{ t('search.col_type_subtype') }}</th>
-          <th class="u-w-28pct">{{ t('search.col_title_signals') }}</th>
-          <th>{{ t('search.col_summary_source') }}</th>
-          <th class="u-w-14pct">{{ t('search.col_match') }}</th>
-        </tr>
-      </thead>
       <tbody>
         {% for item in results %}
           <tr>

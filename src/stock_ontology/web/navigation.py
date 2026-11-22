@@ -48,23 +48,29 @@ class NavState:
 
 WORKFLOWS: tuple[NavItem, ...] = (
     NavItem("research", "nav.research", "/"),
+    NavItem("notes", "nav.notes", "/catalog"),
     NavItem("ontology", "rail.ontology", "/ontology"),
 )
 
 _OVERVIEW = NavItem("overview", "nav.overview", "/")
 _COMPANIES = NavItem("companies", "rail.companies", "/companies")
 _THEMES = NavItem("themes", "rail.themes", "/themes")
-_OTHER = NavItem("other_entities", "nav.other_entities", "/companies?kind=other")
+_OTHER = NavItem("other_entities", "companies.tab_other", "/companies?kind=other")
 _NOTES_BY_COMPANY = NavItem("notes_by_company", "nav.notes_by_company", "/catalog?view=company")
 _NOTES_BY_AUTHOR = NavItem("notes_by_author", "nav.notes_by_author", "/catalog?view=author")
 _NOTES_ALL = NavItem("notes_all", "nav.notes_all", "/catalog?view=all")
 _SEARCH = NavItem("search", "nav.search", "/search")
+# Notes keeps its own Search entry; `in=notes` keeps the Notes workflow selected on /search.
+_NOTES_SEARCH = NavItem("notes_search", "nav.search", "/search?in=notes")
 
 LEFT_NAV: dict[str, tuple[NavGroup, ...]] = {
     "research": (
-        NavGroup(None, (_OVERVIEW, _COMPANIES, _THEMES, _OTHER)),
-        NavGroup("nav.notes", (_NOTES_BY_COMPANY, _NOTES_BY_AUTHOR, _NOTES_ALL)),
+        NavGroup(None, (_OVERVIEW, _COMPANIES, _THEMES)),
         NavGroup(None, (_SEARCH,)),
+    ),
+    "notes": (
+        NavGroup(None, (_NOTES_BY_COMPANY, _NOTES_BY_AUTHOR, _NOTES_ALL)),
+        NavGroup(None, (_NOTES_SEARCH,)),
     ),
     "ontology": (
         NavGroup(
@@ -102,23 +108,25 @@ def _home(_q: Mapping[str, str], _ctx: Mapping[str, Any]) -> NavState:
     return NavState("research", "overview", "page")
 
 
-def _companies(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
-    section = "other_entities" if ctx.get("active_kind") == "other" else "companies"
-    return NavState("research", section, "component")
+def _companies(_q: Mapping[str, str], _ctx: Mapping[str, Any]) -> NavState:
+    # The "other entities" tab lives on the Companies page, so it has no left-nav item of its own.
+    return NavState("research", "companies", "component")
 
 
 def _themes(_q: Mapping[str, str], _ctx: Mapping[str, Any]) -> NavState:
     return NavState("research", "themes", "component")
 
 
-def _search(_q: Mapping[str, str], _ctx: Mapping[str, Any]) -> NavState:
+def _search(q: Mapping[str, str], _ctx: Mapping[str, Any]) -> NavState:
+    if q.get("in") == "notes":
+        return NavState("notes", "notes_search", "page")
     return NavState("research", "search", "page")
 
 
 def _entity(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
     owner = _COMPANIES if ctx.get("is_company") else _OTHER
     name = str((ctx.get("entity") or {}).get("name", ""))
-    return NavState("research", owner.key, "component", [_ROOT, _crumb(owner), Crumb(label=name)])
+    return NavState("research", "companies", "component", [_ROOT, _crumb(owner), Crumb(label=name)])
 
 
 def _theme(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
@@ -133,10 +141,10 @@ def _catalog(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
     view_mode = str(ctx.get("view_mode") or "company")
     group = ctx.get("active_group")
     note = ctx.get("active_note")
+    notes_item = _NOTES_BY_VIEW.get(view_mode, _NOTES_BY_COMPANY)
 
     if note:
-        notes_item = _NOTES_BY_VIEW.get(view_mode, _NOTES_BY_COMPANY)
-        crumbs = [_ROOT, _NOTES_ROOT, _crumb(notes_item)]
+        crumbs = [_NOTES_ROOT, _crumb(notes_item)]
         if view_mode == "author" and group:
             crumbs.append(
                 Crumb(
@@ -152,14 +160,13 @@ def _catalog(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
                 )
             )
         crumbs.append(Crumb(label=str(note.get("title", ""))))
-        return NavState("research", notes_item.key, "component", crumbs)
+        return NavState("notes", notes_item.key, "component", crumbs)
 
-    notes_item = _NOTES_BY_VIEW.get(view_mode, _NOTES_BY_COMPANY)
     if group and view_mode in ("author", "company"):
-        crumbs = [_ROOT, _NOTES_ROOT, _crumb(notes_item), Crumb(label=str(group.get("label", "")))]
-        return NavState("research", notes_item.key, "component", crumbs)
+        crumbs = [_NOTES_ROOT, _crumb(notes_item), Crumb(label=str(group.get("label", "")))]
+        return NavState("notes", notes_item.key, "component", crumbs)
 
-    return NavState("research", notes_item.key, "component")
+    return NavState("notes", notes_item.key, "component")
 
 
 _ONTOLOGY_TABS = {item.key for group in LEFT_NAV["ontology"] for item in group.items}

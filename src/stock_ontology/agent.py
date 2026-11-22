@@ -41,7 +41,7 @@ Rules:
    - Remind the PM that you are strictly read-only: to incorporate this note into the database and re-synthesize consensus, save the note under `data/` and run `ingest`.
 4. For UX #2 (when a PM asks about companies related to a theme):
    - Call `find_theme_companies` (and `traverse_graph` or `get_entity_overview` if deeper context is helpful).
-   - Separate results into **1st-order exposures** (beneficiaries vs. headwinds/risks) and **2nd-order exposures** (suppliers, customers, competitors), explaining the link and citing source files.
+   - List the affected companies, separating beneficiaries from headwinds/risks, explaining the link and citing source files.
 5. For counting/filtering questions (e.g., "how many negative rumors or news have we heard about this company?"):
    - Call `query_entity_signals` with the appropriate filters (`sentiments`, `categories`, `node_types`, `statuses`, `date_from`, `date_to`).
    - Report the exact deterministic counts from tool output (`total_matched`, `counts_by_sentiment`, `counts_by_subtype`), list each matching item with its date, `effective_sentiment` (noting when an `ABOUT` edge override sets the company-specific polarity), and source file path (`facets.source.file_path`).
@@ -158,8 +158,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "find_theme_companies",
         "description": (
-            "Find 1st-order and 2nd-order companies exposed to an investment theme, including exposure "
-            "polarity, consensus stance, and source citations."
+            "Find the companies affected by an investment theme, including exposure polarity, "
+            "consensus stance, and source citations."
         ),
         "parameters": {
             "type": "object",
@@ -167,10 +167,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "theme_query": {
                     "type": "string",
                     "description": "Theme name, alias, natural-language description, or node ID.",
-                },
-                "include_second_order": {
-                    "type": "boolean",
-                    "description": "Include 2nd-order supply chain / peer companies (default true).",
                 },
             },
             "required": ["theme_query"],
@@ -399,15 +395,11 @@ class OntologyAgent:
             date_to=date_to,
         )
 
-    def _tool_find_theme_companies(
-        self, *, theme_query: str, include_second_order: bool = True
-    ) -> dict[str, Any]:
+    def _tool_find_theme_companies(self, *, theme_query: str) -> dict[str, Any]:
         theme = self._resolve_node(theme_query, "theme")
         if theme is None:
             return {"error": f"No theme found matching {theme_query!r}."}
-        return self.db.find_theme_companies(
-            theme.id, include_second_order=bool(include_second_order)
-        )
+        return self.db.find_theme_companies(theme.id)
 
     def _tool_get_node_details(self, *, node_id: str) -> dict[str, Any]:
         node = self.db.get_node(node_id)

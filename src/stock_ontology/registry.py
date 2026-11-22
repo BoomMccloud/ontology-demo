@@ -765,7 +765,7 @@ def create_minimal_registry() -> OntologyRegistry:
                 to_types=["entity:company"],
                 aliases=["CUSTOMER_OF", "BUYS_FROM"],
                 inverse_aliases=["SUPPLIES_TO"],
-                traversal_group="second_order_entity",
+                traversal_group="company",
             ),
             RelationSpec(
                 name="COMPETE",
@@ -774,7 +774,7 @@ def create_minimal_registry() -> OntologyRegistry:
                 to_types=["entity:company"],
                 aliases=["COMPETES_WITH"],
                 symmetric=True,
-                traversal_group="second_order_entity",
+                traversal_group="company",
             ),
             RelationSpec(
                 name="OWNS",
@@ -782,7 +782,7 @@ def create_minimal_registry() -> OntologyRegistry:
                 from_types=["entity:company"],
                 to_types=["entity:company", "entity:institution"],
                 inverse_aliases=["SUBSIDIARY_OF"],
-                traversal_group="second_order_entity",
+                traversal_group="company",
             ),
             RelationSpec(
                 name="WORKS_AT",

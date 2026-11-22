@@ -448,7 +448,7 @@ def inspect(
                         t.add_row(item["id"], rel_label, item["name"], item["summary"])
                 console.print(t)
         elif node.node_type == "theme":
-            res = store.find_theme_companies(node.id, include_second_order=True)
+            res = store.find_theme_companies(node.id)
             console.print(
                 Panel(
                     f"[bold]{node.name}[/bold] ({node.id})\n{node.summary}\n"
@@ -456,24 +456,17 @@ def inspect(
                     title=translate("cli.theme_overview_title", lang=resolved_lang),
                 )
             )
-            for label, key in (
-                (translate("cli.first_order_title", lang=resolved_lang), "first_order"),
-                (translate("cli.second_order_title", lang=resolved_lang), "second_order"),
-            ):
-                t = Table(title=label)
-                t.add_column(translate("cli.col_company", lang=resolved_lang), style="bold")
-                t.add_column(translate("cli.col_consensus", lang=resolved_lang))
-                t.add_column(translate("cli.col_links_paths", lang=resolved_lang))
-                for row in res[key]:
-                    detail = row.get("links") if key == "first_order" else row.get("paths")
-                    stance_raw = row.get("consensus_stance")
-                    stance_label = (
-                        translate_enum("stance", stance_raw, lang=resolved_lang)
-                        if stance_raw
-                        else "-"
-                    )
-                    t.add_row(row["company"]["name"], stance_label, str(detail))
-                console.print(t)
+            t = Table(title=translate("theme.affected_companies", lang=resolved_lang))
+            t.add_column(translate("cli.col_company", lang=resolved_lang), style="bold")
+            t.add_column(translate("cli.col_consensus", lang=resolved_lang))
+            t.add_column(translate("ontology.col_links", lang=resolved_lang))
+            for row in res["companies"]:
+                stance_raw = row.get("consensus_stance")
+                stance_label = (
+                    translate_enum("stance", stance_raw, lang=resolved_lang) if stance_raw else "-"
+                )
+                t.add_row(row["company"]["name"], stance_label, str(row.get("links")))
+            console.print(t)
         else:
             console.print(
                 Panel(

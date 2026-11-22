@@ -124,7 +124,7 @@
       ],
       "alias_facets": {},
       "symmetric": false,
-      "traversal_group": "second_order_entity"
+      "traversal_group": "company"
     },
     {
       "name": "COMPETE",
@@ -141,7 +141,7 @@
       "inverse_aliases": [],
       "alias_facets": {},
       "symmetric": true,
-      "traversal_group": "second_order_entity"
+      "traversal_group": "company"
     },
     {
       "name": "OWNS",
@@ -159,7 +159,7 @@
       ],
       "alias_facets": {},
       "symmetric": false,
-      "traversal_group": "second_order_entity"
+      "traversal_group": "company"
     },
     {
       "name": "WORKS_AT",

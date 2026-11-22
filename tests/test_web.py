@@ -133,7 +133,7 @@ def _seed_web_db(db_path: Path) -> None:
         db.upsert_edge(
             Edge(id="ed5", from_id="evt_q3", to_id="ent_kenji", relation="AUTHORED_BY", source_doc_id="doc_1")
         )
-        db.upsert_consensus_view("ent_nvda", cons, _unit_vec(7), ["evt_q3", "vw_analyst"], [])
+        db.upsert_consensus_view("ent_nvda", cons, _unit_vec(7), ["evt_q3", "vw_analyst", "thm_power"], [])
 
 
 class FakeWebLLM:
@@ -253,14 +253,15 @@ def test_web_home_entity_theme_search_and_clippy_chat(tmp_path: Path) -> None:
     assert "Liquid Cooling CDUs" in r_person.text
     assert "Company Profile" not in r_person.text
 
-    # 4. Theme page: 1st-order and 2nd-order companies.
+    # 4. Theme page: affected companies only.
     r_theme = client.get("/theme/thm_power")
     assert r_theme.status_code == 200
-    assert "1st-Order Exposed Companies" in r_theme.text
-    assert "2nd-Order Supply Chain" in r_theme.text
+    assert "Affected Companies" in r_theme.text
+    assert "2nd-Order" not in r_theme.text
     assert "NVIDIA" in r_theme.text
-    assert "TSMC" in r_theme.text
+    assert "TSMC" not in r_theme.text  # a supplier of an affected company, not listed
     assert "12-24m" in r_theme.text
+    assert "Consensus: Buy NVIDIA" not in r_theme.text  # theme is consensus evidence, not its subject
     assert "Record ID:" not in r_theme.text
     assert "id%3D" not in r_theme.text
 
@@ -306,7 +307,7 @@ def test_web_home_entity_theme_search_and_clippy_chat(tmp_path: Path) -> None:
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro:
         assert ro.get_stats() == before_stats
         assert ro.get_stats()["total_nodes"] == 7
-        assert ro.get_stats()["total_edges"] == 8
+        assert ro.get_stats()["total_edges"] == 9
 
     # 7. Missing entity/theme returns 404.
     assert client.get("/entity/missing").status_code == 404
@@ -712,7 +713,7 @@ def test_web_catalog_screen_by_company_and_person_and_safety(tmp_path: Path) -> 
     assert "Stacy Rasgon" in r_person.text
     assert "Jensen Huang" not in r_person.text
 
-    # Drill-down into an author shows top breadcrumb (no ../ row) and authored + mentioned notes
+    # Drill-down into an author shows top breadcrumb (no ../ row) and both authored and mentioned notes
     r_kenji = client.get("/catalog", params={"view": "author", "author": "Kenji Sato"})
     assert r_kenji.status_code == 200
     assert "catalog-path-bar" in r_kenji.text
@@ -720,8 +721,8 @@ def test_web_catalog_screen_by_company_and_person_and_safety(tmp_path: Path) -> 
     assert "[UP]" not in r_kenji.text
     assert "NVDA Q3 Preview" in r_kenji.text
     assert "TSMC CoWoS Note" in r_kenji.text
-    assert "authored" in r_kenji.text
-    assert "mentioned" in r_kenji.text
+    # How a note was matched to its author is internal; the page doesn't show it.
+    assert "badge-reason" not in r_kenji.text
 
     # 2b. All Notes flat index + quick-filter Index bar
     r_all = client.get("/catalog", params={"view": "all"})
@@ -889,8 +890,7 @@ def test_web_multilingual_pages_preserve_original_notes(tmp_path: Path, lang: st
     r_theme = client.get("/theme/thm_power", params={"lang": lang})
     assert r_theme.status_code == 200
     theme_text = html.unescape(r_theme.text)
-    assert translate("theme.first_order_heading", lang=lang) in theme_text
-    assert translate("theme.second_order_heading", lang=lang) in theme_text
+    assert translate("theme.affected_companies", lang=lang) in theme_text
     assert "AI Data Center Power Bottleneck" in r_theme.text
 
     # 4. Search page
@@ -1467,7 +1467,7 @@ def test_home_themes_table_counts_companies_views_and_events(tmp_path: Path) -> 
 
     theme_section = r_home.text.split('aria-label="Browse by Investment Theme"', 1)[1]
     assert '<table class="portal-table">' in theme_section
-    assert ">Companies<" in theme_section
+    assert ">Affected Companies<" in theme_section
     assert ">Views<" in theme_section
     assert ">Events<" in theme_section
     row = theme_section.split('href="/theme/thm_grid"', 1)[1].split("</tr>", 1)[0]

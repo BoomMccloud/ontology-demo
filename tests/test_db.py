@@ -249,11 +249,9 @@ def test_consensus_supersession_and_theme_and_bfs_traversal() -> None:
         old = db.get_node("vw_cons_1")
         assert old is not None and old.facets["status"] == "superseded"
 
-        theme_res = db.find_theme_companies("thm_power", include_second_order=True)
-        first_ids = {item["company"]["id"] for item in theme_res["first_order"]}
-        second_ids = {item["company"]["id"] for item in theme_res["second_order"]}
-        assert first_ids == {"ent_vrt", "ent_nvda"}
-        assert second_ids == {"ent_tsmc"}
+        theme_res = db.find_theme_companies("thm_power")
+        company_ids = {item["company"]["id"] for item in theme_res["companies"]}
+        assert company_ids == {"ent_vrt", "ent_nvda"}
 
         bfs = db.traverse_bfs("thm_power", max_hops=2)
         bfs_hops = {n["id"]: n["hop"] for n in bfs["nodes"]}

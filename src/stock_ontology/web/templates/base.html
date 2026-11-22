@@ -41,6 +41,7 @@
     <div class="portal-grid">
       <aside class="portal-rail" aria-label="{{ t('nav.side_aria') }}">
         <form class="portal-rail-search" action="/search" method="get">
+          {% if nav.workflow == 'notes' %}<input type="hidden" name="in" value="notes">{% endif %}
           <div class="portal-rail-search-row">
             <input
               id="rail-q"

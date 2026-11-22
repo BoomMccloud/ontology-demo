@@ -24,9 +24,9 @@
   {% include "partials/facet_generic_table.html" %}
 {% endwith %}
 
-<section class="section-block" aria-label="{{ t('theme.first_order_heading') }}">
-  <h2>{{ t('theme.first_order_heading') }} ({{ first_order | length }})</h2>
-  {% if first_order %}
+<section class="section-block" aria-label="{{ t('theme.affected_companies') }}">
+  <h2>{{ t('theme.affected_companies') }} ({{ companies | length }})</h2>
+  {% if companies %}
     <table class="catalog-table">
       <thead>
         <tr>
@@ -36,7 +36,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for row in first_order %}
+        {% for row in companies %}
           <tr>
             <td>
               <a href="/entity/{{ row.company.id }}"><strong>{{ row.company.name }}</strong></a>
@@ -77,51 +77,7 @@
       </tbody>
     </table>
   {% else %}
-    <p>{{ t('theme.first_order_empty') }}</p>
-  {% endif %}
-</section>
-
-<section class="section-block" aria-label="{{ t('theme.second_order_aria') }}">
-  <h2>{{ t('theme.second_order_heading') }} ({{ second_order | length }})</h2>
-  {% if second_order %}
-    <table class="catalog-table">
-      <thead>
-        <tr>
-          <th>{{ t('theme.col_company') }}</th>
-          <th>{{ t('theme.col_consensus') }}</th>
-          <th>{{ t('theme.col_paths') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in second_order %}
-          <tr>
-            <td>
-              <a href="/entity/{{ row.company.id }}"><strong>{{ row.company.name }}</strong></a>
-              {% if row.company.facets.get("ticker") %}
-                <span class="mono">({{ row.company.facets.get("ticker") }})</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if row.consensus_stance %}
-                <span class="badge badge-{{ row.consensus_stance | lower }}">{{ t_enum('stance', row.consensus_stance) }}</span>
-              {% else %}
-                {{ t('common.none') }}
-              {% endif %}
-            </td>
-            <td>
-              {% for path in row.paths %}
-                <div>
-                  {{ format_relation(path.relation, path.direction) }} &rarr;
-                  <a href="/entity/{{ path.connected_to_id }}">{{ path.connected_to }}</a>
-                </div>
-              {% endfor %}
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p>{{ t('theme.second_order_empty') }}</p>
+    <p>{{ t('theme.affected_companies_empty') }}</p>
   {% endif %}
 </section>
 

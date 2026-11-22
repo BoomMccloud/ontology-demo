@@ -14,13 +14,6 @@ from typing import Any
 from stock_ontology.models import Edge, Node, Sentiment, normalize_sentiment
 from stock_ontology.vocab import SIGNAL_CATEGORY_ALIASES  # noqa: F401  (re-exported by stock_ontology.db)
 
-
-SECOND_ORDER_ENTITY_RELATIONS = {
-    "BUY",
-    "COMPETE",
-    "OWNS",
-}
-
 THEME_EXPOSURE_RELATIONS = {
     "EXPOSED_TO",
 }

@@ -12,8 +12,7 @@
       <tr>
         <th>{{ t('themes_index.col_theme') }}</th>
         <th class="u-w-20pct">{{ t('themes_index.col_stage') }}</th>
-        <th class="u-w-15pct">{{ t('themes_index.col_first_order') }}</th>
-        <th class="u-w-15pct">{{ t('themes_index.col_second_order') }}</th>
+        <th class="u-w-20pct u-num">{{ t('theme.affected_companies') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -32,8 +31,7 @@
               {{ t('common.none') }}
             {% endif %}
           </td>
-          <td class="mono">{{ thm.first_order_count }}</td>
-          <td class="mono">{{ thm.second_order_count }}</td>
+          <td class="mono u-num">{{ thm.company_count }}</td>
         </tr>
       {% endfor %}
     </tbody>

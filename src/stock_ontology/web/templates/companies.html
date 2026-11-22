@@ -31,7 +31,8 @@
           <th class="u-w-30pct">{{ t('home.col_company') }}</th>
           <th class="u-w-22pct">{{ t('companies.col_sector') }}</th>
           <th class="u-w-18pct">{{ t('home.col_consensus') }}</th>
-          <th class="u-w-15pct">{{ t('companies.col_signals') }}</th>
+          <th class="u-w-10pct u-num">{{ t('home.col_events') }}</th>
+          <th class="u-w-10pct u-num">{{ t('home.col_views') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -47,7 +48,8 @@
                 <span class="source-cite">{{ t('home.no_consensus') }}</span>
               {% endif %}
             </td>
-            <td class="mono">{{ comp.event_count + comp.view_count }}</td>
+            <td class="mono u-num">{{ comp.event_count }}</td>
+            <td class="mono u-num">{{ comp.view_count }}</td>
           </tr>
         {% endfor %}
       </tbody>

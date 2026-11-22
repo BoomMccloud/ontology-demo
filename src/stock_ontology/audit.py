@@ -752,9 +752,7 @@ def run_ontology_audit(
 
     unmapped_themes: list[ThemeSuggestion] = []
     for theme in unmapped_theme_nodes:
-        company_count = len(
-            db.find_theme_companies(theme.id, include_second_order=False)["first_order"]
-        )
+        company_count = len(db.find_theme_companies(theme.id)["companies"])
         nearest_official = None
         if theme.id in embeddings and official_theme_vecs:
             vec = embeddings[theme.id]

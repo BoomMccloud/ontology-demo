@@ -845,14 +845,6 @@ code,
   white-space: nowrap;
 }
 
-.badge-reason {
-  background: var(--bg-subtle);
-  border-color: #9e9684;
-  color: #4a453b;
-  font-weight: normal;
-  text-transform: lowercase;
-}
-
 .note-reader-header {
   background: var(--bg-subtle);
   border: 1px solid var(--border-rule);

@@ -21,7 +21,6 @@ from typing import Any
 import sqlite_vec
 
 from stock_ontology.db.schema import (
-    SECOND_ORDER_ENTITY_RELATIONS,
     init_schema,
     merge_edge_facets,
     node_meta,
@@ -1409,23 +1408,21 @@ class OntologyDB:
             "edges": edges_out,
         }
 
-    def find_theme_companies(
-        self, theme_id: str, include_second_order: bool = True
-    ) -> dict[str, Any]:
-        """Find 1st-order (direct & event/view-mediated) and 2nd-order theme-exposed companies."""
+    def find_theme_companies(self, theme_id: str) -> dict[str, Any]:
+        """Find the companies a theme affects, directly or through an event or view about it."""
         theme = self.get_node(theme_id)
         if theme is None or theme.node_type != "theme":
             raise KeyError(f"Theme not found: {theme_id}")  # noqa: TRY003
 
-        first_order_map: dict[str, dict[str, Any]] = {}
+        company_map: dict[str, dict[str, Any]] = {}
         direct_links_by_company: dict[str, dict[str, dict[str, Any]]] = {}
         indirect_seen_by_company: dict[str, set[tuple[str, str, str]]] = {}
 
         def _ensure_company_entry(company_dict: dict[str, Any]) -> dict[str, Any]:
             cid = company_dict["id"]
-            if cid not in first_order_map:
+            if cid not in company_map:
                 consensus = self.get_entity_consensus(cid)
-                first_order_map[cid] = {
+                company_map[cid] = {
                     "company": company_dict,
                     "consensus_stance": consensus.facets.get("stance") if consensus else None,
                     "consensus_summary": consensus.summary if consensus else None,
@@ -1433,7 +1430,7 @@ class OntologyDB:
                 }
                 direct_links_by_company[cid] = {}
                 indirect_seen_by_company[cid] = set()
-            return first_order_map[cid]
+            return company_map[cid]
 
         def _is_company(node_dict: dict[str, Any]) -> bool:
             return (
@@ -1471,6 +1468,10 @@ class OntologyDB:
                     existing_lk["facets"] = merged_facets
                     existing_lk["exposure_sentiment"] = exp_sent
             elif nb["node_type"] in ("event", "view"):
+                # A consensus view links a theme only as LLM-picked evidence, so it
+                # doesn't show the company is affected by the theme.
+                if nb["facets"].get("view_type") == "consensus":
+                    continue
                 for sub in self.get_incident_edges(nb["id"]):
                     sub_nb = sub["neighbor"]
                     if _is_company(sub_nb):
@@ -1491,61 +1492,9 @@ class OntologyDB:
                             }
                         )
 
-        second_order_rels = (
-            self.registry.get_relations_by_group("second_order_entity")
-            or SECOND_ORDER_ENTITY_RELATIONS
-        )
-        second_order_map: dict[str, dict[str, Any]] = {}
-        second_order_paths_seen: dict[str, dict[tuple[str, str, str], dict[str, Any]]] = {}
-        if include_second_order:
-            for cid, entry in first_order_map.items():
-                first_comp = entry["company"]
-                first_name = first_comp["name"]
-                for rel_item in self.get_incident_edges(cid):
-                    nb = rel_item["neighbor"]
-                    if _is_company(nb) and nb["id"] not in first_order_map:
-                        res, _ = self._canonicalize_incident_edge(first_comp, rel_item)
-                        if res.relation not in second_order_rels:
-                            continue
-                        sid = nb["id"]
-                        if res.symmetric:
-                            path_dir = "mutual"
-                        elif res.from_id == sid:
-                            path_dir = "outgoing"
-                        else:
-                            path_dir = "incoming"
-                        if sid not in second_order_map:
-                            consensus = self.get_entity_consensus(sid)
-                            second_order_map[sid] = {
-                                "company": nb,
-                                "consensus_stance": (
-                                    consensus.facets.get("stance") if consensus else None
-                                ),
-                                "paths": [],
-                            }
-                            second_order_paths_seen[sid] = {}
-                        path_key = (cid, res.relation, path_dir)
-                        existing_path = second_order_paths_seen[sid].get(path_key)
-                        if existing_path is None:
-                            path_obj = {
-                                "connected_to": first_name,
-                                "connected_to_id": cid,
-                                "relation": res.relation,
-                                "direction": path_dir,
-                                "symmetric": res.symmetric,
-                                "facets": dict(res.facets),
-                            }
-                            second_order_paths_seen[sid][path_key] = path_obj
-                            second_order_map[sid]["paths"].append(path_obj)
-                        else:
-                            existing_path["facets"] = merge_edge_facets(
-                                existing_path["facets"], res.facets
-                            )
-
         return {
             "theme": node_to_dict(theme),
-            "first_order": list(first_order_map.values()),
-            "second_order": list(second_order_map.values()),
+            "companies": list(company_map.values()),
         }
 
     def get_known_facet_keys(self) -> dict[str, list[str]]:

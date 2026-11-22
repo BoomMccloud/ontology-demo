@@ -24,8 +24,8 @@ Pure definitions. Nothing here opens a connection.
   `Node` / `Edge` models.
 - `merge_edge_facets` and `reconcile_sentiment` define how two facet dicts
   combine when edges are deduplicated. Opposing sentiments become `mixed`.
-- Relation groupings used by queries: `SECOND_ORDER_ENTITY_RELATIONS` and
-  `THEME_EXPOSURE_RELATIONS`. `SIGNAL_CATEGORY_ALIASES` is re-exported from `vocab.py`.
+- Relation groupings used by queries: `THEME_EXPOSURE_RELATIONS`.
+  `SIGNAL_CATEGORY_ALIASES` is re-exported from `vocab.py`.
 
 Change this layer when the shape of the data changes: a new column, a new
 table, a new facet merge rule. A column added to an existing table goes in

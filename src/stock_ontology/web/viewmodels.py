@@ -115,7 +115,7 @@ STRUCTURE_DEFINITIONS: tuple[dict[str, str], ...] = (
         "subtitle": "Secular Narratives & Multi-Company Investment Theses",
         "lifecycle": "Canonical (stage-tracked narratives)",
         "subtype_key": "stage",
-        "description": "Cross-company macro or industry theses enabling 1st-order and 2nd-order supply-chain exposure mapping.",
+        "description": "Cross-company macro or industry theses and the companies they affect.",
     },
 )
 
@@ -230,25 +230,10 @@ def _load_entities_split(
 
 
 def _load_themes_list(db: OntologyDB) -> list[dict[str, Any]]:
-    """Load and sort investment themes with 1st- and 2nd-order company counts."""
+    """Load and sort investment themes with their affected-company counts."""
     themes: list[dict[str, Any]] = []
     for thm in db.list_nodes(node_type="theme", limit=500):
-        tc = db.find_theme_companies(thm.id, include_second_order=True)
-        first_companies: list[dict[str, str]] = []
-        for entry in tc["first_order"]:
-            comp = entry["company"]
-            rel = ""
-            if entry["links"]:
-                first_link = entry["links"][0]
-                rel = first_link.get("relation") or first_link.get("theme_relation") or ""
-            first_companies.append(
-                {
-                    "id": comp["id"],
-                    "name": comp["name"],
-                    "ticker": str(comp["facets"].get("ticker", "")),
-                    "relation": rel,
-                }
-            )
+        tc = db.find_theme_companies(thm.id)
         neighbor_ids: dict[str, set[str]] = {"view": set(), "event": set()}
         for item in db.get_incident_edges(thm.id):
             nb = item["neighbor"]
@@ -260,9 +245,7 @@ def _load_themes_list(db: OntologyDB) -> list[dict[str, Any]]:
                 "name": thm.name,
                 "summary": thm.summary,
                 "stage": thm.facets.get("stage", ""),
-                "first_order_companies": first_companies,
-                "first_order_count": len(tc["first_order"]),
-                "second_order_count": len(tc["second_order"]),
+                "company_count": len(tc["companies"]),
                 "view_count": len(neighbor_ids["view"]),
                 "event_count": len(neighbor_ids["event"]),
             }
@@ -270,7 +253,7 @@ def _load_themes_list(db: OntologyDB) -> list[dict[str, Any]]:
 
     themes.sort(
         key=lambda t: (
-            -(t["first_order_count"] + t["second_order_count"]),
+            -t["company_count"],
             t["name"].casefold(),
         )
     )
@@ -429,7 +412,7 @@ def build_theme_context(
     lang: str = DEFAULT_LANGUAGE,
 ) -> dict[str, Any]:
     """Prepare context for an investment theme catalog page."""
-    theme_data = db.find_theme_companies(theme_id, include_second_order=True)
+    theme_data = db.find_theme_companies(theme_id)
     theme = theme_data["theme"]
     facets = theme.get("facets", {})
     extra_keys = [k for k in sorted(facets.keys()) if k != "stage"]
@@ -439,6 +422,10 @@ def build_theme_context(
     for item in db.get_incident_edges(theme_id):
         nb = item["neighbor"]
         nid = str(nb["id"])
+        # Consensus views are company-level syntheses. A theme reaches one only as
+        # LLM-picked evidence, which doesn't make the consensus about the theme.
+        if nb["node_type"] == "view" and (nb.get("facets") or {}).get("view_type") == "consensus":
+            continue
         rel = str(item["relation"])
         edge_facets = item.get("facets") or {}
         eff_sent, sent_src = resolve_item_sentiment(nb.get("facets", {}), edge_facets)
@@ -467,7 +454,7 @@ def build_theme_context(
     _attach_source_display(events, data_dir)
     _attach_source_display(views, data_dir)
 
-    for row in theme_data["first_order"]:
+    for row in theme_data["companies"]:
         for link in row["links"]:
             fp, label, exists = _resolve_source_fields(link.get("source"), data_dir)
             link["source_file"] = fp
@@ -478,8 +465,7 @@ def build_theme_context(
         "theme": theme,
         "stage": facets.get("stage", ""),
         "extra_facets": _format_facet_pairs(facets, extra_keys, lang=lang),
-        "first_order": theme_data["first_order"],
-        "second_order": theme_data["second_order"],
+        "companies": theme_data["companies"],
         "events": events,
         "views": views,
         "page_context": translate(

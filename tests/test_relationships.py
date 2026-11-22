@@ -272,7 +272,7 @@ def _seed_read_consolidation_db(db_path: Path) -> None:
             # Mixed theme exposure across docs
             Edge(id="e_vc1", from_id="ent_vrt", to_id="thm_capex", relation="BENEFITS_FROM", source_doc_id="doc_1"),
             Edge(id="e_vc2", from_id="ent_vrt", to_id="thm_capex", relation="HURT_BY", source_doc_id="doc_2"),
-            # Second 1st-order company on thm_power
+            # Second affected company on thm_power
             Edge(id="e_np1", from_id="ent_nvda", to_id="thm_power", relation="BENEFITS_FROM", source_doc_id="doc_1"),
             Edge(
                 id="e_np2",
@@ -348,9 +348,9 @@ def test_read_side_consolidation_and_natural_ux_labels(tmp_path: Path) -> None:
         assert ov_jane["related_entities"][0]["relation"] == "WORKS_AT"
         assert ov_jane["related_entities"][0]["direction"] == "outgoing"
 
-        theme_res = ro.find_theme_companies("thm_power", include_second_order=True)
-        first_by_id = {row["company"]["id"]: row for row in theme_res["first_order"]}
-        assert len(theme_res["first_order"]) == 2
+        theme_res = ro.find_theme_companies("thm_power")
+        first_by_id = {row["company"]["id"]: row for row in theme_res["companies"]}
+        assert len(theme_res["companies"]) == 2
         assert set(first_by_id.keys()) == {"ent_vrt", "ent_nvda"}
 
         vrt_direct = [lk for lk in first_by_id["ent_vrt"]["links"] if lk["via"] == "direct"]
@@ -361,19 +361,7 @@ def test_read_side_consolidation_and_natural_ux_labels(tmp_path: Path) -> None:
         assert len(nvda_direct) == 1
         assert nvda_direct[0]["relation"] == "EXPOSED_TO"
 
-        second_by_id = {row["company"]["id"]: row for row in theme_res["second_order"]}
-        assert len(theme_res["second_order"]) == 4
-        assert set(second_by_id.keys()) == {"ent_tsmc", "ent_schn", "ent_sub", "ent_parent"}
-        for cid in second_by_id:
-            assert len(second_by_id[cid]["paths"]) == 1
-        assert second_by_id["ent_tsmc"]["paths"][0]["relation"] == "BUY"
-        assert second_by_id["ent_tsmc"]["paths"][0]["direction"] == "incoming"
-        assert second_by_id["ent_schn"]["paths"][0]["relation"] == "COMPETE"
-        assert second_by_id["ent_schn"]["paths"][0]["direction"] == "mutual"
-        assert second_by_id["ent_parent"]["paths"][0]["relation"] == "OWNS"
-        assert second_by_id["ent_parent"]["paths"][0]["direction"] == "outgoing"
-        assert second_by_id["ent_sub"]["paths"][0]["relation"] == "OWNS"
-        assert second_by_id["ent_sub"]["paths"][0]["direction"] == "incoming"
+        assert "second_order" not in theme_res
 
         bfs = ro.traverse_bfs("ent_vrt", max_hops=1)
         bfs_vrt_thm = [
@@ -433,21 +421,16 @@ def test_read_side_consolidation_and_natural_ux_labels(tmp_path: Path) -> None:
     r_theme = client.get("/theme/thm_power")
     assert r_theme.status_code == 200
     tbodies = _extract_all_tbodies(r_theme.text)
-    assert len(tbodies) >= 2
-    first_tbody, second_tbody = tbodies[0], tbodies[1]
+    first_tbody = tbodies[0]
     assert first_tbody.count("Vertiv") == 1
     assert first_tbody.count("NVIDIA") == 1
     assert "exposed to" in first_tbody.lower()
     assert "positive" in first_tbody.lower()
     assert "BENEFITS_FROM" not in first_tbody
 
+    # The theme page lists affected companies only; their peers and suppliers are not shown.
     for name in ("TSMC", "Schneider Electric", "Emerson HoldCo", "CoolTech Sub"):
-        assert second_tbody.count(name) == 1
-    for label in ("sells to", "competes with", "owned by"):
-        assert label in second_tbody.lower()
-    assert re.search(r"\bowns\b", second_tbody.lower()) is not None
-    for forbidden in ("SUPPLIES_TO", "CUSTOMER_OF", "COMPETES_WITH", "SUBSIDIARY_OF", "(outgoing)", "(incoming)"):
-        assert forbidden not in second_tbody
+        assert name not in r_theme.text
 
 
 # ---------------------------------------------------------------------------
@@ -980,10 +963,8 @@ def test_guardrail_locale_parity_and_no_mention_count_badges(tmp_path: Path) -> 
     assert r_theme_en.status_code == 200
     t_bodies = _extract_all_tbodies(r_theme_en.text)
     assert t_bodies[0].count("Vertiv") == 1
-    assert t_bodies[1].count("TSMC") == 1
     for forbidden_badge in ("4x", "4×", "(4)", "2x", "2×", "(2)", "mentions", "mentioned"):
         assert forbidden_badge not in t_bodies[0].lower()
-        assert forbidden_badge not in t_bodies[1].lower()
 
     for code in ("zh", "ko", "ja", "es", "fr"):
         r_loc = client.get(f"/entity/ent_vrt?lang={code}")

@@ -82,9 +82,6 @@
                 {% else %}
                   {{ author.name }}
                 {% endif %}
-                {% if author.reasons %}
-                  <span class="mono">[{% for r in author.reasons %}{{ t_enum('link_reason', r) }}{% if not loop.last %}, {% endif %}{% endfor %}]</span>
-                {% endif %}
               </span>
             {% endfor %}
           </div>
@@ -273,7 +270,6 @@
         <tr>
           <th class="u-w-18pct">{{ t('catalog.col_subject') }}</th>
           <th>{{ t('catalog.col_note') }}</th>
-          <th class="u-w-16pct">{{ t('catalog.col_provenance') }}</th>
           <th class="u-w-14pct">{{ t('catalog.col_date') }}</th>
         </tr>
       </thead>
@@ -289,20 +285,11 @@
                 <div class="catalog-excerpt">{{ note.excerpt }}</div>
               {% endif %}
             </td>
-            <td class="catalog-nowrap">
-              {% if note.link_reasons %}
-                {% for r in note.link_reasons %}
-                  <span class="badge badge-reason">{{ t_enum('link_reason', r) }}</span>
-                {% endfor %}
-              {% else %}
-                <span class="source-cite">{{ t('common.none') }}</span>
-              {% endif %}
-            </td>
             <td class="mono catalog-nowrap">{{ note.note_date or t('common.none') }}</td>
           </tr>
         {% else %}
           <tr>
-            <td colspan="4">{{ t('catalog.no_matching_notes') }}</td>
+            <td colspan="3">{{ t('catalog.no_matching_notes') }}</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -319,7 +306,6 @@
             <th>{{ t('catalog.col_role_org') }}</th>
             <th>{{ t('catalog.col_companies') }}</th>
             <th class="u-w-9pct">{{ t('catalog.col_notes') }}</th>
-            <th class="u-w-14pct">{{ t('catalog.col_provenance') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -337,11 +323,6 @@
               </td>
               <td>{{ grp.companies | join(', ') }}</td>
               <td class="mono catalog-nowrap">{{ grp.note_count }}</td>
-              <td class="catalog-nowrap">
-                {% for r in grp.link_reasons %}
-                  <span class="badge badge-reason">{{ t_enum('link_reason', r) }}</span>
-                {% endfor %}
-              </td>
             </tr>
           {% endfor %}
           {% if unassigned_author_notes and not selected_alpha %}
@@ -352,7 +333,6 @@
               <td class="source-cite">{{ t('catalog.unassigned_authors_desc') }}</td>
               <td>{{ unassigned_companies | join(', ') }}</td>
               <td class="mono catalog-nowrap">{{ unassigned_author_notes | length }}</td>
-              <td class="source-cite">{{ t('common.none') }}</td>
             </tr>
           {% endif %}
         </tbody>

@@ -57,7 +57,7 @@
         <tr>
           <th class="u-w-38pct">{{ t('themes_index.col_theme') }}</th>
           <th class="u-w-20pct">{{ t('themes_index.col_stage') }}</th>
-          <th class="u-w-14pct u-num">{{ t('home.col_companies') }}</th>
+          <th class="u-w-14pct u-num">{{ t('theme.affected_companies') }}</th>
           <th class="u-w-14pct u-num">{{ t('home.col_views') }}</th>
           <th class="u-w-14pct u-num">{{ t('home.col_events') }}</th>
         </tr>
@@ -73,7 +73,7 @@
                 <span class="source-cite">{{ t('common.none') }}</span>
               {% endif %}
             </td>
-            <td class="mono u-num">{{ thm.first_order_count }}</td>
+            <td class="mono u-num">{{ thm.company_count }}</td>
             <td class="mono u-num">{{ thm.view_count }}</td>
             <td class="mono u-num">{{ thm.event_count }}</td>
           </tr>
