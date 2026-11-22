@@ -22,6 +22,11 @@ without secrets), `/api/language`, and `/set-language`.
 
 Chat sessions are kept in memory, capped at `MAX_CHAT_SESSIONS` (50).
 
+`/api/chat` uses only `OntologyAgent(...)` and `chat()`. It stores each
+session's `ChatTurn.history` without reading it and passes it back on the next
+request. `tests/test_web.py::test_web_chat_endpoint_uses_only_agent_chat`
+enforces this.
+
 ## Depends on
 
 [storage.md](storage.md) (read-only), [agent.md](agent.md), [llm.md](llm.md),

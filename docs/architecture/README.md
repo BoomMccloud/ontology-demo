@@ -52,6 +52,10 @@ interface touches its callers, and that's expected.
 - Only `stock_ontology.db` touches SQLite (`.conn`, `sqlite3`, `sqlite_vec`),
   so a schema change can't silently break another module.
 
+The web-to-agent contract (`chat()` and `ChatTurn` only) is enforced by
+`tests/test_web.py::test_web_chat_endpoint_uses_only_agent_chat` and
+`tests/test_agent.py::test_agent_chat_returns_immutable_turn_contract`.
+
 If the test fails on a dependency you actually want, update `ALLOWED` in the
 test and the layer list here together.
 

@@ -13,8 +13,17 @@ calling tools over the graph.
 ## How it works
 
 `OntologyAgent(db, llm, language)` refuses to start unless `db.read_only` is
-true. `ask(message, max_rounds=8)` runs a tool-calling loop and keeps chat
-history until `reset()`.
+true. There are two ways to call it:
+
+- `chat(message, history=())` returns a `ChatTurn`, a frozen dataclass with
+  `reply`, `history`, `tools_used` (this turn only), `provider`, `model`, and
+  `fallback_used`. Use it when the caller keeps its own sessions. `history` is
+  opaque: store it and pass it back to the next `chat()` call unchanged.
+- `ask(message, max_rounds=8)` returns the reply text and keeps history inside
+  the agent until `reset()`. The CLI uses this.
+
+Other attributes (`messages`, `tool_trace`, `last_provider`, `last_model`,
+`last_fallback_used`) are internal and may change.
 
 Tools exposed to the model (`TOOL_SCHEMAS`):
 
@@ -39,7 +48,8 @@ graph's own text stays in its original language.
 
 ## Used by
 
-The CLI (`ask`, `chat`) and the web app (`/api/chat`).
+The CLI (`ask`, `chat`, through `ask()`/`reset()`) and the web app
+(`/api/chat`, through `chat()`).
 
 ## Tests
 
