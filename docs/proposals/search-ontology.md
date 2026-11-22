@@ -1,6 +1,6 @@
 ---
 proposal_id: "search-ontology"
-state: BUILT
+state: ACCEPTED
 witness: independent
 candidate: "6f7dbc3 @ worktree/claude/search-ontology-proposal-f78e10"
 ---
@@ -188,9 +188,57 @@ Candidate: commit `6f7dbc3` (tree `82439dd6357e906cd9b5ebf4e213d3e08b7c6e97`) on
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+Candidate: `6f7dbc3` (tree `82439dd6357e906cd9b5ebf4e213d3e08b7c6e97`) on `claude/search-ontology-proposal-f78e10`, base `1b4bd7a` / main `11825e6`. Gates ran at HEAD `4b51a70`. `git diff 6f7dbc3 4b51a70 --name-only` shows only `docs/proposals/search-ontology.md`, so the code tree is identical.
+
+Independence: fresh-context. Before this audit, the auditing context had seen only the ledger path, the candidate identity, the base and the repository. It did not build or prove the candidate.
+
+Primary-claim verdict: PROVED
+- Evidence: `uv run pytest tests/test_search_ontology_options.py -v` → 18 passed. Re-running the same file on a `git archive 8165fce` extract gave 15 failed, 3 passed, matching Proof's RED.
+- The witness compares each select's option values with sets computed from `vocab.py`, `search.NODE_TYPES` and `load_registry(ontology_registry.json)`. Its fixture stores off-vocabulary values (`webinar`, `outperform`, `FROBNICATES`), so leakage from the DB would fail it.
+- The diff matches. `build_search_filter_options` builds node types from `NODE_TYPES`, subtypes from `SUBTYPE_FACET`/`NODE_FACET_VOCABS`, statuses from `NODE_FACET_VOCABS[nt]["status"]`, and sentiment, stance, support strength and conviction from their vocab sets. Relations come from `registry.relations`. The only DB scan left is `db.list_nodes(node_type="entity")` for entity options. `DEFAULT_SUBTYPES_BY_TYPE`, `CANONICAL_STANCES`, `_merge_ordered` and the observed-value scan are deleted, as are the hardcoded `node_type` options and the sentiment fallback in `search_bar.html`.
+- Filter semantics are proved by exact result-ID sets for `status-event`, `status-view`, `support_strength`, `conviction`, `relation-any` and `relation-entity`, and the qualified subtype by the web and `search_ontology` tests.
+- Limit: option values only, not labels, order or optgroup grouping. Filters tested singly or in the listed pairs. Malformed qualifiers such as `foo:bar` are untested; by reading, `split_qualified_value` keeps an unknown prefix whole, so it matches nothing.
+
+Guardrail verdicts:
+- Existing URLs return the same results: PROVED.
+  - Evidence: `test_bare_subtype_and_existing_filters_keep_todays_results` passes on the candidate and passed on the base. It covers bare `rumor`, `rumors` and `consensus`, stance, sentiment, node type plus dates, `source_file` and keyword mode. `from_raw` sends a bare value whole through `parse_category_filter` to an unchanged `matches_signal_filter`.
+  - Build's note on bare legacy URLs: `subtype=rumor` still filters and shows its chip, but no subtype `<option>` is marked selected, so resubmitting the form drops the subtype. That is a form-state regression, not a change in results, so it doesn't break this guardrail. No in-app link builds a bare `/search?subtype=` URL (`catalog.py:881` uses `source_file`, `navigation.py:64` uses `in=notes`). Accepted as a residual risk.
+  - Limit: `entity_id` alone without a relation isn't asserted in this file. It's covered by the unchanged, green `tests/test_search.py` filter tests.
+- Agent `search_nodes` and `query_entity_signals` unchanged, with `vocab.matches_signal_filter` unchanged: PROVED.
+  - Evidence: `git diff 1b4bd7a 6f7dbc3 --stat` is empty for `vocab.py`, `agent.py`, `models.py` and `ontology_registry.json`. `agent.py:341` still calls `SearchFilters.from_raw(node_type=...)` only, so every new field is None and `matches` adds no checks. `relation_ids` is computed only when `filters.relation` is set. `tests/test_canonical_vocabulary.py::test_agent_and_web_signal_filters_return_identical_items` is green.
+  - Limit: no new agent-level test. This rests on the unchanged call site plus the parity test.
+- No registry: `/search` renders with only the relation filter hidden: PROVED.
+  - Evidence: `test_search_without_registry_hides_only_the_relation_filter` was RED on the base and GREEN on the candidate. It asserts a 200, no `relation` select, the other seven sets exact, and `support_strength=weak` → {vw_weak}.
+  - Limit: a malformed registry file isn't tested. By reading, `_load_optional_registry` returns None on any exception, so the relation select would also be hidden.
+- Relation filter semantics and read-only access: HELD. `OntologyDB.get_relation_node_ids` runs two parameterized `SELECT`s with no write and drops the entity itself from the result. The web path opens the DB with `read_only=True`, which sets `PRAGMA query_only = ON` (`storage.py:109`). With an entity set, the edge must join the item to that entity; `relation-entity` excludes `evt_occ` (ABOUT to QCOM, only RELATES_TO to AAPL). `get_entity_connected_nodes` is unchanged.
+
+Scope and duty verdict: scope HELD; duties HELD.
+- `git diff --name-only 1b4bd7a 6f7dbc3` lists only Frame's Include paths: `search.py`, `db/storage.py` (one read method), `web/viewmodels.py`, `web/app.py`, `search_bar.html`, the 6 locale files, `tests/test_search.py`, `tests/test_web.py` and `docs/architecture/{search,web}.md`. Plus Proof's witness file, the ledger, and one `README.md` constraint entry.
+- Locale diffs add 14 `search.*` keys each and remove none. `tests/test_search.py` and `tests/test_web.py` have no removed lines, consistent with `Invariants changed: None`.
+- Nothing in Exclude/protect changed. Reuse matches Frame: `SearchFilters` and `search_ontology` extended, `build_search_filter_options` rewritten in place, relation filter single-value and any-incident-edge.
+- Constraint capture: the `README.md` Web UI Constraints entry has `**Why:**` and `**Guarded by:**` naming `tests/test_search_ontology_options.py`, which exists.
+- Every supporting obligation is met, with unit tests `test_from_raw_parses_group_qualified_subtype_and_status_values`, `test_get_relation_node_ids_keeps_every_relation_per_neighbor` and `test_search_new_filter_chips_and_labels_in_every_locale`. Limit: those were written after the implementation; their RED is Build's baseline run, not repeated here.
+
+Test homes:
+- `tests/test_search_ontology_options.py`: Proof's protected witness, a dedicated owner for this claim, importing helpers from `test_web` as `tests/test_web_navigation.py` does.
+- `tests/test_search.py`: permanent owner of `SearchFilters` and the search storage read.
+- `tests/test_web.py`: permanent owner of page rendering and chips across locales.
+
+Full gates: PASS
+- `uv run pytest -q`: 252 passed.
+- `uv run pytest tests/test_search_ontology_options.py -v`: 18 passed.
+- `git hash-object tests/test_search_ontology_options.py`: `2554d6126bf0a03883e296a289c4b6433837ca85`, matching `6f7dbc3:` and `8165fce:`.
+- `uv run ruff check` on the changed source files: 1 finding, TRY300 at `search.py:105`, on an untouched line that the base version also has.
+- Limit: offline suite only; no manual browser check of `/search`.
+
+Residual risks:
+- A bare legacy subtype URL (`/search?subtype=rumor`) filters correctly but leaves the subtype select at "Any", so resubmitting the form drops the filter. No in-app link produces such a URL today.
+- `_load_optional_registry()` is now called twice per `/search` request (in `_open_ro_db` and in `search_page`). Correct, but it reads the file twice.
+- Malformed qualifiers and a malformed registry file are untested. By reading, both are handled (match nothing, or relation filter hidden).
+- Option order and labels aren't asserted by any witness.
+
+Recommendation: ACCEPT
+Packet: no repair needed. Merging `claude/search-ontology-proposal-f78e10` is the next step and stays human-owned; ACCEPT doesn't authorize it. Fixing the bare-URL form state belongs in a separate proposal, with a test that `/search?subtype=rumor` renders a selected option.
 
 ## Revisions
 
