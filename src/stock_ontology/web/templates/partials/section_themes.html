@@ -15,17 +15,16 @@
         <tr>
           <td><a href="/theme/{{ thm.id }}"><strong>{{ thm.name }}</strong></a></td>
           <td>
-            {% if thm.facets.get("stage") %}
-              <span class="badge badge-{{ thm.facets.get('stage') | lower }}">{{ t_enum('stage', thm.facets.get("stage")) }}</span>
+            {% if thm.stage %}
+              <span class="badge badge-{{ thm.stage | lower }}">{{ t_enum('stage', thm.stage) }}</span>
             {% else %}
               {{ t('common.none') }}
             {% endif %}
           </td>
           <td>
             {{ format_relation(thm.relation, thm.direction) }}
-            {% set exp_sent = thm.exposure_sentiment or (thm.edge_facets.get("sentiment") if thm.edge_facets is mapping else None) %}
-            {% if exp_sent %}
-              <span class="badge badge-{{ exp_sent | lower }}">{{ t_enum('sentiment', exp_sent) }}</span>
+            {% if thm.exposure_sentiment %}
+              <span class="badge badge-{{ thm.exposure_sentiment | lower }}">{{ t_enum('sentiment', thm.exposure_sentiment) }}</span>
             {% endif %}
             <span class="source-cite">({{ format_via(thm.via) }})</span>
           </td>

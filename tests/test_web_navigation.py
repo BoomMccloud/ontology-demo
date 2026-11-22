@@ -295,8 +295,12 @@ def test_one_desktop_width_and_one_mobile_breakpoint() -> None:
 
 def test_navigation_registry_lookup() -> None:
     from stock_ontology.web.navigation import resolve_nav
+    from stock_ontology.web.viewmodels import EntityHeader
 
-    nav = resolve_nav("/entity/{entity_id}", {}, {"entity": {"name": "NVIDIA"}, "is_company": True})
+    header = EntityHeader(
+        id="ent_nvda", name="NVIDIA", summary="", aliases=(), ticker="NVDA", entity_type="company"
+    )
+    nav = resolve_nav("/entity/{entity_id}", {}, {"entity": header, "is_company": True})
     assert (nav.workflow, nav.section, nav.archetype) == ("research", "companies", "component")
     assert [c.label_key or c.label for c in nav.crumbs][-1] == "NVIDIA"
 

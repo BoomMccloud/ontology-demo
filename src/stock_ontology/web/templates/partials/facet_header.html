@@ -2,12 +2,12 @@
   <div class="entry-title-row">
     <h1 class="u-m-0 u-fs-1p55rem">
       {{ entity.name }}
-      {% if entity.facets.get("ticker") %}
-        <span class="mono">({{ entity.facets.get("ticker") }})</span>
+      {% if entity.ticker %}
+        <span class="mono">({{ entity.ticker }})</span>
       {% endif %}
     </h1>
     <div>
-      <span class="badge">{{ t_enum('entity_type', entity_type) }}</span>
+      <span class="badge">{{ t_enum('entity_type', entity.entity_type) }}</span>
     </div>
   </div>
   {% if entity.aliases %}

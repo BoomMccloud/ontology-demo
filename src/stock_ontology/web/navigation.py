@@ -117,7 +117,7 @@ def _search(_q: Mapping[str, str], _ctx: Mapping[str, Any]) -> NavState:
 
 def _entity(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
     owner = _COMPANIES if ctx.get("is_company") else _OTHER
-    name = str((ctx.get("entity") or {}).get("name", ""))
+    name = str(getattr(ctx.get("entity"), "name", ""))
     return NavState("research", owner.key, "component", [_ROOT, _crumb(owner), Crumb(label=name)])
 
 

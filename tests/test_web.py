@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import html
 import math
 import re
@@ -1473,3 +1474,224 @@ def test_home_themes_table_counts_companies_views_and_events(tmp_path: Path) -> 
     row = theme_section.split('href="/theme/thm_grid"', 1)[1].split("</tr>", 1)[0]
     counts = re.findall(r'<td class="mono u-num">(\d+)</td>', row)
     assert counts == ["2", "2", "1"]
+
+
+# ---------------------------------------------------------------------------
+# Presentation-model contract for the entity page (proposal `company-view-separation`)
+# ---------------------------------------------------------------------------
+
+TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "src" / "stock_ontology" / "web" / "templates"
+RAW_FACET_KEYS = ("facets", "edge_facets")
+# Attribute or key access to `facets` / `edge_facets`. Prepared pairs such as
+# `company_facets` and translation keys such as `'facets.col_value'` don't match.
+RAW_FACET_TOKEN = re.compile(r"""\.(?:edge_)?facets\b|\[\s*['"](?:edge_)?facets['"]\s*\]""")
+
+
+def _template_closure(name: str) -> set[str]:
+    """Return `name` plus every template it includes, followed transitively."""
+    seen: set[str] = set()
+    pending = [name]
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        text = (TEMPLATES_DIR / current).read_text(encoding="utf-8")
+        pending.extend(re.findall(r'{%-?\s*include\s+"([^"]+)"', text))
+    return seen
+
+
+def _raw_facet_paths(value: Any, path: str = "ctx") -> list[str]:
+    """List every place in a template context where a raw facets mapping is still reachable."""
+    found: list[str] = []
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        for field in dataclasses.fields(value):
+            if field.name in RAW_FACET_KEYS:
+                found.append(f"{path}.{field.name}")
+            found.extend(_raw_facet_paths(getattr(value, field.name), f"{path}.{field.name}"))
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if key in RAW_FACET_KEYS:
+                found.append(f"{path}[{key!r}]")
+            found.extend(_raw_facet_paths(item, f"{path}[{key!r}]"))
+    elif isinstance(value, (list, tuple)):
+        for idx, item in enumerate(value):
+            found.extend(_raw_facet_paths(item, f"{path}[{idx}]"))
+    return found
+
+
+def _seed_presentation_db(db_path: Path) -> None:
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        nodes = [
+            Node(
+                id="ent_tsmc",
+                node_type="entity",
+                name="TSMC",
+                summary="Leading-edge foundry.",
+                aliases=["TSM", "Taiwan Semi"],
+                facets={"entity_type": "company", "ticker": "TSM", "sector": "Semiconductors"},
+            ),
+            Node(
+                id="ent_asml",
+                node_type="entity",
+                name="ASML",
+                summary="Lithography tools.",
+                facets={"entity_type": "company", "ticker": "ASML"},
+            ),
+            Node(
+                id="ent_wei",
+                node_type="entity",
+                name="C.C. Wei",
+                summary="TSMC chief executive.",
+                facets={"entity_type": "person", "role": "ceo", "organization": "TSMC"},
+            ),
+            Node(
+                id="thm_ai",
+                node_type="theme",
+                name="AI Accelerator Demand",
+                summary="Accelerator capacity race.",
+                facets={"stage": "accelerating"},
+            ),
+            Node(
+                id="evt_capex",
+                node_type="event",
+                name="Capex Raise",
+                summary="TSMC raises capex guidance.",
+                facets={
+                    "event_type": "news",
+                    "event_date": "2026-11-10",
+                    "status": "occurred",
+                    "sentiment": "mixed",
+                    "source": {"file_path": "TSMC/2026-11-10_capex.md", "author": "Ana Lee", "kind": "meeting"},
+                },
+                source_doc_id="doc_c",
+            ),
+            Node(
+                id="evt_old",
+                node_type="event",
+                name="Fab Visit",
+                summary="Earlier site visit.",
+                facets={"event_type": "fact", "event_date": "2026-08-01", "status": "occurred"},
+                source_doc_id="doc_o",
+            ),
+            Node(
+                id="vw_rumor",
+                node_type="view",
+                name="Pricing Rumor",
+                summary="Channel hears wafer price hikes.",
+                facets={
+                    "view_type": "rumor",
+                    "stance": "cautious",
+                    "sentiment": "negative",
+                    "support_strength": "strong",
+                    "conviction": "medium",
+                    "as_of": "2026-11-12",
+                    "source": {"file_path": "TSMC/2026-11-12_rumor.md", "author": "Bo Kim"},
+                },
+                source_doc_id="doc_r",
+            ),
+        ]
+        for idx, n in enumerate(nodes):
+            db.upsert_node(n, embedding=_unit_vec(idx))
+        for edge in [
+            Edge(id="p1", from_id="evt_capex", to_id="ent_tsmc", relation="ABOUT", facets={"sentiment": "positive"}, source_doc_id="doc_c"),
+            Edge(id="p2", from_id="evt_old", to_id="ent_tsmc", relation="ABOUT", source_doc_id="doc_o"),
+            Edge(id="p3", from_id="vw_rumor", to_id="ent_tsmc", relation="ABOUT", source_doc_id="doc_r"),
+            Edge(id="p4", from_id="ent_tsmc", to_id="thm_ai", relation="EXPOSED_TO", facets={"sentiment": "positive"}),
+            Edge(id="p5", from_id="ent_asml", to_id="ent_tsmc", relation="SUPPLIES_TO"),
+            Edge(id="p6", from_id="ent_wei", to_id="ent_tsmc", relation="WORKS_AT"),
+            Edge(id="p7", from_id="evt_capex", to_id="thm_ai", relation="RELATES_TO", facets={"sentiment": "positive"}, source_doc_id="doc_c"),
+            Edge(id="p8", from_id="vw_rumor", to_id="thm_ai", relation="CONTRADICTS", source_doc_id="doc_r"),
+        ]:
+            db.upsert_edge(edge)
+        old_cons = Node(
+            id="vw_cons_old",
+            node_type="view",
+            name="Consensus: Hold TSMC",
+            summary="Hold pending capex clarity.",
+            facets={"stance": "hold", "as_of": "2026-09-01"},
+        )
+        db.upsert_consensus_view("ent_tsmc", old_cons, _unit_vec(8), ["evt_old"], [])
+        new_cons = Node(
+            id="vw_cons_new",
+            node_type="view",
+            name="Consensus: Buy TSMC",
+            summary="Buy on AI demand.",
+            facets={
+                "stance": "buy",
+                "support_strength": "strong",
+                "conviction": "high",
+                "as_of": "2026-11-15",
+                "pillars": ["AI wafer demand"],
+            },
+        )
+        db.upsert_consensus_view("ent_tsmc", new_cons, _unit_vec(9), ["evt_capex"], ["vw_rumor"])
+
+
+def test_entity_page_templates_only_see_presentation_models(tmp_path: Path) -> None:
+    """Entity pages render from typed presentation models, never raw ontology facets."""
+    from stock_ontology.web.viewmodels import build_entity_context
+
+    db_path = tmp_path / "presentation.db"
+    _seed_presentation_db(db_path)
+    settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=tmp_path)
+    client = TestClient(create_app(settings, llm=FakeWebLLM()))
+
+    # 1. The rendered pages still show what the ontology holds.
+    page = client.get("/entity/ent_tsmc")
+    assert page.status_code == 200
+    text = page.text
+    assert '<span class="mono">(TSM)</span>' in text
+    assert "TSM, Taiwan Semi" in text
+    events = text.split('id="sec-events"', 1)[1].split("</section>", 1)[0]
+    capex = events.split('id="node-evt_capex"', 1)[1].split("</tr>", 1)[0]
+    assert '<div class="mono">2026-11-10</div>' in capex
+    assert '<span class="badge">news</span>' in capex
+    assert '<span class="badge badge-positive">positive</span>' in capex
+    assert '<div class="source-cite">occurred</div>' in capex
+    assert "entity impact (overall: mixed)" in capex
+    assert "Author: Ana Lee" in capex and "Kind: meeting" in capex
+    fab = events.split('id="node-evt_old"', 1)[1].split("</tr>", 1)[0]
+    assert "entity impact" not in fab
+    views = text.split('id="sec-views"', 1)[1].split("</section>", 1)[0]
+    assert '<span class="badge badge-cautious">cautious</span>' in views
+    assert '<span class="badge badge-negative">negative</span>' in views
+    assert '<span class="badge badge-strong">strong</span>' in views
+    assert "rumor" in views and "2026-11-12" in views
+    assert "Conviction: medium" in views and "Author: Bo Kim" in views
+    assert "Prior Superseded Consensus History (1)" in text
+    assert '<span class="badge">hold</span>' in text and "2026-09-01" in text
+    themes = text.split('id="sec-themes"', 1)[1].split("</section>", 1)[0]
+    assert '<span class="badge badge-accelerating">accelerating</span>' in themes
+    assert '<span class="badge badge-positive">positive</span>' in themes
+    related = text.split('id="sec-related"', 1)[1].split("</section>", 1)[0]
+    assert "ASML" in related and "C.C. Wei" in related
+    assert '<td class="mono">person</td>' in related
+
+    theme_page = client.get("/theme/thm_ai")
+    assert theme_page.status_code == 200
+    t_events = theme_page.text.split('id="sec-events"', 1)[1].split("</section>", 1)[0]
+    assert "Capex Raise" in t_events and '<span class="badge badge-positive">positive</span>' in t_events
+    assert "Author: Ana Lee" in t_events
+    t_views = theme_page.text.split('id="sec-views"', 1)[1].split("</section>", 1)[0]
+    assert "Pricing Rumor" in t_views and '<span class="badge badge-cautious">cautious</span>' in t_views
+
+    # 2. The view model hands templates presentation models only.
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        for entity_id in ("ent_tsmc", "ent_wei", "ent_asml"):
+            ctx = build_entity_context(db, entity_id, data_dir=tmp_path, lang="en")
+            assert _raw_facet_paths(ctx) == [], entity_id
+            assert dataclasses.is_dataclass(ctx["entity"]), entity_id
+            for key in ("events", "views", "themes", "related_entities", "prior_consensuses"):
+                assert all(dataclasses.is_dataclass(item) for item in ctx[key]), (entity_id, key)
+        tsmc_ctx = build_entity_context(db, "ent_tsmc", data_dir=tmp_path, lang="en")
+        assert dataclasses.is_dataclass(tsmc_ctx["consensus"])
+        assert len(tsmc_ctx["events"]) == 2 and len(tsmc_ctx["prior_consensuses"]) == 1
+
+    # 3. No template the entity page renders reads raw facets.
+    closure = _template_closure("entity.html")
+    assert "partials/section_events.html" in closure and "partials/facet_header.html" in closure
+    offenders = sorted(
+        name for name in closure if RAW_FACET_TOKEN.search((TEMPLATES_DIR / name).read_text(encoding="utf-8"))
+    )
+    assert offenders == []
