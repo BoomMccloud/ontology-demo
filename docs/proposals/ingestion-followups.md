@@ -2,7 +2,7 @@
 proposal_id: "ingestion-followups"
 state: BUILT
 witness: independent
-candidate: "c6375e6 @ worktree/proposal-ingestion-followups"
+candidate: "12187d1 @ worktree/proposal-ingestion-followups"
 ---
 
 # Proposal: Ingestion follow-ups
@@ -196,27 +196,28 @@ Candidate: `dc5c34a` (branch `proposal/ingestion-followups`, worktree `.claude/w
 
 ## Build
 
-Candidate: `c6375e6 @ worktree/proposal-ingestion-followups` (branch `proposal/ingestion-followups`). Later commits on the branch touch only this ledger.
+Candidate: `12187d1 @ worktree/proposal-ingestion-followups` (branch `proposal/ingestion-followups`; rebuilt for R1 on top of `c6375e6`). Later commits on the branch touch only this ledger.
 
 ### Files changed
 
-- `src/stock_ontology/db.py` — `node_lookup(key, node_id, node_type)` table with `idx_node_lookup_key_type`, cascading on node delete, refreshed in `upsert_node`, backfilled when a writable open creates the table (`rebuild_node_lookup`); `find_by_name_or_alias` reads it and falls back to the old query when the table is absent (read-only older DB). `ingestion_log` gains nullable `size`/`mtime_ns` via `_migrate_schema`; `get_ingestion_log` returns them; `upsert_ingestion_log` accepts them; new `update_ingestion_stat`, `relink_document`, `get_nodes`, and `find_nodes_mentioned_in` (whole-word match of indexed names/aliases in note text).
+- `src/stock_ontology/db.py` — `node_lookup(key, node_id, node_type)` table with `idx_node_lookup_key_type`, cascading on node delete, refreshed in `upsert_node`, rebuilt on writable open when the table is new or any node lacks a lookup row (`rebuild_node_lookup`; R1); `find_by_name_or_alias` reads it and falls back to the old query when the table is absent (read-only older DB). `ingestion_log` gains nullable `size`/`mtime_ns` via `_migrate_schema`; `get_ingestion_log` returns them; `upsert_ingestion_log` accepts them; new `update_ingestion_stat`, `relink_document`, `get_nodes`, and `find_nodes_mentioned_in` (whole-word match of indexed names/aliases in note text).
 - `src/stock_ontology/pipeline.py` — `_scan_files` stats only; `run()` reads a note only when size or mtime differs (or `force`), relinks a vanished path to a new path with a uniquely matching content hash (`files_moved`), records stat for touched-but-unchanged notes, takes `doc_id` from the log entry when present and salts new path-derived IDs that would collide (`_new_doc_id`); `_process_document` collects company IDs in a local set merged into consensus targets only after the note's transaction commits; `_build_existing_catalog(text)` lists note-mentioned entities/themes first, then `CATALOG_RECENT_BUDGET` (500) most recent per type; `_batch_probe_vectors` embeds all unmatched probes in one call and `_resolve_canonical_node` takes `probe_vec`; `_find_exact` shared; `_build_event_node`/`_build_view_node` and `_resolve_sentiment` replace the inline builders with the same precedence; `_rebuild_company_consensus` uses `get_nodes`.
 - `src/stock_ontology/repair.py` — `RepairReport.self_loops_deleted` (counted in `total_changes`) and `merged_survivor_ids`; new `reembed_nodes(db, llm, node_ids)`.
 - `src/stock_ontology/cli.py` — `repair --reembed` builds the LLM client only when set and re-embeds merged survivors; JSON/table output includes `reembedded`.
-- `tests/test_db.py` — supporting tests: lookup index use, alias edits and delete cascade; backfill on an old DB and read-only fallback; `ingestion_log` migration and stat storage; `get_nodes` order; `_resolve_sentiment` precedence; one batched probe call per note; moves to the root folder, doc-ID reuse at an old path, ambiguous same-hash copies, and `--force`; `repair --reembed` builds the LLM only with the flag.
-- `README.md` — `repair --reembed` usage; two Ingestion Constraints entries (write nodes only through `upsert_node`; take `doc_id` from the log, not the path), each with **Why** and **Guarded by**.
+- `tests/test_db.py` — supporting tests: lookup index use, alias edits and delete cascade; backfill on an old DB and read-only fallback; `ingestion_log` migration and stat storage; `get_nodes` order; `_resolve_sentiment` precedence; one batched probe call per note; moves to the root folder, doc-ID reuse at an old path, ambiguous same-hash copies, and `--force`; `repair --reembed` builds the LLM only with the flag; existing-but-incomplete `node_lookup` is rebuilt on writable open (R1).
+- `README.md` — `repair --reembed` usage; two Ingestion Constraints entries (insert nodes and change names/aliases only through `upsert_node`, raw deletes and other-column updates allowed; take `doc_id` from the log, not the path), each with **Why** and **Guarded by**.
 
 ### Unit evidence
 
-- `uv run pytest -q tests/test_db.py` — GREEN: 19 passed; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/unit_db.log`. The supporting tests were written after the implementation, so no RED was observed for them.
+- `uv run pytest -q tests/test_db.py` — GREEN: 19 passed; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/unit_db.log`. These supporting tests were written after the implementation, so no RED was observed for them.
+- R1: `uv run pytest -q tests/test_db.py -k exists_but_misses` — RED before the fix (1 failed); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/r1_red.log`. GREEN after (1 passed); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/r1_green.log`.
 
 ### Green evidence
 
-- Decisive witness: `uv run pytest -q tests/test_pipeline.py -k "rerun_does_not_read or moved_note or rolled_back_note_adds or catalog_lists_old"` — pass (4 passed); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/witness_pipeline.log`.
-- Decisive witness: `uv run pytest -q tests/test_repair.py -k "self_loops or fresh_embedding"` — pass (2 passed); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/witness_repair.log`.
-- Gate: `uv run pytest -q` — pass (94 passed); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/full_suite.log`.
-- Gate: `uv run ruff check src/stock_ontology/db.py src/stock_ontology/pipeline.py src/stock_ontology/repair.py src/stock_ontology/cli.py tests/test_db.py` — pass; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/ruff.log`.
+- Decisive witness: `uv run pytest -q tests/test_pipeline.py -k "rerun_does_not_read or moved_note or rolled_back_note_adds or catalog_lists_old"` — pass (4 passed); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/witness_pipeline_r1.log`.
+- Decisive witness: `uv run pytest -q tests/test_repair.py -k "self_loops or fresh_embedding"` — pass (2 passed); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/witness_repair_r1.log`.
+- Gate: `uv run pytest -q` — pass (95 passed); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/full_suite_r1.log`.
+- Gate: `uv run ruff check src/stock_ontology/db.py src/stock_ontology/pipeline.py src/stock_ontology/repair.py src/stock_ontology/cli.py tests/test_db.py` — pass; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build2/ruff_r1.log`.
 - Protected witnesses: `git diff --quiet dc5c34a -- tests/test_pipeline.py tests/test_repair.py` — no changes.
 
 ### Intervention record
@@ -225,8 +226,13 @@ Candidate: `c6375e6 @ worktree/proposal-ingestion-followups` (branch `proposal/i
 
 ### Deviations
 
-- None.
+- Test home: Proof's supporting test plan named `tests/test_pipeline.py` for the probe-batching embed-call count. It is in `tests/test_db.py` (`test_probe_embeddings_are_batched_per_note`) because Proof protects the whole of `tests/test_pipeline.py`; no behavior or scope change.
 
 ## Audit
 
 ## Revisions
+
+### R1 — 2026-11-22 — Supporting obligation: backfill `node_lookup` when missing or empty
+- Verdict: REVISE — primary claim and all four guardrails PROVED (RED reproduced on `dc5c34a`), scope HELD, gates PASS on `c6375e6`; duty VIOLATED because `node_lookup` was backfilled only when the table was missing, not when it existed but was empty, so an interrupted first open left lookups empty and ingestion would create duplicates (probe `scratchpad/audit2/probe_lookup.log`). Also: the probe-batching test home moved without a recorded deviation. Independence: fresh-context.
+- Changed: `src/stock_ontology/db.py` — writable open rebuilds `node_lookup` when the table is new or any node lacks a lookup row (also covers nodes written by older code, the audit's first residual risk). `tests/test_db.py` — `test_node_lookup_backfills_when_table_exists_but_misses_nodes`, RED before and GREEN after. `README.md` — the `upsert_node` rule now matches the code (raw deletes and other-column updates such as `relink_document`'s `facets_json` changes are allowed). Build records the test-home deviation. Candidate is now `12187d1`.
+- Re-audit: pending; candidate `12187d1`
