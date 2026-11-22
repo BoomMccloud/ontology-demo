@@ -631,6 +631,7 @@ def build_search_results(
         "best_match": _format_search_hit(db, found.best_match, data_dir) if found.best_match else None,
         "sections": [s for s in sections if s["hits"]],
         "passages": passages,
+        "notes_truncated": found.notes_truncated,
         "count": found.count,
     }
 

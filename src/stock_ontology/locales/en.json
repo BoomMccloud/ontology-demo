@@ -707,6 +707,7 @@
   "search.match_reason_label": "Matched by",
   "search.via_relation": "via {relation} with {name}",
   "search.note_line": "(line {line})",
+  "search.notes_truncated": "Note search stopped early: the notes folder is larger than one search reads. Narrow it with the Source Note filter.",
   "search.section_entities": "Entities & Themes",
   "search.section_related": "Connected Through Relationships",
   "search.section_signals": "Events & Views",

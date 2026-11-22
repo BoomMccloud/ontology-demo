@@ -707,6 +707,7 @@
   "search.match_reason_label": "匹配依据：",
   "search.via_relation": "经由 {relation} 关联 {name}",
   "search.note_line": "（第 {line} 行）",
+  "search.notes_truncated": "笔记搜索已提前停止：笔记文件夹超出单次搜索的读取上限。请用“来源笔记”筛选缩小范围。",
   "search.section_entities": "实体与主题",
   "search.section_related": "关系关联",
   "search.section_signals": "事件与观点",

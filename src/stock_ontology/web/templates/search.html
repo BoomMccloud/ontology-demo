@@ -26,7 +26,7 @@
         <span class="source-cite">
           {{ t('common.source') }}
           {% if item.source_exists %}
-            <a href="/catalog?file={{ item.source_file | urlencode }}">{{ item.source_label }}</a>
+            <a href="/catalog?file={{ item.source_file | urlencode }}{% if item.note_line %}&amp;format=raw#L{{ item.note_line }}{% endif %}">{{ item.source_label }}</a>
           {% else %}
             {{ item.source_label }}
           {% endif %}
@@ -92,7 +92,7 @@
                   <span class="search-reason search-reason-note">{{ t('search.match_reason_label') }} {{ t_enum('match_reason', 'note') }}</span>
                   <span class="source-cite">
                     {% if p.source_exists %}
-                      <a href="/catalog?file={{ p.file | urlencode }}">{{ p.source_label }}</a>
+                      <a href="/catalog?file={{ p.file | urlencode }}&amp;format=raw#L{{ p.line }}">{{ p.source_label }}</a>
                     {% else %}
                       {{ p.source_label }}
                     {% endif %}
@@ -103,6 +103,9 @@
             {% endfor %}
           </ul>
         </section>
+      {% endif %}
+      {% if search.notes_truncated %}
+        <p class="source-cite search-notes-truncated" data-notes-truncated="1">{{ t('search.notes_truncated') }}</p>
       {% endif %}
 
       {% if not search.count %}

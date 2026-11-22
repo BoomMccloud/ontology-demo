@@ -872,6 +872,7 @@ def build_catalog_context(
         active_note = {
             **note_meta,
             "raw_text": raw_text,
+            "raw_lines": raw_text.splitlines(),
             "rendered_html": render_markdown_safe(raw_text),
             "matched_company": matched_company,
             "linked_authors": linked_authors,

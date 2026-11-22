@@ -24,9 +24,13 @@ sections, then note `passages`. `ranked()` flattens them best first.
    similarity is dropped.
 4. Notes. `grep_notes` treats the words as a literal, case-insensitive string,
    walks only supported, non-hidden files under `data_dir` (never through a
-   link that leaves it), and caps passages per file and in total. A passage
-   from the source note of a listed event or view becomes that item's
-   `note_line` instead of a second entry.
+   link that leaves it), and caps passages per file and in total. Each search
+   reads at most `MAX_NOTE_FILES` files and `MAX_GREP_BYTES` bytes;
+   `scan_notes` reports when that budget cut the walk short, and the search
+   page and the agent's `search_notes` say so. A passage from the source note
+   of a listed event or view becomes that item's `note_line` instead of a
+   second entry. Both link to the raw note at that line
+   (`/catalog?file=...&format=raw#L<n>`).
 
 Each result has a `match_reason`: `name`, `alias`, `relationship`, `note`
 (the word is in the item's extracted text or a note line), or `semantic`.

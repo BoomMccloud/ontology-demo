@@ -707,6 +707,7 @@
   "search.match_reason_label": "Correspond par",
   "search.via_relation": "via {relation} avec {name}",
   "search.note_line": "(ligne {line})",
+  "search.notes_truncated": "La recherche dans les notes s’est arrêtée tôt : le dossier de notes dépasse ce qu’une recherche lit. Affinez avec le filtre Note source.",
   "search.section_entities": "Entités et Thèmes",
   "search.section_related": "Liés par des Relations",
   "search.section_signals": "Événements et Opinions",

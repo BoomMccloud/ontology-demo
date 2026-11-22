@@ -707,6 +707,7 @@
   "search.match_reason_label": "일치 기준:",
   "search.via_relation": "{relation} 관계로 {name}와 연결",
   "search.note_line": "({line}행)",
+  "search.notes_truncated": "노트 검색이 일찍 멈췄습니다. 노트 폴더가 한 번의 검색에서 읽는 양보다 큽니다. 출처 노트 필터로 범위를 좁히세요.",
   "search.section_entities": "엔터티 및 테마",
   "search.section_related": "관계로 연결됨",
   "search.section_signals": "이벤트 및 견해",

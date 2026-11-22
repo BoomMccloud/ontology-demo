@@ -16,6 +16,7 @@ from stock_ontology.search import (
     SearchFilters,
     grep_notes,
     parse_period,
+    scan_notes,
     search_ontology,
 )
 from stock_ontology.web import create_app
@@ -235,6 +236,22 @@ def test_grep_is_literal_case_insensitive_capped_and_stays_in_data_dir(tmp_path:
     assert len(grep_notes(data, ["nvidia"], per_file=3, total=4)) == 4
     assert grep_notes(data, ["../outside/secret"]) == []
     assert grep_notes(tmp_path / "missing", ["nvidia"]) == []
+
+
+def test_note_scan_stops_at_its_file_and_byte_budget(tmp_path: Path) -> None:
+    data = _notes(tmp_path)
+
+    full = scan_notes(data, ["nvidia"], total=50)
+    assert not full.truncated
+    assert len({p.file for p in full.passages}) == 3
+
+    by_files = scan_notes(data, ["nvidia"], total=50, max_files=1)
+    assert by_files.truncated
+    assert len({p.file for p in by_files.passages}) <= 1
+
+    by_bytes = scan_notes(data, ["nvidia"], total=50, max_bytes=10)
+    assert by_bytes.truncated
+    assert by_bytes.passages == []
 
 
 def test_item_and_passage_from_one_file_appear_once_with_line(tmp_path: Path) -> None:

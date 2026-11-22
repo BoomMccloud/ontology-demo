@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -42,6 +43,9 @@ RECENCY_HORIZON_DAYS = 730
 PERIOD_BOOST = 0.3
 MAX_EXPANSION_SEEDS = 5
 MAX_NOTE_BYTES = 5_000_000
+# Per-search budget for the note grep, so a large notes folder cannot stall a search.
+MAX_NOTE_FILES = 2_000
+MAX_GREP_BYTES = 50_000_000
 MAX_PASSAGE_CHARS = 300
 
 
@@ -112,15 +116,17 @@ class NotePassage:
         return {"file": self.file, "line": self.line, "text": self.text}
 
 
-def _iter_note_files(data_dir: Path) -> list[tuple[str, Path]]:
-    """Supported, non-hidden note files under `data_dir`, never leaving it through a link."""
+def _iter_note_files(data_dir: Path) -> Iterator[tuple[str, Path]]:
+    """Supported, non-hidden note files under `data_dir`, never leaving it through a link.
+
+    A generator, so a capped grep stops walking as soon as it stops reading.
+    """
     try:
         root = data_dir.resolve()
         if not root.is_dir():
-            return []
+            return
     except OSError:
-        return []
-    files: list[tuple[str, Path]] = []
+        return
     # os.walk does not descend into symlinked directories by default.
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
@@ -131,8 +137,15 @@ def _iter_note_files(data_dir: Path) -> list[tuple[str, Path]]:
             rel = (base / name).relative_to(root).as_posix()
             path = resolve_safe_note_path(root, rel)
             if path is not None:
-                files.append((rel, path))
-    return files
+                yield rel, path
+
+
+@dataclass(frozen=True)
+class NoteScan:
+    """Passages from one note grep, and whether the per-search file or byte budget cut it short."""
+
+    passages: list[NotePassage]
+    truncated: bool = False
 
 
 def grep_notes(
@@ -143,19 +156,39 @@ def grep_notes(
     total: int = 30,
 ) -> list[NotePassage]:
     """Literal, case-insensitive line search over the research notes under `data_dir`."""
+    return scan_notes(data_dir, needles, per_file=per_file, total=total).passages
+
+
+def scan_notes(
+    data_dir: Path | None,
+    needles: list[str],
+    *,
+    per_file: int = 3,
+    total: int = 30,
+    max_files: int = MAX_NOTE_FILES,
+    max_bytes: int = MAX_GREP_BYTES,
+) -> NoteScan:
+    """`grep_notes`, also reporting whether it stopped at `max_files` files or `max_bytes` bytes read."""
     if data_dir is None:
-        return []
+        return NoteScan([])
     folded = list(dict.fromkeys(n.strip().casefold() for n in needles if n and n.strip()))
     if not folded:
-        return []
+        return NoteScan([])
     passages: list[NotePassage] = []
+    files_read = 0
+    bytes_read = 0
     for rel, path in _iter_note_files(data_dir):
         try:
-            if path.stat().st_size > MAX_NOTE_BYTES:
+            size = path.stat().st_size
+            if size > MAX_NOTE_BYTES:
                 continue
+            if files_read >= max_files or bytes_read + size > max_bytes:
+                return NoteScan(passages, truncated=True)
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        files_read += 1
+        bytes_read += size
         found = 0
         for lineno, line in enumerate(text.splitlines(), start=1):
             low = line.casefold()
@@ -164,10 +197,10 @@ def grep_notes(
             passages.append(NotePassage(file=rel, line=lineno, text=line.strip()[:MAX_PASSAGE_CHARS]))
             found += 1
             if len(passages) >= total:
-                return passages
+                return NoteScan(passages)
             if found >= per_file:
                 break
-    return passages
+    return NoteScan(passages)
 
 
 # --- Time ---------------------------------------------------------------------
@@ -392,6 +425,7 @@ class SearchResults:
     related: list[SearchHit] = field(default_factory=list)
     signals: list[SearchHit] = field(default_factory=list)
     passages: list[NotePassage] = field(default_factory=list)
+    notes_truncated: bool = False
 
     def ranked(self) -> list[SearchHit]:
         rest = sorted([*self.entities, *self.related, *self.signals], key=_sort_key)
@@ -591,7 +625,9 @@ def search_ontology(
         needles = [word]
         if best_node is not None:
             needles += [best_node.name, *(a for a in best_node.aliases if len(a.strip()) >= 3)]
-        passages = grep_notes(data_dir, needles)
+        scan = scan_notes(data_dir, needles)
+        results.notes_truncated = scan.truncated
+        passages = scan.passages
         if filters.source_file is not None:
             passages = [p for p in passages if filters.source_file in p.file.casefold()]
         results.passages = _fold_passages(results.signals, passages)

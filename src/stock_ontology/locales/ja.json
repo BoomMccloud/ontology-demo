@@ -707,6 +707,7 @@
   "search.match_reason_label": "一致理由：",
   "search.via_relation": "{relation} で {name} と関連",
   "search.note_line": "（{line} 行目）",
+  "search.notes_truncated": "ノート検索を途中で止めました。ノートフォルダーが1回の検索で読める量を超えています。「出典ノート」フィルターで絞り込んでください。",
   "search.section_entities": "エンティティとテーマ",
   "search.section_related": "関係でつながる項目",
   "search.section_signals": "イベントと見解",

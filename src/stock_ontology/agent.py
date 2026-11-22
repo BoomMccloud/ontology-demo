@@ -22,7 +22,7 @@ from stock_ontology.i18n import (
 from stock_ontology.llm import AgentTurn, LLMClient
 from stock_ontology.llm.pydantic_ai_model import LLMClientModel
 from stock_ontology.models import VALID_SENTIMENTS, Node, NodeType
-from stock_ontology.search import SearchFilters, SearchHit, grep_notes, search_ontology
+from stock_ontology.search import SearchFilters, SearchHit, scan_notes, search_ontology
 
 AGENT_SYSTEM_PROMPT = """You are an investment research assistant for portfolio managers at a stock fund.
 You query a strictly read-only 4-node stock ontology database containing:
@@ -367,8 +367,8 @@ class OntologyAgent:
         if not query.strip():
             return {"passages": []}
         limit = max(1, min(int(limit), 50))
-        passages = grep_notes(self.data_dir, [query], total=limit)
-        return {"passages": [p.to_dict() for p in passages]}
+        scan = scan_notes(self.data_dir, [query], total=limit)
+        return {"passages": [p.to_dict() for p in scan.passages], "truncated": scan.truncated}
 
     def _tool_get_entity_overview(self, *, entity_name_or_id: str) -> dict[str, Any]:
         node = self._resolve_node(entity_name_or_id, "entity")

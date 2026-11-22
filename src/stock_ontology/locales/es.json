@@ -707,6 +707,7 @@
   "search.match_reason_label": "Coincide por",
   "search.via_relation": "vía {relation} con {name}",
   "search.note_line": "(línea {line})",
+  "search.notes_truncated": "La búsqueda en notas se detuvo antes: la carpeta de notas es más grande de lo que lee una búsqueda. Acótela con el filtro Nota Fuente.",
   "search.section_entities": "Entidades y Temas",
   "search.section_related": "Conectados por Relaciones",
   "search.section_signals": "Eventos y Opiniones",

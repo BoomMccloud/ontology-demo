@@ -1648,3 +1648,16 @@ def test_web_search_functional_results_survive_embedding_and_agent_failure(tmp_p
     assert r_chat.status_code == 500
     assert r_chat.json()["error"]
     assert r_chat.json()["session_id"]
+
+
+def test_web_search_note_links_jump_to_the_matching_line(tmp_path: Path) -> None:
+    client, _, _ = _search_client(tmp_path, FakeWebLLM())
+
+    page = client.get("/search", params={"q": "nvidia"}).text
+    # A grepped passage, and the event folded onto its own note, both link to the raw note at that line.
+    assert f"/catalog?file={_SEARCH_NOTE_FILE}&amp;format=raw#L3" in page
+    assert f"/catalog?file={_SEARCH_EVENT_FILE}&amp;format=raw#L3" in page
+
+    raw = client.get("/catalog", params={"file": _SEARCH_NOTE_FILE, "format": "raw"}).text
+    assert '<span id="L3" class="note-line">Channel check: NVIDIA lead times shortened.' in raw
+    assert '<span id="L1" class="note-line"># Channel check' in raw

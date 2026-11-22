@@ -878,6 +878,11 @@ code,
   border-top: 1px dotted #a8a08e;
 }
 
+.note-line:target {
+  background: var(--hover-tint);
+  outline: 1px solid var(--border-dark);
+}
+
 .note-raw-pre {
   background: #faf6e8;
   border: 1px solid var(--border-rule);
@@ -1169,6 +1174,10 @@ code,
 .search-result-summary,
 .search-passage-text {
   margin-top: 3px;
+}
+
+.search-notes-truncated {
+  margin: 8px 0 0;
 }
 
 .search-passage-text {
