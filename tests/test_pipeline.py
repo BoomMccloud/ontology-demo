@@ -1658,3 +1658,143 @@ def test_pipeline_merges_registry_alias_without_embedding_similarity(tmp_path: P
         assert "Nvidia Corporation" in nvidia[0].aliases
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Proof witnesses: official-edge-facets (every stored edge carries `basis`)
+# ---------------------------------------------------------------------------
+
+
+class _BasisFakeLLM(FakePipelineLLM):
+    """One NVIDIA note whose LLM output tries to set `basis` itself, plus free-form edge facets."""
+
+    def extract_document(
+        self,
+        *,
+        text: str,
+        source_meta: dict[str, Any],
+        existing_catalog: str,
+        known_facets: dict[str, list[str]],
+    ) -> ExtractionResult:
+        self.extract_calls.append(source_meta["file_path"])
+        return ExtractionResult(
+            entities=[
+                ExtractedEntity(
+                    temp_id="e_nvda",
+                    name="NVIDIA",
+                    summary="AI GPU leader.",
+                    aliases=["NVDA"],
+                    entity_type="company",
+                    facets=[FacetKV(key="ticker", value="NVDA")],
+                ),
+            ],
+            events=[
+                ExtractedEvent(
+                    temp_id="ev_ramp",
+                    name="Rack Ramp Update",
+                    summary=text.strip()[:120],
+                    event_type="news",
+                    event_date="2026-11-21",
+                ),
+            ],
+            views=[
+                ExtractedView(
+                    temp_id="vw_caution",
+                    name="Cautious Channel Check",
+                    summary="Rack deliveries may slip.",
+                    view_type="channel_check",
+                    stance="cautious",
+                    as_of="2026-11-21",
+                ),
+            ],
+            themes=[
+                ExtractedTheme(
+                    temp_id="t_power",
+                    name="AI Data Center Power Bottleneck",
+                    summary="Power and thermal constraints.",
+                    stage="accelerating",
+                )
+            ],
+            edges=[
+                ExtractedEdge(
+                    from_ref="ev_ramp",
+                    to_ref="e_nvda",
+                    relation="ABOUT",
+                    facets=[
+                        FacetKV(key="basis", value="synthesized"),
+                        FacetKV(key="role", value="primary_subject"),
+                        FacetKV(key="confidence", value="high"),
+                        FacetKV(key="product_type", value="gpu_rack"),
+                    ],
+                ),
+                ExtractedEdge(
+                    from_ref="vw_caution",
+                    to_ref="e_nvda",
+                    relation="ABOUT",
+                    facets=[FacetKV(key="basis", value="Synthesized")],
+                ),
+                ExtractedEdge(from_ref="ev_ramp", to_ref="t_power", relation="RELATES_TO"),
+                ExtractedEdge(from_ref="e_nvda", to_ref="t_power", relation="EXPOSED_TO"),
+            ],
+        )
+
+
+def _stored_edges(db: OntologyDB) -> list[dict[str, Any]]:
+    rows = db.conn.execute(
+        """
+        SELECT e.relation, e.facets_json, e.source_doc_id,
+               n1.node_type AS from_type, n1.facets_json AS from_facets,
+               n2.node_type AS to_type, n2.facets_json AS to_facets
+        FROM edges e JOIN nodes n1 ON n1.id = e.from_id JOIN nodes n2 ON n2.id = e.to_id
+        """
+    ).fetchall()
+    import json
+
+    def _is_consensus(node_type: str, facets_json: str) -> bool:
+        return node_type == "view" and json.loads(facets_json).get("view_type") == "consensus"
+
+    return [
+        {
+            "relation": r["relation"],
+            "facets": json.loads(r["facets_json"]),
+            "source_doc_id": r["source_doc_id"],
+            "touches_consensus": _is_consensus(r["from_type"], r["from_facets"])
+            or _is_consensus(r["to_type"], r["to_facets"]),
+        }
+        for r in rows
+    ]
+
+
+def test_pipeline_sets_edge_basis_by_code_not_by_llm(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    note = data_dir / "NVDA" / "2026-11-21_basis_note.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("NVIDIA rack ramp on track.", encoding="utf-8")
+    llm = _BasisFakeLLM()
+
+    with OntologyDB(tmp_path / "basis.db", embedding_dim=DIM, read_only=False) as db:
+        pipeline = IngestionPipeline(db, llm, data_dir)
+        assert pipeline.run().files_processed == 1
+        # Editing the note re-synthesizes consensus, so the new view SUPERSEDES the old one.
+        note.write_text("NVIDIA rack ramp slipping a quarter.", encoding="utf-8")
+        assert pipeline.run().files_processed == 1
+
+        edges = _stored_edges(db)
+        synthesized_relations = {e["relation"] for e in edges if e["touches_consensus"]}
+        assert {"ABOUT", "SUPPORTS", "CONTRADICTS", "SUPERSEDES"} <= synthesized_relations, synthesized_relations
+        assert any(not e["touches_consensus"] for e in edges)
+
+        wrong = [
+            (e["relation"], e["touches_consensus"], e["facets"].get("basis"))
+            for e in edges
+            if e["facets"].get("basis") != ("synthesized" if e["touches_consensus"] else "extracted")
+        ]
+        assert wrong == [], f"edges with the wrong or missing basis (relation, consensus, basis): {wrong}"
+
+        # Non-official edge facets are stored as before.
+        about = [
+            e["facets"] for e in edges if e["relation"] == "ABOUT" and e["facets"].get("role") == "primary_subject"
+        ]
+        assert len(about) == 1
+        assert about[0]["confidence"] == "high"
+        assert about[0]["product_type"] == "gpu_rack"

@@ -301,6 +301,163 @@
       "primary_driver": "driver"
     }
   },
+  "facet_vocabularies": {
+    "node": {
+      "entity": {
+        "entity_type": {
+          "members": {
+            "company": "A business, listed or private.",
+            "person": "An individual, such as an executive, analyst or author.",
+            "product": "A product, technology or platform.",
+            "institution": "A government body, regulator, fund or other non-company organization.",
+            "sector": "An industry or market segment.",
+            "region": "A country, region or market geography."
+          },
+          "aliases": {},
+          "fallback": "company"
+        }
+      },
+      "event": {
+        "event_type": {
+          "members": {
+            "fact": "An objective observation or data point.",
+            "news": "A reported news item.",
+            "earnings": "An earnings release or results call.",
+            "catalyst": "A dated future event that may move the stock.",
+            "meeting": "A meeting, call or conference with a company or expert."
+          },
+          "aliases": {},
+          "fallback": "fact"
+        },
+        "status": {
+          "members": {
+            "occurred": "It already happened.",
+            "upcoming": "It is expected to happen.",
+            "rumored": "It is reported but unconfirmed."
+          },
+          "aliases": {
+            "rumoured": "rumored"
+          },
+          "fallback": "occurred"
+        },
+        "sentiment": {
+          "members": {
+            "positive": "Good for the subject.",
+            "negative": "Bad for the subject.",
+            "neutral": "No directional impact.",
+            "mixed": "Offsetting effects, or opposite effects on different companies."
+          },
+          "aliases": {},
+          "fallback": null
+        }
+      },
+      "view": {
+        "view_type": {
+          "members": {
+            "rumor": "An unconfirmed claim heard in the market.",
+            "analyst_report": "A sell-side or independent analyst's take.",
+            "pm_view": "A portfolio manager's own view.",
+            "channel_check": "A finding from suppliers, customers or other channel contacts.",
+            "consensus": "The fund's house consensus, synthesized by the pipeline only."
+          },
+          "aliases": {
+            "rumour": "rumor",
+            "house_consensus": "consensus"
+          },
+          "fallback": "analyst_report"
+        },
+        "status": {
+          "members": {
+            "active": "The current consensus view.",
+            "superseded": "A retired consensus view kept for history."
+          },
+          "aliases": {
+            "stale": "superseded"
+          },
+          "fallback": null
+        },
+        "stance": {
+          "members": {
+            "buy": "Recommends buying.",
+            "hold": "Recommends holding.",
+            "sell": "Recommends selling.",
+            "bullish": "Expects the price or fundamentals to improve.",
+            "bearish": "Expects the price or fundamentals to worsen.",
+            "neutral": "No directional call.",
+            "cautious": "Leans negative, with reservations."
+          },
+          "aliases": {
+            "outperform": "buy",
+            "overweight": "buy",
+            "underperform": "sell",
+            "underweight": "sell",
+            "unknown": "neutral"
+          },
+          "fallback": "neutral"
+        },
+        "sentiment": {
+          "members": {
+            "positive": "Good for the subject.",
+            "negative": "Bad for the subject.",
+            "neutral": "No directional impact.",
+            "mixed": "Offsetting effects, or opposite effects on different companies."
+          },
+          "aliases": {},
+          "fallback": null
+        },
+        "support_strength": {
+          "members": {
+            "strong": "Well supported by evidence.",
+            "moderate": "Partly supported.",
+            "weak": "Thinly supported."
+          },
+          "aliases": {},
+          "fallback": "moderate"
+        },
+        "conviction": {
+          "members": {
+            "high": "The speaker is confident.",
+            "medium": "The speaker is fairly confident.",
+            "low": "The speaker is tentative."
+          },
+          "aliases": {},
+          "fallback": "medium"
+        }
+      },
+      "theme": {
+        "stage": {
+          "members": {
+            "emerging": "Early, not widely recognized.",
+            "accelerating": "Gaining momentum and attention.",
+            "consensus": "Widely accepted and priced in.",
+            "fading": "Losing relevance."
+          },
+          "aliases": {},
+          "fallback": "accelerating"
+        }
+      }
+    },
+    "edge": {
+      "sentiment": {
+        "members": {
+          "positive": "Good for the subject.",
+          "negative": "Bad for the subject.",
+          "neutral": "No directional impact.",
+          "mixed": "Offsetting effects, or opposite effects on different companies."
+        },
+        "aliases": {},
+        "fallback": null
+      },
+      "basis": {
+        "members": {
+          "extracted": "Read from a source note by extraction.",
+          "synthesized": "Inferred by consensus synthesis across notes, with no source note of its own."
+        },
+        "aliases": {},
+        "fallback": null
+      }
+    }
+  },
   "suggestions": {
     "relations": [],
     "companies": [

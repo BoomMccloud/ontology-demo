@@ -315,3 +315,84 @@ def test_repair_applies_only_approved_merge_suggestions(tmp_path: Path) -> None:
         before = _snapshot(db)
         _load_repair_ontology()(db, registry)
         assert _snapshot(db) == before
+
+
+# ---------------------------------------------------------------------------
+# Proof witnesses: official-edge-facets (repair backfills edge `basis`)
+# ---------------------------------------------------------------------------
+
+
+def _consensus(node_id: str) -> Node:
+    return Node(
+        id=node_id,
+        node_type="view",
+        name=f"Consensus {node_id}",
+        summary="House view.",
+        facets={"view_type": "consensus", "stance": "buy", "pillars": ["Demand holds"]},
+    )
+
+
+def _edge_rows(db: OntologyDB) -> list[tuple[str, str, str, dict[str, Any]]]:
+    import json
+
+    return [
+        (r["from_id"], r["relation"], r["to_id"], json.loads(r["facets_json"]))
+        for r in db.conn.execute("SELECT from_id, relation, to_id, facets_json FROM edges").fetchall()
+    ]
+
+
+def test_repair_backfills_edge_basis_and_is_idempotent(tmp_path: Path) -> None:
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
+        _seed(db)
+        bear = Node(
+            id="vw_bear",
+            node_type="view",
+            name="Bear Channel Check",
+            summary="Orders slipping.",
+            facets={"view_type": "channel_check", "stance": "bearish"},
+            source_doc_id="doc_live",
+        )
+        db.upsert_node(bear, embedding=_vec(5))
+        db.upsert_edge(
+            Edge(
+                id="e_bear_about",
+                from_id="vw_bear",
+                to_id="ent_acme",
+                relation="ABOUT",
+                facets={"role": "subject", "confidence": "high"},
+                source_doc_id="doc_live",
+            )
+        )
+        db.upsert_consensus_view("ent_acme", _consensus("vw_cons_old"), _vec(6), ["evt_live"], [])
+        db.upsert_consensus_view("ent_acme", _consensus("vw_cons_new"), _vec(7), ["evt_live"], ["vw_bear"])
+        # Legacy rows: no edge carries `basis` yet.
+        with db.transaction():
+            db.conn.execute("UPDATE edges SET facets_json = json_remove(facets_json, '$.basis')")
+
+        consensus_ids = {"vw_cons_old", "vw_cons_new"}
+        assert {rel for f, rel, t, _ in _edge_rows(db) if {f, t} & consensus_ids} >= {
+            "ABOUT",
+            "SUPPORTS",
+            "CONTRADICTS",
+            "SUPERSEDES",
+        }
+
+        repair_ontology = _load_repair_ontology()
+        registry = create_minimal_registry()
+        first = repair_ontology(db, registry)
+        assert first.total_changes > 0
+
+        rows = _edge_rows(db)
+        wrong = [
+            (f, rel, t, facets.get("basis"))
+            for f, rel, t, facets in rows
+            if facets.get("basis") != ("synthesized" if {f, t} & consensus_ids else "extracted")
+        ]
+        assert wrong == [], f"edges with the wrong or missing basis after repair: {wrong}"
+        bear_about = next(facets for f, rel, t, facets in rows if (f, rel, t) == ("vw_bear", "ABOUT", "ent_acme"))
+        assert bear_about["role"] == "subject" and bear_about["confidence"] == "high"
+
+        before = _snapshot(db)
+        second = repair_ontology(db, registry)
+        assert second.total_changes == 0
+        assert _snapshot(db) == before

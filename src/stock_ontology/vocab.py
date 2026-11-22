@@ -1,9 +1,10 @@
 """Closed enum vocabularies for node and edge facets, and the shared signal filter rules.
 
-This is the one source for every closed enum the ontology stores. The extraction
-models, the LLM prompt, the agent tool schema, `repair` and `audit` all read from
-here. `ontology_registry.json` stays the data registry (relations, companies,
-themes); it does not hold these vocabularies.
+This is code's typed copy of every closed enum the ontology stores. The
+extraction models, the LLM prompt, the agent tool schema, `repair` and `audit`
+all read from here. `ontology_registry.json` is the official ontology and declares these same
+vocabularies under `facet_vocabularies`; code reflects the registry, and
+`load_registry` fails when the two differ (`facet_vocabulary_differences`).
 
 Each vocabulary has one rule: strip, lowercase, map spaces and hyphens to `_`,
 then apply its alias map. A result outside the members is not canon.
@@ -25,6 +26,7 @@ Sentiment = Literal["positive", "negative", "neutral", "mixed"]
 SupportStrength = Literal["strong", "moderate", "weak"]
 Conviction = Literal["high", "medium", "low"]
 Stage = Literal["emerging", "accelerating", "consensus", "fading"]
+EdgeBasis = Literal["extracted", "synthesized"]
 
 
 def _clean(raw: Any) -> str | None:
@@ -214,7 +216,17 @@ NODE_FACET_VOCABS: dict[str, dict[str, Vocabulary]] = {
     },
     "theme": {"stage": STAGE},
 }
-EDGE_FACET_VOCABS: dict[str, Vocabulary] = {"sentiment": SENTIMENT}
+EDGE_BASIS = Vocabulary(
+    "basis",
+    EdgeBasis,
+    {
+        "extracted": "Read from a source note by extraction.",
+        "synthesized": "Inferred by consensus synthesis across notes, with no source note of its own.",
+    },
+)
+"""Set by code at each edge write, never by the LLM."""
+
+EDGE_FACET_VOCABS: dict[str, Vocabulary] = {"sentiment": SENTIMENT, "basis": EDGE_BASIS}
 
 ALL_VOCABS: tuple[Vocabulary, ...] = (
     ENTITY_TYPE,
@@ -309,6 +321,78 @@ def canonicalize_edge_facets(facets: dict[str, Any]) -> dict[str, Any]:
         k: EDGE_FACET_VOCABS[k].canonicalize_stored(v) if k in EDGE_FACET_VOCABS else v
         for k, v in facets.items()
     }
+
+
+def is_synthesized_edge(facets: Mapping[str, Any] | None) -> bool:
+    """True when an edge's `basis` is `synthesized`. An edge with no `basis` counts as extracted."""
+    return bool(facets) and facets.get("basis") == "synthesized"
+
+
+def _vocabulary_spec(v: Vocabulary) -> dict[str, Any]:
+    return {"members": dict(v.definitions), "aliases": dict(v.aliases), "fallback": v.fallback}
+
+
+def facet_vocabularies_spec() -> dict[str, Any]:
+    """The official facet vocabularies as the registry declares them (`facet_vocabularies`)."""
+    return {
+        "node": {
+            node_type: {key: _vocabulary_spec(v) for key, v in group.items()}
+            for node_type, group in NODE_FACET_VOCABS.items()
+        },
+        "edge": {key: _vocabulary_spec(v) for key, v in EDGE_FACET_VOCABS.items()},
+    }
+
+
+def _compare_keys(where: str, got: Mapping[str, Any], want: Mapping[str, Any], diffs: list[str]) -> list[str]:
+    diffs.extend(f"{where}.{k}: missing from the registry" for k in sorted(set(want) - set(got)))
+    diffs.extend(f"{where}.{k}: not in code" for k in sorted(set(got) - set(want)))
+    return sorted(set(want) & set(got))
+
+
+def _compare_vocabulary(where: str, got: Any, want: dict[str, Any], diffs: list[str]) -> None:
+    if not isinstance(got, Mapping):
+        diffs.append(f"{where}: not a vocabulary object")
+        return
+    members = got.get("members")
+    if not isinstance(members, Mapping):
+        diffs.append(f"{where}.members: missing or not an object")
+    else:
+        for m in sorted(set(want["members"]) - set(members)):
+            diffs.append(f"{where}: member {m!r} missing from the registry")
+        for m in sorted(set(members) - set(want["members"])):
+            diffs.append(f"{where}: member {m!r} not in code")
+        for m in sorted(set(want["members"]) & set(members)):
+            if members[m] != want["members"][m]:
+                diffs.append(f"{where}: definition of {m!r} differs from code")
+    for key in ("aliases", "fallback"):
+        if got.get(key, {} if key == "aliases" else None) != want[key]:
+            diffs.append(f"{where}.{key}: registry has {got.get(key)!r}, code has {want[key]!r}")
+
+
+def facet_vocabulary_differences(declared: Mapping[str, Any]) -> list[str]:
+    """Each way `declared` (a registry `facet_vocabularies` section) differs from code."""
+    want = facet_vocabularies_spec()
+    diffs: list[str] = []
+    root = "facet_vocabularies"
+    for group in _compare_keys(root, declared, want, diffs):
+        got_group, want_group = declared[group], want[group]
+        if not isinstance(got_group, Mapping):
+            diffs.append(f"{root}.{group}: not an object")
+            continue
+        if group == "edge":
+            for key in _compare_keys(f"{root}.edge", got_group, want_group, diffs):
+                _compare_vocabulary(f"{root}.edge.{key}", got_group[key], want_group[key], diffs)
+            continue
+        for node_type in _compare_keys(f"{root}.node", got_group, want_group, diffs):
+            got_nt = got_group[node_type]
+            if not isinstance(got_nt, Mapping):
+                diffs.append(f"{root}.node.{node_type}: not an object")
+                continue
+            for key in _compare_keys(f"{root}.node.{node_type}", got_nt, want_group[node_type], diffs):
+                _compare_vocabulary(
+                    f"{root}.node.{node_type}.{key}", got_nt[key], want_group[node_type][key], diffs
+                )
+    return diffs
 
 
 def out_of_vocabulary_node_facets(node_type: str, facets: dict[str, Any]) -> dict[str, str]:

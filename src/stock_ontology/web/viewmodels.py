@@ -46,6 +46,7 @@ from stock_ontology.vocab import (
     STANCE,
     SUBTYPE_FACET,
     SUPPORT_STRENGTH,
+    is_synthesized_edge,
 )
 from stock_ontology.web.catalog import format_source_citation
 
@@ -726,9 +727,8 @@ def build_theme_context(
     for item in db.get_incident_edges(theme_id):
         nb = item["neighbor"]
         nid = str(nb["id"])
-        # Consensus views are company-level syntheses. A theme reaches one only as
-        # LLM-picked evidence, which doesn't make the consensus about the theme.
-        if nb["node_type"] == "view" and (nb.get("facets") or {}).get("view_type") == "consensus":
+        # A synthesized edge (consensus evidence) doesn't make its neighbor about the theme.
+        if is_synthesized_edge(item.get("facets")):
             continue
         rel = str(item["relation"])
         edge_facets = item.get("facets") or {}

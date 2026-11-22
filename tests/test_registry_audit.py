@@ -5,8 +5,12 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from typing import Any
 
+import pytest
 from typer.testing import CliRunner
+
+from stock_ontology import vocab
 
 from stock_ontology.audit import run_ontology_audit
 from stock_ontology.cli import app
@@ -713,3 +717,112 @@ def test_cli_audit_queues_merge_suggestions_and_keeps_human_decisions(tmp_path: 
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
         assert ro_db.get_stats() == stats_before
+
+
+# ---------------------------------------------------------------------------
+# Proof witnesses: official-edge-facets (registry facet vocabularies are checked on load)
+# ---------------------------------------------------------------------------
+
+SHIPPED_REGISTRY = Path(__file__).resolve().parents[1] / "ontology_registry.json"
+_IDENTIFIER_KEYS = ("name", "value", "member", "id", "key")
+
+
+def _walk(tree: Any) -> Any:
+    yield tree
+    children = tree.values() if isinstance(tree, dict) else tree if isinstance(tree, list) else ()
+    for child in children:
+        yield from _walk(child)
+
+
+def _item_name(item: Any) -> str | None:
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        return next((item[k] for k in _IDENTIFIER_KEYS if isinstance(item.get(k), str)), None)
+    return None
+
+
+def _member_names(container: Any) -> set[str] | None:
+    if isinstance(container, dict):
+        return set(container)
+    if isinstance(container, list) and container:
+        names = [_item_name(item) for item in container]
+        return None if None in names else set(names)  # type: ignore[arg-type]
+    return None
+
+
+def _vocab_containers(tree: Any, members: tuple[str, ...]) -> list[Any]:
+    """Every dict or list in `tree` that lists exactly `members` (by key, string, or identifier)."""
+    return [node for node in _walk(tree) if _member_names(node) == set(members)]
+
+
+def _renamed(value: Any, old: str, new: str) -> Any:
+    if value == old:
+        return new
+    if isinstance(value, dict):
+        return {(new if k == old else k): _renamed(v, old, new) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_renamed(v, old, new) for v in value]
+    return value
+
+
+def _mutate_members(raw: dict[str, Any], members: tuple[str, ...], *, drop: str | None, add: str | None) -> None:
+    containers = _vocab_containers(raw, members)
+    assert containers, f"the registry has no facet vocabulary section listing {members}"
+    for container in containers:
+        template = drop or members[-1]
+        if isinstance(container, dict):
+            if add is not None:
+                container[add] = _renamed(container[template], template, add)
+            if drop is not None:
+                del container[drop]
+        else:
+            idx = next(i for i, item in enumerate(container) if _item_name(item) == template)
+            if add is not None:
+                container.append(_renamed(container[idx], template, add))
+            if drop is not None:
+                del container[idx]
+
+
+@pytest.mark.parametrize(
+    ("members", "drop", "add"),
+    [
+        (vocab.ENTITY_TYPE.members, "region", None),
+        (vocab.ENTITY_TYPE.members, None, "spaceship"),
+        (("extracted", "synthesized"), "synthesized", None),
+        (("extracted", "synthesized"), None, "inferred"),
+    ],
+    ids=["node-missing-member", "node-extra-member", "edge-missing-member", "edge-extra-member"],
+)
+def test_load_registry_rejects_facet_vocabulary_that_differs_from_code(
+    tmp_path: Path, members: tuple[str, ...], drop: str | None, add: str | None
+) -> None:
+    raw = json.loads(SHIPPED_REGISTRY.read_text(encoding="utf-8"))
+    _mutate_members(raw, members, drop=drop, add=add)
+    reg_path = tmp_path / "ontology_registry.json"
+    reg_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    with pytest.raises(ValueError) as excinfo:
+        load_registry(reg_path)
+    differing = drop or add
+    assert differing is not None and differing in str(excinfo.value), (
+        f"load error does not name the differing member {differing!r}: {excinfo.value}"
+    )
+
+
+def test_cli_audit_sync_keeps_facet_vocabulary_section_unchanged(tmp_path: Path) -> None:
+    db_path = tmp_path / "vocab_audit.db"
+    reg_path = tmp_path / "ontology_registry.json"
+    _seed_audit_db(db_path)
+    reg_path.write_text(SHIPPED_REGISTRY.read_text(encoding="utf-8"), encoding="utf-8")
+    before = json.loads(reg_path.read_text(encoding="utf-8"))
+    section_keys = [k for k, v in before.items() if _vocab_containers(v, vocab.ENTITY_TYPE.members)]
+    assert section_keys, "the shipped registry has no facet vocabulary section"
+
+    result = CliRunner().invoke(app, ["audit", "--db", str(db_path), "--registry", str(reg_path)])
+    assert result.exit_code == 0, result.output
+
+    after = json.loads(reg_path.read_text(encoding="utf-8"))
+    assert after["suggestions"] != before["suggestions"], "audit sync wrote no suggestions"
+    for key in section_keys:
+        assert json.dumps(after.get(key), indent=2) == json.dumps(before[key], indent=2), key
