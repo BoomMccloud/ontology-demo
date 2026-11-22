@@ -1,6 +1,6 @@
 ---
 proposal_id: "exact-entity-merge"
-state: BUILT
+state: ACCEPTED
 witness: independent
 candidate: "8365c00 @ worktree/proposal-exact-entity-merge"
 ---
@@ -171,5 +171,41 @@ Candidate: `8365c00 @ worktree/proposal-exact-entity-merge` (branch `proposal/ex
 - Test home: Proof's supporting plan named `tests/test_registry_audit.py` and `tests/test_pipeline.py` for the sync and registry-resolution unit tests. They are in `tests/test_db.py` because Proof protects those files whole; no behavior or scope change.
 
 ## Audit
+
+Candidate: `8365c00` on branch `proposal/exact-entity-merge`, in worktree `.claude/worktrees/exact-entity-merge`. The branch tip `c62d43b` differs from `8365c00` only in `docs/proposals/exact-entity-merge.md` (`git diff --quiet 8365c00 HEAD -- src tests README.md docs/architecture`).
+
+Independence: fresh-context. Before this audit the auditor had seen only the ledger, the proposal-audit skill, the candidate and Proof diffs (`3a73dc0..8365c00`, `a09be2b..3a73dc0`), and the repository source. It took no part in Frame, Proof, or Build.
+
+Primary-claim verdict: PROVED
+- Evidence: `tests/test_pipeline.py::test_pipeline_does_not_merge_distinct_company_by_embedding_distance` passes on the candidate (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit3/witnesses.log`); Proof recorded it RED at `3a73dc0`. `git diff 3a73dc0 8365c00 -- tests/` shows only the one-line comment at `tests/test_pipeline.py:484` that Frame lists under `Invariants changed`. `pipeline.py` no longer calls `vector_search`; `CANONICAL_DISTANCE_THRESHOLD`, `_probe_text`, `_batch_probe_vectors`, and `probe_vec` no longer appear in src, tests, docs, or README. `_find_exact` falls back only to the registry's exact ticker, name, and alias matching. A temp-DB probe stored a theme with an identical embedding as its own node (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit3/probe_theme.py`, `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit3/probe_theme.log`: "PROBE OK").
+- Limit: the decisive witness covers a company only; theme coverage rests on the probe and code reading.
+
+Guardrail verdicts:
+- `audit --sync` queues near-duplicate pairs as pending, keeps decisions, does not re-queue a rejected pair: PROVED. Evidence: `tests/test_registry_audit.py::test_cli_audit_queues_merge_suggestions_and_keeps_human_decisions` passes; the file is byte-identical to `3a73dc0`; Proof recorded it RED. The CLI passes `duplicate_company_candidates` and `near_duplicate_themes` to `sync_suggestions(merge_candidates=...)`. Limit: the summary count and stale-pending drop rest on `tests/test_db.py::test_sync_merge_suggestions_drops_stale_pending_and_counts`, written after the implementation and never RED.
+- `repair` merges approved pairs and never pending or rejected ones: PROVED. Evidence: `tests/test_repair.py::test_repair_applies_only_approved_merge_suggestions` passes; file identical to `3a73dc0`; Proof recorded it RED. `_apply_approved_merges` skips non-approved, missing, and mixed-type pairs; CLI `repair` emits `approved_merges_applied`. Limit: company pairs only, library call; CLI `repair --json` not run end to end.
+- A registry name variant still resolves to the existing node: PROVED. Evidence: `tests/test_pipeline.py::test_pipeline_merges_registry_alias_without_embedding_similarity` passes, unchanged since `3a73dc0`; `test_pipeline_ingest_idempotent_edit_delete_and_resolution` passes with assertions unchanged. Limit: ticker-only and theme-alias resolution rest on `tests/test_db.py::test_registry_resolves_company_by_ticker_and_theme_by_alias`, never RED, which asserts nothing about the person entity it adds.
+
+Scope and duty verdict: scope HELD; duties HELD.
+- Every changed file except the ledger is on Frame's Include list; nothing on the Exclude list was touched (`audit.py`, `db/`, web, i18n, `ontology.db`, the registry JSON, `data/`). The work reuses what Frame named; no unclaimed feature work. The embedding batch runs inside the per-note `db.transaction()`; `replace_node_embeddings` nests, so the per-note transaction invariant holds. `README.md` has a new Ingestion Constraints entry with **Why** and **Guarded by** naming an existing passing test. Frame's only listed invariant change was made with no assertion changed.
+- Limit: Build disclosed the test-home deviation; `tests/test_db.py` is in allowed scope and already holds pipeline wiring tests, so scope is held.
+
+Test homes:
+- `tests/test_db.py` adds `test_sync_merge_suggestions_drops_stale_pending_and_counts` and `test_registry_resolves_company_by_ticker_and_theme_by_alias`; it is their home because Proof protects `tests/test_pipeline.py` and `tests/test_registry_audit.py` whole.
+- `tests/test_pipeline.py` changed by one comment line only, as Frame allows.
+
+Full gates: PASS
+- `uv run pytest -q`: 109 passed (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit3/full_suite.log`). The four decisive witnesses plus the amended resolution test: 5 passed (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit3/witnesses.log`). `uv run ruff check` on all changed files: pass (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit3/ruff_changed.log`).
+- Limit: repo-wide `uv run ruff check src tests` reports 39 pre-existing errors in untouched files (`/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/audit3/ruff.log`).
+
+Residual risks:
+- No supporting test was observed RED (ticker resolution, theme-alias resolution, stale-pending drop, pending-merge count).
+- The person-entity case in the registry-resolution test has no assertion; company-only lookup rests on code reading.
+- A theme near-miss is proved by an audit-time probe, not a permanent witness.
+- CLI `repair` was not run end to end against a temp registry.
+- The live `ontology.db` still holds the wrong merges; splitting them is a non-goal and depends on the human-owned rebuild.
+
+Recommendation: ACCEPT
+
+Packet: none required. Merging the branch, rebuilding the real `ontology.db`, and approving merge suggestions in `ontology_registry.json` stay with the human.
 
 ## Revisions
