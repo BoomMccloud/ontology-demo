@@ -572,3 +572,65 @@ def test_pydantic_ai_model_round_trips_raw_content_call_ids_and_provider(tmp_pat
     first_response = agent.messages[1]
     assert isinstance(first_response, ModelResponse)
     assert first_response.provider_details["raw_content"] is raw
+
+
+class ProviderStampedAgentLLM(ScriptedAgentLLM):
+    """Scripted model that stamps each model turn with a distinct provider, model and fallback flag."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def generate_agent_reply(self, **kwargs: Any) -> AgentTurn:
+        turn = super().generate_agent_reply(**kwargs)
+        self.calls += 1
+        turn.provider = f"prov-{self.calls}"
+        turn.model = f"model-{self.calls}"
+        turn.fallback_used = self.calls == 4
+        return turn
+
+
+def test_agent_chat_returns_immutable_turn_contract(tmp_path: Path) -> None:
+    import dataclasses
+
+    db_path = tmp_path / "agent.db"
+    _seed_db(db_path)
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
+        agent = OntologyAgent(ro_db, ProviderStampedAgentLLM())
+        first = agent.chat("Does this meeting change our NVDA consensus?", ())
+        second = agent.chat(
+            "In this meeting we discussed AI Data Center Power Bottleneck. Related companies?",
+            first.history,
+        )
+
+    # The result shape is pinned: exactly these fields, frozen.
+    assert type(first).__name__ == "ChatTurn"
+    assert dataclasses.is_dataclass(first)
+    assert [f.name for f in dataclasses.fields(first)] == [
+        "reply",
+        "history",
+        "tools_used",
+        "provider",
+        "model",
+        "fallback_used",
+    ]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.reply = "changed"  # type: ignore[misc]
+
+    assert "Keep (BUY)" in first.reply
+    assert "1st-order companies" in second.reply
+
+    # History is an opaque tuple handed back unchanged; it grows across turns.
+    assert isinstance(first.history, tuple) and isinstance(second.history, tuple)
+    assert len(first.history) > 0
+    assert second.history[: len(first.history)] == first.history
+    assert len(second.history) > len(first.history)
+
+    # Tools are only this turn's, even on a reused agent.
+    assert first.tools_used == ("get_entity_overview",)
+    assert second.tools_used == ("find_theme_companies",)
+
+    # Provider fields come from the turn's final model call.
+    assert (first.provider, first.model, first.fallback_used) == ("prov-2", "model-2", False)
+    assert (second.provider, second.model, second.fallback_used) == ("prov-4", "model-4", True)

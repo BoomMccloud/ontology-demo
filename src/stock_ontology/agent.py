@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, AbstractToolset, FunctionToolset, Tool, UsageLimits, capture_run_messages
@@ -226,6 +227,23 @@ class _TracedToolset(WrapperToolset[Any]):
         result = await super().call_tool(name, tool_args, ctx, tool)
         self.tool_trace.append({"tool": name, "args": tool_args, "result": result})
         return result
+
+
+@dataclass(frozen=True)
+class ChatTurn:
+    """One chat turn's result: the agent's public contract for chat callers.
+
+    `history` is opaque. Callers store it and pass it back to the next `chat()`
+    call unchanged, and never inspect it, so the agent can change its message
+    format without breaking them.
+    """
+
+    reply: str
+    history: tuple[Any, ...]
+    tools_used: tuple[str, ...]
+    provider: str | None
+    model: str | None
+    fallback_used: bool
 
 
 class OntologyAgent:
@@ -508,3 +526,22 @@ class OntologyAgent:
                 return translate("agent.max_rounds_reached", lang=self.language)
         self.messages = result.all_messages()
         return result.output
+
+    def chat(
+        self, user_message: str, history: Sequence[Any] = (), *, max_rounds: int = 8
+    ) -> ChatTurn:
+        """Run one chat turn over `history` (from a previous `ChatTurn`) and return its result."""
+        self.messages = list(history)
+        self.last_provider = None
+        self.last_model = None
+        self.last_fallback_used = False
+        trace_start = len(self.tool_trace)
+        reply = self.ask(user_message, max_rounds=max_rounds)
+        return ChatTurn(
+            reply=reply,
+            history=tuple(self.messages),
+            tools_used=tuple(entry["tool"] for entry in self.tool_trace[trace_start:]),
+            provider=self.last_provider,
+            model=self.last_model,
+            fallback_used=self.last_fallback_used,
+        )

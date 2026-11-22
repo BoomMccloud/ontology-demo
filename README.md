@@ -112,6 +112,9 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
 - Register the ontology tools on the Pydantic AI agent as `async` functions with `sequential=True`, so they run on the thread that opened the `OntologyDB`. Never register a plain `def` tool that touches the DB.
   **Why:** Pydantic AI runs sync tools in worker threads, and the SQLite connection refused them ("objects created in a thread can only be used in that same thread"), so every ontology tool returned an error (proposal `pydantic-ai-agent`, 2026-11-22).
   **Guarded by:** `tests/test_agent.py::test_agent_ux1_meeting_note_consensus_check`.
+- The web app talks to the agent only through `OntologyAgent(...)` and `OntologyAgent.chat()`. It stores `ChatTurn.history` per session without inspecting it and never reads or writes other agent attributes (`messages`, `tool_trace`, `last_provider`, and so on).
+  **Why:** the pydantic-ai rewrite kept `/api/chat` working only because the agent's attribute names happened to survive; a stated contract lets agent internals change without breaking the web chat (proposal `agent-chat-contract`, 2026-11-22).
+  **Guarded by:** `tests/test_web.py::test_web_chat_endpoint_uses_only_agent_chat` and `tests/test_agent.py::test_agent_chat_returns_immutable_turn_contract`.
 
 ## Tests (Offline)
 

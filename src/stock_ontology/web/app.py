@@ -102,7 +102,8 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
     active_llm: LLMClient = llm if llm is not None else create_llm_client(settings)
-    sessions: dict[str, list[dict[str, Any]]] = {}
+    # Opaque per-session history from `ChatTurn.history`, passed back unchanged.
+    sessions: dict[str, tuple[Any, ...]] = {}
 
     def _resolve_request_lang(
         request: Request, explicit_lang: str | None = None
@@ -548,7 +549,7 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
             oldest = next(iter(sessions))
             sessions.pop(oldest, None)
 
-        history = list(sessions.get(sid, []))
+        history = sessions.get(sid, ())
         prompt = (
             f"[Current library page: {payload.page_context}]\n{msg}"
             if payload.page_context
@@ -557,9 +558,8 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
 
         with _open_ro_db(lang) as db:
             agent = OntologyAgent(db, active_llm, language=lang)
-            agent.messages = history
             try:
-                reply = agent.ask(prompt)
+                turn = agent.chat(prompt, history)
             except Exception as exc:  # noqa: BLE001
                 return JSONResponse(
                     {
@@ -571,18 +571,17 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
                     },
                     status_code=500,
                 )
-            sessions[sid] = list(agent.messages)
-            tools_used = [t["tool"] for t in agent.tool_trace]
+            sessions[sid] = turn.history
 
         return JSONResponse(
             {
                 "session_id": sid,
                 "lang": lang,
-                "reply": reply,
-                "tools_used": tools_used,
-                "provider": agent.last_provider,
-                "model": agent.last_model,
-                "fallback_used": agent.last_fallback_used,
+                "reply": turn.reply,
+                "tools_used": list(turn.tools_used),
+                "provider": turn.provider,
+                "model": turn.model,
+                "fallback_used": turn.fallback_used,
             }
         )
 
