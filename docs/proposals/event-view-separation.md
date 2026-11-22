@@ -1,6 +1,6 @@
 ---
 proposal_id: "event-view-separation"
-state: BUILT
+state: ACCEPTED
 witness: builder
 candidate: "8dbbc33 @ /Users/jasonbxu/Documents/GitHub/stock_ontology/.claude/worktrees/event-view-separation (branch proposal/event-view-separation)"
 ---
@@ -142,9 +142,54 @@ Logs and scratch scripts live in the session scratchpad `/private/tmp/claude-502
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+Candidate: `8dbbc33` (base `9864691`), audited at worktree HEAD `c7bfc6b` on branch `proposal/event-view-separation`. `git diff 8dbbc33 c7bfc6b` touches only `docs/proposals/event-view-separation.md`, so the source tree is the candidate's. Scratch copies are `git archive` trees under the session scratchpad `audit_event/` (`base/`, `cand/`, `mut/`, `scripts/`, `out_base/`, `out_cand/`).
+
+Independence: fresh-context. This context did not build the candidate. It had seen only the orchestrator's brief, the ledger, the audit skill, the diff and the repo. It did not see the builder's scratch logs or scripts.
+
+Primary-claim verdict: PROVED
+- Witness fails on base. `uv run pytest tests/test_web.py::test_note_page_templates_only_see_presentation_models -q` on a `git archive 9864691` copy with the candidate's `tests/test_web.py` dropped in: 1 failed, at part 2 (`dataclasses.is_dataclass(note)` on a 28-key dict). Part 1's render assertions passed on base, so part 1 acts as a same-output check.
+- Witness passes on the candidate.
+- An independent mutation run on a candidate copy failed the witness in all 8 cases: the partial reads `view_mode`; `| safe` dropped from the body; raw lines marked `| safe`; `L<n>` anchors off by one; `raw_lines` made a list; `NoteLink` made mutable; the sibling href changed to unquoted; `catalog.html` reads `active_note.title`.
+- An independent render comparison (`scripts/render.py`, `scripts/compare.py`) covered 273 requests in en and zh. Edge cases: a title with `<img onerror>`; an unlinked header author named `Jane <b>Doe</b>`; file names with spaces, `&`, `#`, `+` and `é`; an unmatched folder with `&`; a company without a ticker; a `.txt` note; author view with no author, a bogus author, `__unassigned__` and each author id; rendered and `format=raw` for every file across company, dir, all and author views.
+- Comparison results: all 240 note pages are identical after collapsing whitespace. Their visible text (tags stripped) is identical. The ordered `href`, `id` and `src` values are identical. The `<pre>` blocks (120) and `note-rendered` blocks (120) are byte-identical.
+- The models are in `catalog.py` and the mapper is `_note_detail`. `catalog.html` only includes `partials/note_reader.html`. The partial's undeclared names are `active_note`, `t` and `t_enum`.
+
+Limit: part 1 of the witness collapses whitespace, so on its own it would not catch a whitespace-only change inside `<pre>`. The byte comparison of the bodies covers that, but it is a one-off check, not a permanent test. The partial's restriction is a static source check: it would not catch a future nested `{% include %}` inside the partial, and there is none today.
+
+Guardrail verdicts:
+- List pages unchanged: PROVED. Evidence: 28 of 28 list pages are byte-identical across company, author, all, `dir`, `author` and `alpha`, in en and zh. The jumpbar and the list blocks of `catalog.html` are not in the diff. Limit: the seed is small, so it doesn't exercise large or paginated lists.
+- Note page safety: PROVED.
+  - Path resolution: `resolve_safe_note_path` is still the only resolver and is still called at the same spot. `search.py` is not in the diff. Traversal, hidden, backslash, absolute and missing paths all return identical 404s on both trees.
+  - Escaping: `t()` returns a plain `str` and was autoescaped before and after. Labels built in Python (back link, company chip) are autoescaped in the partial. `| safe` is still applied only to the body, which is still `render_markdown_safe` output. Raw lines are still autoescaped. No new `| safe` or `Markup` was added.
+  - Search anchors: the `#L<n>` anchors are byte-identical, and the search raw-anchor test passes unchanged.
+  - XSS fixtures: none of the HTML fixtures appears unescaped on any candidate page.
+- Read-only DB: PROVED. Evidence: `app.py`, `_open_ro_db` and `src/stock_ontology/db/` are not in the diff. The new code only reads lookups that were already built. The witness opens the DB with `read_only=True`. Limit: this rests on reading the diff. No new test asserts it.
+
+Scope and duty verdict: scope HELD; duties HELD.
+- Every changed file is on Frame's Include list. No existing test was edited. CSS, locales, `app.py`, the entity and theme pages and the list views are untouched, and no event page was added.
+- The dropped keys (`linked_people`, `search_nodes_href`, `rendered_html`, `linked_authors`, `prev_note`, `next_note`) have no readers left in `src` or `tests`, checked with grep.
+- The only behavior change is that markdown is no longer rendered in raw mode. The output there is the same.
+- Constraint capture: the README Web UI Constraints entry was extended with a **Why:** and a **Guarded by:** that names the new test, which exists. That counts under the step 7 duty, not as an invariant change, which matches Frame's `Invariants changed: None`.
+- Import cycle: `viewmodels.py` imports `format_source_citation` from `catalog.py`, and `catalog.py` does not import `viewmodels`. Putting the models in `catalog.py` avoids the cycle and follows Frame's supporting obligation.
+- `navigation.py::_catalog` switched from `.get` to `getattr`, as the obligation requires.
+
+Test homes: `tests/test_web.py`, the permanent owner Frame named, next to the entity and theme separation witnesses whose helpers it reuses.
+
+Full gates: PASS
+- `uv sync`: clean.
+- `uv run pytest tests/test_web.py tests/test_search.py tests/test_web_navigation.py -q`: 68 passed.
+- `uv run pytest -q`: 163 passed.
+- `uv run ruff check src/stock_ontology/web/catalog.py src/stock_ontology/web/navigation.py`: 1 finding, the same count as base.
+- Limit: offline suites with fake LLMs. No manual browser check.
+
+Residual risks:
+- The whitespace collapse in the revised witness is justified: one partial with no branches can't reproduce three differently laid-out back links byte for byte. The witness stays strong because parts 2 and 3 are structural and failed on base, and part 1 still pins text, hrefs, escaping and anchors, as the mutations show. It could still miss a future whitespace-only regression inside `<pre>`.
+- The full catalog context, including the list data the jumpbar needs, is still in scope when the partial renders. Only the partial's static name check keeps it from reading those values. Frame acknowledged this in its Verified reality limits.
+- Every note page changes byte for byte, but only in whitespace between tags and inside `<a ...>` attribute areas. Visible text and link targets are identical. Any external tool that diffs raw HTML bytes would see a change.
+
+Recommendation: ACCEPT
+
+Packet: no rework needed. The next action belongs to the human: decide whether to merge `proposal/event-view-separation` into `main`. ACCEPT does not authorize the merge.
 
 ## Revisions
 
