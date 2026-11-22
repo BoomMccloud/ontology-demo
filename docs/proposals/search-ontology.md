@@ -1,8 +1,8 @@
 ---
 proposal_id: "search-ontology"
-state: PROVED
+state: BUILT
 witness: independent
-candidate: "11825e6 + ledger rebase @ worktree/claude/search-ontology-proposal-f78e10"
+candidate: "6f7dbc3 @ worktree/claude/search-ontology-proposal-f78e10"
 ---
 
 # Proposal: Search driven by the ontology
@@ -149,8 +149,42 @@ Candidate: `1b4bd7a` (branch `claude/search-ontology-proposal-f78e10`), plus `te
 
 ## Build
 
-<!-- Replaced only by proposal-build. Reference changed paths, protected witnesses,
-exact GREEN command(s), concise result, candidate identity, and deviations. -->
+Candidate: commit `6f7dbc3` (tree `82439dd6357e906cd9b5ebf4e213d3e08b7c6e97`) on branch `claude/search-ontology-proposal-f78e10`, parent `8165fce`. The protected witness `tests/test_search_ontology_options.py` is unchanged (blob `2554d6126bf0a03883e296a289c4b6433837ca85`).
+
+### Files changed
+
+- `src/stock_ontology/search.py`: adds `split_qualified_value`. `SearchFilters` gains `subtype_node_type`, `status`, `status_node_type`, `support_strength`, `conviction` and `relation`, all defaulting to None. `from_raw` splits `<node_type>:<value>` into a node-type restriction plus the bare value. The bare subtype still goes through `parse_category_filter` and then the unchanged `matches_signal_filter`. An unknown prefix is kept whole, so it matches nothing. `narrows_nodes` includes the new filters. `matches` takes an optional `relation_ids`, and a relation filter without them matches nothing. `search_ontology` and `_filter_only` compute `relation_ids` once per search. Ranking, expansion, note grep and vector search are untouched.
+- `src/stock_ontology/db/storage.py`: one new read method, `get_relation_node_ids(relation, *, entity_id=None)`, returning the IDs of nodes with an incident edge of that relation. With an entity, only neighbors joined to it by such an edge. `get_entity_connected_nodes` is unchanged.
+- `src/stock_ontology/web/viewmodels.py`: `build_search_filter_options(db, registry=None)` rewritten in place. Node types from `NODE_TYPES`; subtypes, statuses, sentiments, stances, support strengths and convictions from `vocab.py`; relations from the registry, or `[]` without one. Only entity options still come from the DB. Deleted `DEFAULT_SUBTYPES_BY_TYPE`, `CANONICAL_STANCES`, `_merge_ordered`, the observed-value scan and the unused `VALID_SENTIMENTS` import.
+- `src/stock_ontology/web/app.py`: `search_page` accepts `status`, `support_strength`, `conviction` and `relation`, passes the optional registry to the options builder, and adds an active-filter chip per new filter. The subtype chip translates qualified values.
+- `src/stock_ontology/web/templates/partials/search_bar.html`: `node_type` select rendered from options. Qualified subtype values. New status (event and view optgroups), support strength and conviction selects, and a relation select shown only when relations exist. The sentiment fallback list is removed. No CSS classes added or renamed.
+- `src/stock_ontology/locales/{en,es,fr,ja,ko,zh}.json`: 14 new `search.*` keys each. Additions only.
+- `tests/test_search.py`: new `test_from_raw_parses_group_qualified_subtype_and_status_values` and `test_get_relation_node_ids_keeps_every_relation_per_neighbor`. Additions only.
+- `tests/test_web.py`: new `test_search_new_filter_chips_and_labels_in_every_locale`, parametrized over 6 locales. Additions only.
+- `docs/architecture/search.md`, `docs/architecture/web.md`: the new filters, qualified values, relation read, and where options come from.
+- `README.md`: one Web UI Constraints entry (build `/search` enum options from `vocab.py` and the registry only, and qualify subtype and status values), with **Why:** and **Guarded by:** `tests/test_search_ontology_options.py`.
+
+### Unit evidence
+
+- Supporting tests run against `8165fce` in a temporary detached worktree: RED. `tests/test_search.py` fails at collection on the missing `split_qualified_value`, and `-k new_filter_chips` gives 6 failed, one per locale.
+- The same selection on the candidate: GREEN, 8 passed.
+- The supporting tests were written after the implementation, so RED comes from the baseline worktree, not a test-first sequence.
+
+### Green evidence
+
+- Decisive witness: `uv run pytest tests/test_search_ontology_options.py -v` → 18 passed. All 15 Proof REDs are GREEN.
+- Gate: `uv run pytest -q` → 252 passed (orchestrator re-ran and confirmed). Includes `tests/test_canonical_vocabulary.py::test_agent_and_web_signal_filters_return_identical_items` and `tests/test_architecture.py`.
+- `uv run ruff check src/stock_ontology/web/viewmodels.py src/stock_ontology/web/app.py src/stock_ontology/db/storage.py`: clean. `search.py`, `tests/test_search.py` and `tests/test_web.py` have 4 existing findings on untouched lines (`search.py:105` TRY300, `test_search.py:45`, `test_web.py:1891,1894` TRY003); the HEAD version of `search.py` reproduces its finding.
+- `git hash-object tests/test_search_ontology_options.py` → `2554d6126bf0a03883e296a289c4b6433837ca85`, matching Proof. The orchestrator confirmed no diff since `8165fce` in that file, `vocab.py`, `agent.py`, `models.py` or `ontology_registry.json`.
+
+### Intervention record
+
+- None. Local offline build; no deploy or live data.
+
+### Deviations
+
+- None. Every modified path is on Frame's Include list, plus the `README.md` constraint entry the skill allows on every route.
+- For Audit: bare legacy URLs such as `subtype=rumor` still filter as today, but no subtype option shows as selected for them, because options are now qualified.
 
 ## Audit
 
