@@ -1,8 +1,8 @@
 ---
 proposal_id: "exact-entity-merge"
-state: PROVED
+state: BUILT
 witness: independent
-candidate: "3a73dc0 @ worktree/proposal-exact-entity-merge"
+candidate: "8365c00 @ worktree/proposal-exact-entity-merge"
 ---
 
 # Proposal: Exact or registry-based entity merging
@@ -135,6 +135,40 @@ Candidate: `proposal/exact-entity-merge` @ `3a73dc035eb618a7511b5dcece14527fc4dc
 - Batched embedding of new canonical nodes: one `embed_texts` call per note → Build: `tests/test_pipeline.py`; catches a regression to one call per node after `_batch_probe_vectors` is removed.
 
 ## Build
+
+Candidate: `8365c00 @ worktree/proposal-exact-entity-merge` (branch `proposal/exact-entity-merge`). Later commits touch only this ledger.
+
+### Files changed
+
+- `src/stock_ontology/pipeline.py` — removed `CANONICAL_DISTANCE_THRESHOLD`, the probe-vector path, `_batch_probe_vectors`, and `_probe_text`; `_find_exact` falls back to new `_find_by_registry` (`resolve_company` with ticker and aliases for company entities only, `resolve_theme` for themes, mapped to the stored node carrying any official label); `_resolve_canonical_node` no longer embeds; new and changed canonical nodes are embedded in one `embed_texts` call per note via `replace_node_embeddings`.
+- `src/stock_ontology/registry.py` — `MergeSuggestion` and `RegistrySuggestions.merges`; `sync_suggestions(..., merge_candidates=...)` keyed by the unordered node-ID pair, keeps decided pairs, drops pending pairs no longer reported; `SuggestionSyncSummary.pending_merges`.
+- `src/stock_ontology/repair.py` — `_apply_approved_merges` merges the nodes of `approved` merge suggestions through `_merge_cluster` (existing `merge_node_into`/`upsert_node`), skipping missing or mixed-type pairs; `RepairReport.approved_merges_applied`.
+- `src/stock_ontology/cli.py` — `audit` passes `duplicate_company_candidates` and `near_duplicate_themes` as merge candidates; the sync line shows pending merges.
+- `tests/test_pipeline.py` — only the stale comment at the "Nvidia Corporation" step (Frame's `Invariants changed`).
+- `tests/test_db.py` — supporting tests: merge-suggestion sync drops stale pending pairs and counts pending merges; registry resolves a company by ticker and a theme by alias, and never resolves a person through the company registry. The existing `test_probe_embeddings_are_batched_per_note` still passes (one embed call per note).
+- `docs/architecture/pipeline.md`, `docs/architecture/governance.md` — resolution and merge-suggestion workflow.
+- `README.md` — merge-suggestion usage note; Ingestion Constraints entry (exact or registry merging only), **Why** naming the 2026-11-22 rebuild, **Guarded by** the AMD witness.
+
+### Unit evidence
+
+- `uv run pytest -q tests/test_db.py` — GREEN: 22 passed; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build3/unit_db.log`. The two new supporting tests were written after the implementation, so no RED was observed for them.
+
+### Green evidence
+
+- Decisive witness: `uv run pytest -q tests/test_pipeline.py -k "does_not_merge_distinct or registry_alias_without"` — pass (2 passed); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build3/witness_pipeline.log`.
+- Decisive witness: `uv run pytest -q tests/test_registry_audit.py -k queues_merge` — pass; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build3/witness_audit.log`.
+- Decisive witness: `uv run pytest -q tests/test_repair.py -k approved_merge` — pass; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build3/witness_repair.log`.
+- Gate: `uv run pytest -q` — pass (109 passed); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build3/full_suite.log`.
+- Gate: `uv run ruff check src/stock_ontology/pipeline.py src/stock_ontology/registry.py src/stock_ontology/repair.py src/stock_ontology/cli.py tests/test_db.py` — pass; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/build3/ruff.log`.
+- Protected witnesses: `git diff 3a73dc0 -- tests/test_registry_audit.py tests/test_repair.py` is empty; `tests/test_pipeline.py` differs only by the one comment line Proof allowed.
+
+### Intervention record
+
+- None. No intervention ledger exists; the outcome is measured by the rebuild audit after merge.
+
+### Deviations
+
+- Test home: Proof's supporting plan named `tests/test_registry_audit.py` and `tests/test_pipeline.py` for the sync and registry-resolution unit tests. They are in `tests/test_db.py` because Proof protects those files whole; no behavior or scope change.
 
 ## Audit
 
