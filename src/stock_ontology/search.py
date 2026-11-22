@@ -25,6 +25,7 @@ from stock_ontology.config import SUPPORTED_EXTENSIONS
 from stock_ontology.db import OntologyDB
 from stock_ontology.llm import LLMClient
 from stock_ontology.models import Node, NodeType, resolve_item_sentiment
+from stock_ontology.registry import normalize_relation_name
 from stock_ontology.vocab import (
     matches_signal_filter,
     parse_category_filter,
@@ -299,14 +300,34 @@ def _recency_bonus(raw_date: str, today: date) -> float:
 # --- Filters ------------------------------------------------------------------
 
 
+def split_qualified_value(raw: str | None) -> tuple[str | None, str | None]:
+    """Split a `<node_type>:<value>` filter value into its node type and bare value.
+
+    A bare value, or one whose prefix is not a node type, comes back whole with no node type.
+    """
+    cleaned = raw.strip() if raw else ""
+    if not cleaned:
+        return None, None
+    prefix, sep, rest = cleaned.partition(":")
+    if sep and prefix.strip().lower() in NODE_TYPES and rest.strip():
+        return prefix.strip().lower(), rest.strip()
+    return None, cleaned
+
+
 @dataclass(frozen=True)
 class SearchFilters:
     """The advanced-search filters, normalized. Build with `SearchFilters.from_raw`."""
 
     node_type: NodeType | None = None
     subtype: str | None = None
+    subtype_node_type: NodeType | None = None
+    status: str | None = None
+    status_node_type: NodeType | None = None
     sentiment: str | None = None
     stance: str | None = None
+    support_strength: str | None = None
+    conviction: str | None = None
+    relation: str | None = None
     entity_id: str | None = None
     date_from: str | None = None
     date_to: str | None = None
@@ -319,8 +340,12 @@ class SearchFilters:
         *,
         node_type: str | None = None,
         subtype: str | None = None,
+        status: str | None = None,
         sentiment: str | None = None,
         stance: str | None = None,
+        support_strength: str | None = None,
+        conviction: str | None = None,
+        relation: str | None = None,
         entity_id: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -330,11 +355,24 @@ class SearchFilters:
         def clean(value: str | None) -> str | None:
             return value.strip() if value and value.strip() else None
 
+        def lower(value: str | None) -> str | None:
+            cleaned = clean(value)
+            return cleaned.lower() if cleaned else None
+
+        subtype_nt, bare_subtype = split_qualified_value(subtype)
+        status_nt, bare_status = split_qualified_value(status)
+        relation_name = normalize_relation_name(relation) if clean(relation) else ""
         return cls(
             node_type=node_type if node_type in NODE_TYPES else None,  # type: ignore[arg-type]
-            subtype=parse_category_filter(subtype),
+            subtype=parse_category_filter(bare_subtype),
+            subtype_node_type=subtype_nt,  # type: ignore[arg-type]
+            status=lower(bare_status),
+            status_node_type=status_nt,  # type: ignore[arg-type]
             sentiment=parse_sentiment_filter(sentiment),
-            stance=clean(stance) and stance.strip().lower(),  # type: ignore[union-attr]
+            stance=lower(stance),
+            support_strength=lower(support_strength),
+            conviction=lower(conviction),
+            relation=relation_name or None,
             entity_id=clean(entity_id),
             date_from=clean(date_from),
             date_to=clean(date_to),
@@ -346,17 +384,45 @@ class SearchFilters:
     def narrows_nodes(self) -> bool:
         """True when a filter beyond the source note narrows which ontology items show."""
         return any(
-            [self.node_type, self.subtype, self.sentiment, self.stance, self.entity_id, self.date_from, self.date_to]
+            [
+                self.node_type,
+                self.subtype,
+                self.status,
+                self.sentiment,
+                self.stance,
+                self.support_strength,
+                self.conviction,
+                self.relation,
+                self.entity_id,
+                self.date_from,
+                self.date_to,
+            ]
         )
 
     @property
     def active(self) -> bool:
         return self.narrows_nodes or bool(self.source_file)
 
-    def matches(self, node: Node, connected: dict[str, dict[str, Any] | None]) -> bool:
+    def matches(
+        self,
+        node: Node,
+        connected: dict[str, dict[str, Any] | None],
+        relation_ids: set[str] | None = None,
+    ) -> bool:
+        """Whether `node` passes every filter.
+
+        `relation_ids` holds the items with an edge of the `relation` filter (to the selected
+        entity when one is set). With a relation filter and no `relation_ids`, nothing matches.
+        """
         if self.node_type is not None and node.node_type != self.node_type:
             return False
+        if self.subtype_node_type is not None and node.node_type != self.subtype_node_type:
+            return False
+        if self.status_node_type is not None and node.node_type != self.status_node_type:
+            return False
         if self.entity_id is not None and node.id not in connected:
+            return False
+        if self.relation is not None and (relation_ids is None or node.id not in relation_ids):
             return False
         eff: str | None = None
         if self.sentiment is not None:
@@ -370,8 +436,14 @@ class SearchFilters:
             sentiments={self.sentiment} if self.sentiment is not None else None,
         ):
             return False
-        if self.stance is not None and node.facets.get("stance") != self.stance:
-            return False
+        for key, wanted in (
+            ("status", self.status),
+            ("stance", self.stance),
+            ("support_strength", self.support_strength),
+            ("conviction", self.conviction),
+        ):
+            if wanted is not None and node.facets.get(key) != wanted:
+                return False
         if self.date_from is not None or self.date_to is not None:
             d = node_date(node)
             if not d:
@@ -457,8 +529,18 @@ def _canonical_relation(db: OntologyDB, seed: Node, item: dict[str, Any]) -> str
     return res.relation
 
 
-def _filter_only(db: OntologyDB, filters: SearchFilters, connected: dict[str, Any], limit: int) -> SearchResults:
-    nodes = [n for n in db.list_nodes(node_type=filters.node_type, limit=5000) if filters.matches(n, connected)]
+def _filter_only(
+    db: OntologyDB,
+    filters: SearchFilters,
+    connected: dict[str, Any],
+    relation_ids: set[str] | None,
+    limit: int,
+) -> SearchResults:
+    nodes = [
+        n
+        for n in db.list_nodes(node_type=filters.node_type, limit=5000)
+        if filters.matches(n, connected, relation_ids)
+    ]
     nodes.sort(key=lambda n: n.name.casefold())
     nodes.sort(key=lambda n: (node_date(n) or "", n.updated_at.isoformat()), reverse=True)
     results = SearchResults(query="")
@@ -493,9 +575,14 @@ def search_ontology(
         if db.get_node(filters.entity_id) is None:
             return SearchResults(query=cleaned)
         connected = db.get_entity_connected_nodes(filters.entity_id)
+    relation_ids: set[str] | None = None
+    if filters.relation is not None:
+        relation_ids = db.get_relation_node_ids(filters.relation, entity_id=filters.entity_id)
 
     if not cleaned:
-        return _filter_only(db, filters, connected, limit) if filters.active else SearchResults(query="")
+        if not filters.active:
+            return SearchResults(query="")
+        return _filter_only(db, filters, connected, relation_ids, limit)
 
     period, rest = parse_period(cleaned)
     word = rest or cleaned
@@ -589,7 +676,7 @@ def search_ontology(
             pass
 
     # Apply the advanced-search filters to what is shown.
-    shown = [h for h in hits.values() if filters.matches(h.node, connected)]
+    shown = [h for h in hits.values() if filters.matches(h.node, connected, relation_ids)]
     if filters.entity_id:
         for h in shown:
             h.edge_facets = connected.get(h.node.id)

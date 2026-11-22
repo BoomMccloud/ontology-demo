@@ -15,10 +15,9 @@
       >
       <select name="node_type" aria-label="{{ t('search.filter_aria') }}">
         <option value="" {% if not nt %}selected{% endif %}>{{ t('search.node_type_all') }}</option>
-        <option value="entity" {% if nt == 'entity' %}selected{% endif %}>{{ t('search.node_type_entity') }}</option>
-        <option value="theme" {% if nt == 'theme' %}selected{% endif %}>{{ t('search.node_type_theme') }}</option>
-        <option value="event" {% if nt == 'event' %}selected{% endif %}>{{ t('search.node_type_event') }}</option>
-        <option value="view" {% if nt == 'view' %}selected{% endif %}>{{ t('search.node_type_view') }}</option>
+        {% for type_key in opts.get('node_types', []) %}
+          <option value="{{ type_key }}" {% if nt == type_key %}selected{% endif %}>{{ t('search.node_type_' ~ type_key) }}</option>
+        {% endfor %}
       </select>
       <button class="retro-btn" type="submit">{{ t('home.search_btn') }}</button>
     </div>
@@ -43,7 +42,29 @@
               {% if sub_list %}
                 <optgroup label="{{ group_label }}">
                   {% for sub in sub_list %}
-                    <option value="{{ sub }}" {% if f.get('subtype') == sub %}selected{% endif %}>{{ t_subtype(sub, group_key) }}</option>
+                    {% set sub_value = group_key ~ ':' ~ sub %}
+                    <option value="{{ sub_value }}" {% if f.get('subtype') == sub_value %}selected{% endif %}>{{ t_subtype(sub, group_key) }}</option>
+                  {% endfor %}
+                </optgroup>
+              {% endif %}
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="adv-field">
+          <label for="adv-status">{{ t('search.status_label') }}</label>
+          <select id="adv-status" name="status">
+            <option value="">{{ t('search.any_status') }}</option>
+            {% for group_label, group_key in [
+              (t('search.optgroup_event_statuses'), 'event'),
+              (t('search.optgroup_view_statuses'), 'view')
+            ] %}
+              {% set status_list = opts.get('statuses', {}).get(group_key, []) %}
+              {% if status_list %}
+                <optgroup label="{{ group_label }}">
+                  {% for st in status_list %}
+                    {% set status_value = group_key ~ ':' ~ st %}
+                    <option value="{{ status_value }}" {% if f.get('status') == status_value %}selected{% endif %}>{{ t_enum('status', st) }}</option>
                   {% endfor %}
                 </optgroup>
               {% endif %}
@@ -55,7 +76,7 @@
           <label for="adv-sentiment">{{ t('search.sentiment_label') }}</label>
           <select id="adv-sentiment" name="sentiment">
             <option value="">{{ t('search.any_sentiment') }}</option>
-            {% for sent in opts.get('sentiments', ['positive', 'negative', 'neutral', 'mixed', 'unclassified']) %}
+            {% for sent in opts.get('sentiments', []) %}
               <option value="{{ sent }}" {% if f.get('sentiment') == sent %}selected{% endif %}>{{ t_enum('sentiment', sent) }}</option>
             {% endfor %}
           </select>
@@ -70,6 +91,38 @@
             {% endfor %}
           </select>
         </div>
+
+        <div class="adv-field">
+          <label for="adv-support-strength">{{ t('search.support_strength_label') }}</label>
+          <select id="adv-support-strength" name="support_strength">
+            <option value="">{{ t('search.any_support_strength') }}</option>
+            {% for ss in opts.get('support_strengths', []) %}
+              <option value="{{ ss }}" {% if f.get('support_strength') == ss %}selected{% endif %}>{{ t_enum('support_strength', ss) }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="adv-field">
+          <label for="adv-conviction">{{ t('search.conviction_label') }}</label>
+          <select id="adv-conviction" name="conviction">
+            <option value="">{{ t('search.any_conviction') }}</option>
+            {% for cv in opts.get('convictions', []) %}
+              <option value="{{ cv }}" {% if f.get('conviction') == cv %}selected{% endif %}>{{ t_enum('conviction', cv) }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        {% if opts.get('relations') %}
+        <div class="adv-field">
+          <label for="adv-relation">{{ t('search.relation_label') }}</label>
+          <select id="adv-relation" name="relation">
+            <option value="">{{ t('search.any_relation') }}</option>
+            {% for rel in opts.relations %}
+              <option value="{{ rel }}" {% if f.get('relation') == rel %}selected{% endif %}>{{ t_enum('relation', rel) }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
 
         <div class="adv-field">
           <label for="adv-entity">{{ t('search.entity_label') }}</label>

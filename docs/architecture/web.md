@@ -40,6 +40,12 @@ word, and shows a failed state if the run fails. Detach turns the column into
 a floating window. The column, the floating window, and the dock on other
 pages share one chat session.
 
+The advanced-search options come from `build_search_filter_options`: node
+types from `search.NODE_TYPES`, every enum from `vocab.py`, and relations from
+the registry the app loads. No value observed in the DB is offered; only the
+connected-entity options are DB instances. Subtype and status options are
+`<node_type>:<value>`. Without a registry file the relation select is hidden.
+
 A new HTML route must be added to `NAV_ROUTES` in `navigation.py`.
 `tests/test_web_navigation.py` fails on an unregistered route, a page without
 exactly one current workflow and section, a detail page without a breadcrumb,

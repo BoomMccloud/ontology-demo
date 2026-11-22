@@ -33,7 +33,7 @@ from stock_ontology.i18n import (
 )
 from stock_ontology.llm import LLMClient, create_llm_client
 from stock_ontology.registry import OntologyRegistry, load_registry
-from stock_ontology.search import SearchFilters
+from stock_ontology.search import SearchFilters, split_qualified_value
 from stock_ontology.web.catalog import build_catalog_context
 from stock_ontology.web.navigation import LEFT_NAV, WORKFLOWS, resolve_nav
 from stock_ontology.web.viewmodels import (
@@ -311,8 +311,12 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
         q: str = "",
         node_type: str = "",
         subtype: str = "",
+        status: str = "",
         sentiment: str = "",
         stance: str = "",
+        support_strength: str = "",
+        conviction: str = "",
+        relation: str = "",
         entity_id: str = "",
         date_from: str = "",
         date_to: str = "",
@@ -323,17 +327,22 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
         norm_mode = "keyword" if search_mode.strip().lower() == "keyword" else "hybrid"
         filters = {
             "subtype": subtype.strip(),
+            "status": status.strip(),
             "sentiment": sentiment.strip(),
             "stance": stance.strip(),
+            "support_strength": support_strength.strip(),
+            "conviction": conviction.strip(),
+            "relation": relation.strip(),
             "entity_id": entity_id.strip(),
             "date_from": date_from.strip(),
             "date_to": date_to.strip(),
             "source_file": source_file.strip(),
             "search_mode": norm_mode,
         }
+        reg, _ = _load_optional_registry()
         with _open_ro_db(lang) as db:
             rail = build_rail_context(db)
-            search_options = build_search_filter_options(db)
+            search_options = build_search_filter_options(db, reg)
             search = build_search_results(
                 db,
                 active_llm,
@@ -341,8 +350,12 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
                 SearchFilters.from_raw(
                     node_type=node_type,
                     subtype=filters["subtype"],
+                    status=filters["status"],
                     sentiment=filters["sentiment"],
                     stance=filters["stance"],
+                    support_strength=filters["support_strength"],
+                    conviction=filters["conviction"],
+                    relation=filters["relation"],
                     entity_id=filters["entity_id"],
                     date_from=filters["date_from"],
                     date_to=filters["date_to"],
@@ -366,12 +379,21 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
                 )
             )
         if filters["subtype"]:
+            sub_nt, sub_value = split_qualified_value(filters["subtype"])
             active_filters.append(
                 (
                     translate("search.filter_subtype", lang=lang),
                     translate_subtype(
-                        filters["subtype"], lang=lang, node_type=node_type.strip() or None
+                        sub_value, lang=lang, node_type=sub_nt or node_type.strip() or None
                     ),
+                )
+            )
+        if filters["status"]:
+            _, status_value = split_qualified_value(filters["status"])
+            active_filters.append(
+                (
+                    translate("search.filter_status", lang=lang),
+                    translate_enum("status", status_value, lang=lang),
                 )
             )
         if filters["sentiment"]:
@@ -386,6 +408,27 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
                 (
                     translate("search.filter_stance", lang=lang),
                     translate_enum("stance", filters["stance"], lang=lang),
+                )
+            )
+        if filters["support_strength"]:
+            active_filters.append(
+                (
+                    translate("search.filter_support_strength", lang=lang),
+                    translate_enum("support_strength", filters["support_strength"], lang=lang),
+                )
+            )
+        if filters["conviction"]:
+            active_filters.append(
+                (
+                    translate("search.filter_conviction", lang=lang),
+                    translate_enum("conviction", filters["conviction"], lang=lang),
+                )
+            )
+        if filters["relation"]:
+            active_filters.append(
+                (
+                    translate("search.filter_relation", lang=lang),
+                    translate_enum("relation", filters["relation"], lang=lang),
                 )
             )
         if filters["entity_id"]:

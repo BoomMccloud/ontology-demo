@@ -174,6 +174,9 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
 - Give the entity and theme page templates (`entity.html`, `theme.html` and every partial they include, among them the shared `section_events.html` and `section_views.html`) only the presentation models built in `web/viewmodels.py`. Never pass a raw ontology node, `facets`, or `edge_facets` to them, and never read `.facets` in them; add a field to the model and map it in the view model instead.
   **Why:** templates read raw facets and resolved sentiment inline, so the pages depended on how ontology data is shaped (proposals `company-view-separation` and `theme-view-separation`, 2026-11-22).
   **Guarded by:** `tests/test_web.py::test_entity_page_templates_only_see_presentation_models` and `tests/test_web.py::test_theme_page_templates_only_see_presentation_models`.
+- Build every `/search` enum option in `build_search_filter_options` from `vocab.py` and relations from the loaded registry; never add values observed in the DB or a hand-kept list. Subtype and status options are `<node_type>:<value>` so a theme stage and a view type with the same name stay apart.
+  **Why:** hand-kept lists merged with observed values offered stances such as `outperform` that the ontology does not define, and `consensus` matched both a consensus view and a consensus-stage theme (proposal `search-ontology`, 2026-11-22).
+  **Guarded by:** `tests/test_search_ontology_options.py`.
 
 ## Tests (Offline)
 

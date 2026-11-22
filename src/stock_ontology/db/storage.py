@@ -1591,3 +1591,26 @@ class OntologyDB:
                 best_ranks[nb_id] = rank
                 connected[nb_id] = edge_facets
         return connected
+
+    def get_relation_node_ids(self, relation: str, *, entity_id: str | None = None) -> set[str]:
+        """Return IDs of nodes with at least one incident edge of `relation`.
+
+        With `entity_id`, only the entity's neighbors joined to it by such an edge, so a
+        neighbor keeps every relation it has with the entity, not just its best edge.
+        """
+        if entity_id is None:
+            rows = self.conn.execute(
+                "SELECT from_id AS node_id FROM edges WHERE relation = ? "
+                "UNION SELECT to_id AS node_id FROM edges WHERE relation = ?",
+                (relation, relation),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT CASE WHEN from_id = ? THEN to_id ELSE from_id END AS node_id FROM edges "
+                "WHERE relation = ? AND (from_id = ? OR to_id = ?)",
+                (entity_id, relation, entity_id, entity_id),
+            ).fetchall()
+        ids = {str(r["node_id"]) for r in rows}
+        if entity_id is not None:
+            ids.discard(entity_id)
+        return ids

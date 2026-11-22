@@ -1970,3 +1970,48 @@ def test_theme_page_templates_only_see_presentation_models(tmp_path: Path) -> No
         name for name in closure if RAW_FACET_TOKEN.search((TEMPLATES_DIR / name).read_text(encoding="utf-8"))
     )
     assert offenders == []
+
+
+@pytest.mark.parametrize("lang", SUPPORTED_LANGUAGE_CODES)
+def test_search_new_filter_chips_and_labels_in_every_locale(tmp_path: Path, lang: str) -> None:
+    db_path = tmp_path / "chips.db"
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        db.upsert_node(
+            Node(id="ent_a", node_type="entity", name="Apple", summary="", facets={"entity_type": "company"}),
+            embedding=_unit_vec(0),
+        )
+    settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=tmp_path)
+    client = TestClient(create_app(settings, llm=FakeWebLLM()))
+    r = client.get(
+        "/search",
+        params={
+            "lang": lang,
+            "status": "event:upcoming",
+            "support_strength": "weak",
+            "conviction": "high",
+            "relation": "ABOUT",
+        },
+    )
+    assert r.status_code == 200
+    page = html.unescape(r.text)
+    pills = re.findall(r'<span class="filter-pill mono">([^<]*)</span>', page)
+    assert len(pills) == 4
+    for key in ("filter_status", "filter_support_strength", "filter_conviction", "filter_relation"):
+        label = translate(f"search.{key}", lang=lang)
+        assert label != f"search.{key}"
+        assert any(p.startswith(f"{label}: ") for p in pills), key
+    for key in (
+        "status_label",
+        "any_status",
+        "optgroup_event_statuses",
+        "optgroup_view_statuses",
+        "support_strength_label",
+        "any_support_strength",
+        "conviction_label",
+        "any_conviction",
+        "relation_label",
+        "any_relation",
+    ):
+        label = translate(f"search.{key}", lang=lang)
+        assert label != f"search.{key}"
+        assert label in page, key

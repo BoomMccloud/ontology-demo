@@ -23,13 +23,14 @@ from stock_ontology.i18n import (
     translate_facet_label,
 )
 from stock_ontology.llm import LLMClient
-from stock_ontology.models import VALID_SENTIMENTS, Node, resolve_item_sentiment
+from stock_ontology.models import Node, resolve_item_sentiment
 from stock_ontology.registry import (
     OntologyRegistry,
     normalize_name_key,
     normalize_relation_name,
 )
 from stock_ontology.search import (
+    NODE_TYPES,
     SearchFilters,
     SearchHit,
     node_date,
@@ -37,6 +38,14 @@ from stock_ontology.search import (
     node_subtype,
     resolve_safe_note_path,
     search_ontology,
+)
+from stock_ontology.vocab import (
+    CONVICTION,
+    NODE_FACET_VOCABS,
+    SENTIMENT_FILTER_VALUES,
+    STANCE,
+    SUBTYPE_FACET,
+    SUPPORT_STRENGTH,
 )
 from stock_ontology.web.catalog import format_source_citation
 
@@ -59,27 +68,6 @@ CONSENSUS_CORE_KEYS = {
     "as_of",
     "pillars",
 }
-
-DEFAULT_SUBTYPES_BY_TYPE: dict[str, list[str]] = {
-    "entity": ["company", "person", "product", "institution", "sector", "region"],
-    "event": ["fact", "news", "earnings", "catalyst", "meeting"],
-    "view": ["consensus", "analyst_report", "pm_view", "rumor", "channel_check"],
-    "theme": ["emerging", "accelerating", "consensus", "fading"],
-}
-
-CANONICAL_STANCES: list[str] = [
-    "buy",
-    "bullish",
-    "overweight",
-    "outperform",
-    "hold",
-    "neutral",
-    "cautious",
-    "sell",
-    "bearish",
-    "underperform",
-    "underweight",
-]
 
 STRUCTURE_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
@@ -782,81 +770,62 @@ def build_theme_context(
     }
 
 
-def _merge_ordered(defaults: list[str], extra: set[str]) -> list[str]:
-    merged = list(defaults)
-    seen = set(defaults)
-    for item in sorted(extra):
-        if item and item not in seen:
-            seen.add(item)
-            merged.append(item)
-    return merged
+def build_search_filter_options(db: OntologyDB, registry: OntologyRegistry | None = None) -> dict[str, Any]:
+    """Collect dropdown filter options for the integrated Advanced Search bar.
 
-
-def build_search_filter_options(db: OntologyDB) -> dict[str, Any]:
-    """Collect dropdown filter options for the integrated Advanced Search bar."""
+    Every enum option comes from `vocab.py` and relations from `registry`, never from
+    values observed in the DB. With no registry, `relations` is empty and the relation
+    filter is hidden. Only the entity options are DB instances.
+    """
     companies: list[dict[str, str]] = []
     people: list[dict[str, str]] = []
     other_entities: list[dict[str, str]] = []
-    observed_subtypes: dict[str, set[str]] = {
-        "entity": set(),
-        "event": set(),
-        "view": set(),
-        "theme": set(),
-    }
-    observed_stances: set[str] = set()
 
-    for node in db.list_nodes(limit=5000):
-        sub = node_subtype(node)
-        if sub and node.node_type in observed_subtypes:
-            observed_subtypes[node.node_type].add(sub)
-        stance = str(node.facets.get("stance") or "")
-        if stance:
-            observed_stances.add(stance)
-
-        if node.node_type == "entity":
-            etype = sub or "entity"
-            if etype == "company":
-                companies.append(
-                    {
-                        "id": node.id,
-                        "name": node.name,
-                        "ticker": str(node.facets.get("ticker", "")),
-                    }
-                )
-            elif etype == "person":
-                people.append(
-                    {
-                        "id": node.id,
-                        "name": node.name,
-                        "role": str(node.facets.get("role", "")),
-                    }
-                )
-            else:
-                other_entities.append(
-                    {
-                        "id": node.id,
-                        "name": node.name,
-                        "entity_type": etype,
-                    }
-                )
+    for node in db.list_nodes(node_type="entity", limit=5000):
+        etype = node_subtype(node) or "entity"
+        if etype == "company":
+            companies.append(
+                {
+                    "id": node.id,
+                    "name": node.name,
+                    "ticker": str(node.facets.get("ticker", "")),
+                }
+            )
+        elif etype == "person":
+            people.append(
+                {
+                    "id": node.id,
+                    "name": node.name,
+                    "role": str(node.facets.get("role", "")),
+                }
+            )
+        else:
+            other_entities.append(
+                {
+                    "id": node.id,
+                    "name": node.name,
+                    "entity_type": etype,
+                }
+            )
 
     companies.sort(key=lambda c: c["name"].casefold())
     people.sort(key=lambda p: p["name"].casefold())
     other_entities.sort(key=lambda e: e["name"].casefold())
 
-    subtypes = {
-        nt: _merge_ordered(DEFAULT_SUBTYPES_BY_TYPE[nt], observed_subtypes[nt])
-        for nt in ("entity", "event", "view", "theme")
-    }
-    stances = _merge_ordered(CANONICAL_STANCES, observed_stances)
-
     return {
         "companies": companies,
         "people": people,
         "other_entities": other_entities,
-        "subtypes": subtypes,
-        "sentiments": [*VALID_SENTIMENTS, "unclassified"],
-        "stances": stances,
+        "node_types": list(NODE_TYPES),
+        "subtypes": {nt: list(NODE_FACET_VOCABS[nt][facet].members) for nt, facet in SUBTYPE_FACET.items()},
+        "statuses": {
+            nt: list(NODE_FACET_VOCABS[nt]["status"].members) for nt in NODE_TYPES if "status" in NODE_FACET_VOCABS[nt]
+        },
+        "sentiments": list(SENTIMENT_FILTER_VALUES),
+        "stances": list(STANCE.members),
+        "support_strengths": list(SUPPORT_STRENGTH.members),
+        "convictions": list(CONVICTION.members),
+        "relations": [spec.name for spec in registry.relations] if registry is not None else [],
     }
 
 

@@ -18,6 +18,7 @@ from stock_ontology.search import (
     parse_period,
     scan_notes,
     search_ontology,
+    split_qualified_value,
 )
 from stock_ontology.web import create_app
 
@@ -285,3 +286,53 @@ def test_chat_endpoint_gives_the_agent_note_search(tmp_path: Path) -> None:
     assert r.json()["tools_used"] == ["search_notes"]
     passages = llm.tool_responses[0]["passages"]
     assert [(p["file"], p["line"]) for p in passages] == [("Notes/other.md", 1)]
+
+
+def test_from_raw_parses_group_qualified_subtype_and_status_values() -> None:
+    assert split_qualified_value("theme:consensus") == ("theme", "consensus")
+    assert split_qualified_value(" View : rumor ") == ("view", "rumor")
+    assert split_qualified_value("rumors") == (None, "rumors")
+    assert split_qualified_value("foo:bar") == (None, "foo:bar")
+    assert split_qualified_value("event:") == (None, "event:")
+    assert split_qualified_value("") == (None, None)
+
+    qualified = SearchFilters.from_raw(subtype="view:Rumors", status="event:UPCOMING")
+    assert (qualified.subtype_node_type, qualified.subtype) == ("view", "rumor")
+    assert (qualified.status_node_type, qualified.status) == ("event", "upcoming")
+    assert qualified.node_type is None
+
+    bare = SearchFilters.from_raw(subtype="rumors", status="active")
+    assert (bare.subtype_node_type, bare.subtype) == (None, "rumor")
+    assert (bare.status_node_type, bare.status) == (None, "active")
+
+    unknown = SearchFilters.from_raw(subtype="foo:bar")
+    assert (unknown.subtype_node_type, unknown.subtype) == (None, "foo:bar")
+
+    new = SearchFilters.from_raw(support_strength=" Weak ", conviction="HIGH", relation="about")
+    assert (new.support_strength, new.conviction, new.relation) == ("weak", "high", "ABOUT")
+    assert new.narrows_nodes
+
+    # The agent's search_nodes builds filters with node_type only; the new fields stay unset.
+    agent = SearchFilters.from_raw(node_type="event")
+    assert agent == SearchFilters(node_type="event")
+
+
+def test_get_relation_node_ids_keeps_every_relation_per_neighbor(tmp_path: Path) -> None:
+    db_path = tmp_path / "rel.db"
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        for idx, (nid, nt) in enumerate(
+            [("ent_a", "entity"), ("ent_b", "entity"), ("evt_1", "event"), ("evt_2", "event")]
+        ):
+            db.upsert_node(Node(id=nid, node_type=nt, name=nid, summary=""), embedding=_unit_vec(idx))
+        # evt_1 has two edges to ent_a; the best-edge collapse in get_entity_connected_nodes keeps one.
+        db.upsert_edge(Edge(id="e1", from_id="evt_1", to_id="ent_a", relation="ABOUT"))
+        db.upsert_edge(Edge(id="e2", from_id="evt_1", to_id="ent_a", relation="RELATES_TO"))
+        db.upsert_edge(Edge(id="e3", from_id="evt_2", to_id="ent_b", relation="ABOUT"))
+        db.upsert_edge(Edge(id="e4", from_id="ent_a", to_id="evt_2", relation="RELATES_TO"))
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        assert db.get_relation_node_ids("ABOUT") == {"evt_1", "evt_2", "ent_a", "ent_b"}
+        assert db.get_relation_node_ids("ABOUT", entity_id="ent_a") == {"evt_1"}
+        assert db.get_relation_node_ids("RELATES_TO", entity_id="ent_a") == {"evt_1", "evt_2"}
+        assert db.get_relation_node_ids("ABOUT", entity_id="ent_b") == {"evt_2"}
+        assert db.get_relation_node_ids("MISSING") == set()

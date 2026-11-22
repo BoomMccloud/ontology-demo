@@ -46,6 +46,17 @@ narrow what is shown, not which entity seeds the expansion. Any node filter
 other than the source note leaves note passages out; a source-note filter
 narrows them.
 
+The filters are node type, subtype, status, sentiment, stance, support
+strength, conviction, relation, connected entity, date range, source note, and
+keyword mode. A subtype or status value may be group-qualified as
+`<node_type>:<value>` (`theme:consensus`, `event:upcoming`); `from_raw` splits
+it into a node-type restriction and the bare value, which goes to
+`vocab.matches_signal_filter` unchanged. A bare value keeps the cross-type rule,
+and an unknown prefix is kept whole, so it matches nothing. A relation filter
+keeps items with at least one incident edge of that relation, read through
+`OntologyDB.get_relation_node_ids`; with an entity selected, the edge must join
+the item to that entity.
+
 `resolve_safe_note_path` lives here so the web catalog and the grep share one
 set of path rules.
 
