@@ -265,7 +265,13 @@ class OntologyDB:
                 self.conn.execute("ALTER TABLE ingestion_log ADD COLUMN size INTEGER")
             if "mtime_ns" not in log_cols:
                 self.conn.execute("ALTER TABLE ingestion_log ADD COLUMN mtime_ns INTEGER")
-            if backfill_lookup:
+            # Rebuild when the table is new, or when any node has no lookup row (an interrupted
+            # first backfill, or nodes written by code that predates `node_lookup`).
+            missing = self.conn.execute(
+                "SELECT 1 FROM nodes n WHERE NOT EXISTS "
+                "(SELECT 1 FROM node_lookup l WHERE l.node_id = n.id) LIMIT 1"
+            ).fetchone()
+            if backfill_lookup or missing is not None:
                 self.rebuild_node_lookup()
 
     def _has_node_lookup(self) -> bool:

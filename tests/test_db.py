@@ -982,3 +982,18 @@ def test_cli_repair_builds_llm_only_with_reembed(tmp_path: Path, monkeypatch: py
     assert with_flag.exit_code == 0, with_flag.output
     assert calls == [1]
     assert json.loads(with_flag.output)["reembedded"] == 1
+
+
+def test_node_lookup_backfills_when_table_exists_but_misses_nodes(tmp_path: Path) -> None:
+    db_path = tmp_path / "partial.db"
+    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
+        db.upsert_node(_company("ent_alpha", "Alpha Inc", ["ALP"]))
+        db.upsert_node(_company("ent_beta2", "Beta Co"))
+        # Simulate an interrupted first backfill / rows written by older code.
+        db.conn.execute("DELETE FROM node_lookup")
+        db.conn.commit()
+
+    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
+        assert db.find_by_name_or_alias("Alpha Inc").id == "ent_alpha"
+        assert db.find_by_name_or_alias("alp").id == "ent_alpha"
+        assert db.find_by_name_or_alias("beta co").id == "ent_beta2"

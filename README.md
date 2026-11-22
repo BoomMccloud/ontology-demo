@@ -101,7 +101,7 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
   **Why:** a 5,000-node scan ordered by recency let newer events and views push old entities out of the window, so ingestion created duplicate entities (proposal `ingestion-write-integrity`, 2026-11-22).
   **Guarded by:** `tests/test_pipeline.py::test_pipeline_resolves_old_entity_past_5000_newer_nodes`.
 
-- Write nodes only through `OntologyDB.upsert_node` (deletes may be raw SQL; `node_lookup` cascades). Raw `INSERT`/`UPDATE` on `nodes` skips the indexed `node_lookup` table, so name and alias lookups miss the node and ingestion creates duplicates.
+- Insert nodes, and change a node's name or aliases, only through `OntologyDB.upsert_node`. Raw SQL that does either skips the indexed `node_lookup` table, so name and alias lookups miss the node and ingestion creates duplicates. Raw deletes are fine (`node_lookup` cascades), as are raw updates to other columns such as `facets_json`. A writable open also rebuilds `node_lookup` if any node lacks a lookup row.
   **Why:** name lookup moved from a full scan to the `node_lookup` index (proposal `ingestion-followups`, 2026-11-22).
   **Guarded by:** `tests/test_db.py::test_node_lookup_uses_index_and_tracks_alias_edits_and_deletes`.
 - Take a note's `doc_id` from its ingestion log entry, not from its current path. A moved note keeps its original `doc_id`, so a path-derived ID can collide with it.
