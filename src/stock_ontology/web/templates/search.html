@@ -2,6 +2,41 @@
 
 {% block title %}{% if query %}{{ t('search.page_title_query', query=query) }}{% else %}{{ t('search.page_title') }}{% endif %}{% endblock %}
 
+{% macro result_item(item, best=False) %}
+  <li class="search-result{% if best %} search-best-match{% endif %}"{% if best %} data-best-match{% endif %} data-result-id="{{ item.id }}" data-match-reason="{{ item.match_reason }}">
+    <div class="search-result-head">
+      {% if best %}<span class="search-best-label">{{ t('search.best_match_label') }}</span>{% endif %}
+      <a href="{{ item.href }}"><strong>{{ item.name }}</strong></a>
+      <span class="mono">{{ t_enum('node_type', item.node_type) }}</span>
+      {% if item.subtype %}<span class="badge">{{ t_subtype(item.subtype, item.node_type) }}</span>{% endif %}
+      {% if item.effective_sentiment %}<span class="badge badge-{{ item.effective_sentiment | lower }}">{{ t_enum('sentiment', item.effective_sentiment) }}</span>{% endif %}
+      {% if item.stance %}<span class="badge badge-{{ item.stance | lower }}">{{ t_enum('stance', item.stance) }}</span>{% endif %}
+      {% if item.date %}<span class="source-cite">{{ item.date }}</span>{% endif %}
+    </div>
+    {% if item.aliases %}
+      <div class="source-cite">{{ t('search.aliases_label') }} {{ item.aliases | join(', ') }}</div>
+    {% endif %}
+    {% if item.summary %}<div class="search-result-summary">{{ item.summary }}</div>{% endif %}
+    <div class="search-result-meta">
+      <span class="search-reason search-reason-{{ item.match_reason }}">{{ t('search.match_reason_label') }} {{ t_enum('match_reason', item.match_reason) }}{% if item.distance is not none %} ({{ item.distance }}){% endif %}</span>
+      {% if item.via_relation %}
+        <span class="source-cite">{{ t('search.via_relation', relation=t_enum('relation', item.via_relation), name=item.via_node_name) }}</span>
+      {% endif %}
+      {% if item.source_label %}
+        <span class="source-cite">
+          {{ t('common.source') }}
+          {% if item.source_exists %}
+            <a href="/catalog?file={{ item.source_file | urlencode }}{% if item.note_line %}&amp;format=raw#L{{ item.note_line }}{% endif %}">{{ item.source_label }}</a>
+          {% else %}
+            {{ item.source_label }}
+          {% endif %}
+          {% if item.note_line %}{{ t('search.note_line', line=item.note_line) }}{% endif %}
+        </span>
+      {% endif %}
+    </div>
+  </li>
+{% endmacro %}
+
 {% block content %}
 <h1>{{ t('rail.advanced_search') }}</h1>
 <p class="portal-intro">{{ t('search.page_desc') }}</p>
@@ -18,72 +53,77 @@
   </div>
 {% endif %}
 
-{% if has_search_criteria %}
-  <h2 class="u-fs-1p15rem u-bdb-1px-solid-6e6759 u-pb-4px">
-    {% if query %}
-      {{ t('search.results_heading', query=query, count=results | length) }}
-    {% else %}
-      {{ t('search.results_heading_no_query', count=results | length) }}
-    {% endif %}
-  </h2>
-  {% if results %}
-    <table class="catalog-table">
-      <thead>
-        <tr>
-          <th class="u-w-15pct">{{ t('search.col_type_subtype') }}</th>
-          <th class="u-w-28pct">{{ t('search.col_title_signals') }}</th>
-          <th>{{ t('search.col_summary_source') }}</th>
-          <th class="u-w-14pct">{{ t('search.col_match') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in results %}
-          <tr>
-            <td>
-              <div class="mono"><strong>{{ t_enum('node_type', item.node_type) }}</strong></div>
-              {% if item.subtype %}
-                <span class="badge">{{ t_subtype(item.subtype, item.node_type) }}</span>
-              {% endif %}
-            </td>
-            <td>
-              <a href="{{ item.href }}"><strong>{{ item.name }}</strong></a>
-              {% if item.aliases %}
-                <div class="source-cite">{{ t('search.aliases_label') }} {{ item.aliases | join(', ') }}</div>
-              {% endif %}
-              <div class="u-mt-4px">
-                {% if item.effective_sentiment %}
-                  <span class="badge badge-{{ item.effective_sentiment | lower }}">{{ t_enum('sentiment', item.effective_sentiment) }}</span>
-                {% endif %}
-                {% if item.stance %}
-                  <span class="badge badge-{{ item.stance | lower }}">{{ t_enum('stance', item.stance) }}</span>
-                {% endif %}
-                {% if item.date %}
-                  <span class="source-cite">{{ item.date }}</span>
-                {% endif %}
-              </div>
-            </td>
-            <td>
-              <div>{{ item.summary }}</div>
-              {% if item.source_label %}
-                <div class="source-cite u-mt-4px">
-                  {{ t('common.source') }}
-                  {% if item.source_exists %}
-                    <a href="/catalog?file={{ item.source_file | urlencode }}">{{ item.source_label }}</a>
-                  {% else %}
-                    {{ item.source_label }}
-                  {% endif %}
+<div class="search-layout" data-search-layout>
+  <div class="search-results">
+    {% if has_search_criteria %}
+      <h2 class="u-fs-1p15rem u-bdb-1px-solid-6e6759 u-pb-4px">
+        {% if query %}
+          {{ t('search.results_heading', query=query, count=search.count) }}
+        {% else %}
+          {{ t('search.results_heading_no_query', count=search.count) }}
+        {% endif %}
+      </h2>
+
+      {% if search.best_match %}
+        <ul class="search-list search-best-list">
+          {{ result_item(search.best_match, best=True) }}
+        </ul>
+      {% endif %}
+
+      {% for section in search.sections %}
+        <section class="search-section">
+          <h3 class="search-section-title">{{ t('search.section_' ~ section.key) }} ({{ section.hits | length }})</h3>
+          <ul class="search-list">
+            {% for item in section.hits %}
+              {{ result_item(item) }}
+            {% endfor %}
+          </ul>
+        </section>
+      {% endfor %}
+
+      {% if search.passages %}
+        <section class="search-section">
+          <h3 class="search-section-title">{{ t('search.section_notes') }} ({{ search.passages | length }})</h3>
+          <ul class="search-list">
+            {% for p in search.passages %}
+              <li class="search-result search-passage" data-note-file="{{ p.file }}" data-note-line="{{ p.line }}" data-match-reason="note">
+                <div class="search-passage-text">{{ p.text }}</div>
+                <div class="search-result-meta">
+                  <span class="search-reason search-reason-note">{{ t('search.match_reason_label') }} {{ t_enum('match_reason', 'note') }}</span>
+                  <span class="source-cite">
+                    {% if p.source_exists %}
+                      <a href="/catalog?file={{ p.file | urlencode }}&amp;format=raw#L{{ p.line }}">{{ p.source_label }}</a>
+                    {% else %}
+                      {{ p.source_label }}
+                    {% endif %}
+                    {{ t('search.note_line', line=p.line) }}
+                  </span>
                 </div>
-              {% endif %}
-            </td>
-            <td class="mono">
-              {{ t_enum('score_type', item.score_type) }}{% if item.distance is not none %} ({{ item.distance }}){% endif %}
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p>{{ t('search.no_results_filtered') }}</p>
-  {% endif %}
-{% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
+      {% if search.notes_truncated %}
+        <p class="source-cite search-notes-truncated" data-notes-truncated="1">{{ t('search.notes_truncated') }}</p>
+      {% endif %}
+
+      {% if not search.count %}
+        <p>{{ t('search.no_results_filtered') }}</p>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  <aside class="search-agent-column" aria-label="{{ t('search.agent_title') }}" data-agent-column data-agent-query="{{ agent_query }}" data-agent-prompt="{{ agent_prompt }}" data-agent-state="{{ 'running' if agent_query else 'idle' }}">
+    <div class="search-agent-bar">
+      <strong>{{ t('search.agent_title') }}</strong>
+      <button type="button" class="portal-btn" aria-pressed="false" data-agent-detach data-label-detach="{{ t('search.agent_detach') }}" data-label-pin="{{ t('search.agent_pin') }}">{{ t('search.agent_detach') }}</button>
+    </div>
+    <p class="search-agent-intro">
+      {% if agent_query %}{{ t('search.agent_intro', query=agent_query) }}{% else %}{{ t('search.agent_idle') }}{% endif %}
+    </p>
+    <p class="search-agent-failed" data-agent-failed hidden>{{ t('search.agent_failed') }}</p>
+    <div class="search-agent-slot" data-agent-slot></div>
+  </aside>
+</div>
 {% endblock %}

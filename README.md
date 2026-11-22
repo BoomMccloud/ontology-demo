@@ -47,7 +47,7 @@ Other components call the agent through two entry points and nothing else.
   from stock_ontology.db import OntologyDB
 
   with OntologyDB(db_path, embedding_dim=dim, read_only=True) as db:
-      agent = OntologyAgent(db, llm, language="en")
+      agent = OntologyAgent(db, llm, language="en", data_dir=notes_dir)  # data_dir optional, for note search
       turn = agent.chat("What is our view on NVDA?", history)  # history: () or a previous turn.history
   turn.reply          # str, the answer
   turn.history        # tuple, pass back next time; don't inspect it
@@ -57,7 +57,7 @@ Other components call the agent through two entry points and nothing else.
 
 - **One-shot or REPL, for a caller that lets the agent hold history (the CLI does):** `OntologyAgent.ask(message)` returns the reply string, and `reset()` clears history.
 
-`OntologyAgent` requires a read-only `OntologyDB` and raises `ValueError` otherwise. Build one agent per request, or per conversation for a REPL. An instance holds mutable state, so don't share one across concurrent callers. Attributes such as `messages`, `tool_trace` and `last_provider` are internal and may change; agent tests may read them, other components must not.
+`OntologyAgent` requires a read-only `OntologyDB` and raises `ValueError` otherwise. Pass the optional `data_dir` (the research notes directory) to let its `search_notes` tool grep notes; without it that tool returns an error. Build one agent per request, or per conversation for a REPL. An instance holds mutable state, so don't share one across concurrent callers. Attributes such as `messages`, `tool_trace` and `last_provider` are internal and may change; agent tests may read them, other components must not.
 
 ### Multi-Language Support (`en`, `zh`, `ko`, `ja`, `es`, `fr`)
 - The Web Library UI, Office-Clippy PM chat, `OntologyAgent`, and CLI support **English (`en`)**, **Chinese (`zh`)**, **Korean (`ko`)**, **Japanese (`ja`)**, **Spanish (`es`)**, and **French (`fr`)** while keeping ingested research notes and database text in their original language.
@@ -159,6 +159,9 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
 - The web app talks to the agent only through `OntologyAgent(...)` and `OntologyAgent.chat()`. It stores `ChatTurn.history` per session without inspecting it and never reads or writes other agent attributes (`messages`, `tool_trace`, `last_provider`, and so on).
   **Why:** the pydantic-ai rewrite kept `/api/chat` working only because the agent's attribute names happened to survive; a stated contract lets agent internals change without breaking the web chat (proposal `agent-chat-contract`, 2026-11-22).
   **Guarded by:** `tests/test_web.py::test_web_chat_endpoint_uses_only_agent_chat` and `tests/test_agent.py::test_agent_chat_returns_immutable_turn_contract`.
+- Search the ontology, from the web page or the agent, only through `stock_ontology.search.search_ontology`, and read notes for a search word only through its `grep_notes`. Never add a second vector-then-keyword merge, and never let a vector hit outrank an exact name or alias match.
+  **Why:** the web page and the agent each merged vector hits ahead of keyword hits, so searching "nvidia" showed "Consensus: Buy Apple Inc." before NVIDIA (proposal `ontology-search`, 2026-11-22).
+  **Guarded by:** `tests/test_web.py::test_web_search_entity_first_card_sections_notes_and_agent_column`, `tests/test_agent.py::test_agent_search_nodes_returns_entity_first_with_match_reasons`, and `tests/test_web.py::test_web_search_reads_only_data_dir_notes_and_never_writes_db`.
 
 ## Web UI Constraints
 

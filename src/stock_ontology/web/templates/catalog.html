@@ -108,7 +108,8 @@
       </div>
 
       {% if note_format == 'raw' %}
-        <pre class="note-raw-pre">{{ active_note.raw_text }}</pre>
+        <pre class="note-raw-pre">{% for line in active_note.raw_lines %}<span id="L{{ loop.index }}" class="note-line">{{ line }}
+</span>{% endfor %}</pre>
       {% else %}
         <div class="note-rendered">{{ active_note.rendered_html | safe }}</div>
       {% endif %}

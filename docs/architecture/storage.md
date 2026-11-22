@@ -49,7 +49,9 @@ table, a new facet merge rule. A column added to an existing table goes in
 - Lookups: `get_node`, `get_nodes`, `find_by_name_or_alias`,
   `find_nodes_mentioned_in`, `list_nodes`, `list_all_nodes`,
   `get_incident_edges`, `list_edges_with_endpoints`, `get_entity_consensus`.
-- Search: `vector_search` (sqlite-vec) and `keyword_search`.
+- Search: `vector_search` (sqlite-vec) and `keyword_search`. The web search
+  page and the agent's `search_nodes` tool reach them through the shared
+  search in [search.md](search.md).
 - Graph queries: `get_entity_overview`, `query_entity_signals`, `traverse_bfs`,
   `find_theme_companies`. These canonicalize edges through the registry, which
   is why `OntologyDB` takes one.

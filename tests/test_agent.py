@@ -634,3 +634,104 @@ def test_agent_chat_returns_immutable_turn_contract(tmp_path: Path) -> None:
     # Provider fields come from the turn's final model call.
     assert (first.provider, first.model, first.fallback_used) == ("prov-2", "model-2", False)
     assert (second.provider, second.model, second.fallback_used) == ("prov-4", "model-4", True)
+
+
+# --- Generic ontology search (ledger: docs/proposals/ontology-search.md) ---
+
+
+class AppleNearestSearchLLM(RecordingAgentLLM):
+    """Every query embeds nearest to the Apple consensus view, never to NVIDIA."""
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [_unit_vec(9) for _ in texts]
+
+
+def _seed_search_db(db_path: Path) -> None:
+    _seed_db(db_path)
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        aapl = Node(
+            id="ent_aapl",
+            node_type="entity",
+            name="Apple Inc.",
+            summary="Consumer devices and services.",
+            aliases=["AAPL"],
+            facets={"entity_type": "company", "ticker": "AAPL"},
+        )
+        db.upsert_node(aapl, embedding=_unit_vec(8))
+        cons = Node(
+            id="vw_cons_aapl",
+            node_type="view",
+            name="Consensus: Buy Apple Inc.",
+            summary="Maintain Buy on services growth.",
+            facets={"stance": "buy"},
+        )
+        db.upsert_consensus_view("ent_aapl", cons, _unit_vec(9), supporting_ids=[], contradicting_ids=[])
+
+
+def _tool_response(llm: RecordingAgentLLM) -> dict[str, Any]:
+    """The tool result the agent handed back to the model on the second request."""
+    return llm.requests[1]["messages"][-1]["responses"][0]["response"]
+
+
+def test_agent_search_nodes_returns_entity_first_with_match_reasons(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent.db"
+    _seed_search_db(db_path)
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
+        llm = AppleNearestSearchLLM(
+            [
+                AgentTurn(tool_calls=[ToolCall(name="search_nodes", args={"query": "nvidia"})]),
+                AgentTurn(text="done"),
+            ]
+        )
+        turn = OntologyAgent(ro_db, llm).chat("nvidia", ())
+
+    assert turn.tools_used == ("search_nodes",)
+    results = _tool_response(llm)["results"]
+    ids = [r["id"] for r in results]
+    assert ids[0] == "ent_nvda", f"search_nodes did not put the name match first: {ids}"
+    assert results[0]["match_reason"] == "name"
+    apple = next(r for r in results if r["id"] == "vw_cons_aapl")
+    assert apple["match_reason"] == "semantic"
+
+
+def test_agent_search_notes_greps_only_supported_notes_inside_data_dir(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent.db"
+    _seed_search_db(db_path)
+    data_dir = tmp_path / "data"
+    (data_dir / "Notes").mkdir(parents=True)
+    (data_dir / "Notes" / "2026-11-10_channel_check.md").write_text(
+        "# Channel check\n\nChannel check: NVIDIA lead times shortened.\n", encoding="utf-8"
+    )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("NVIDIA OUTSIDE-MARKER-1\n", encoding="utf-8")
+    (data_dir / "linked.md").symlink_to(outside / "secret.md")
+    (data_dir / ".dotnote.md").write_text("NVIDIA HIDDEN-FILE-MARKER-3\n", encoding="utf-8")
+    (data_dir / "Notes" / "deck.pdf").write_text("NVIDIA UNSUPPORTED-MARKER-4\n", encoding="utf-8")
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
+        before_stats = ro_db.get_stats()
+        llm = AppleNearestSearchLLM(
+            [
+                AgentTurn(tool_calls=[ToolCall(name="search_notes", args={"query": "nvidia"})]),
+                AgentTurn(text="done"),
+            ]
+        )
+        try:
+            agent = OntologyAgent(ro_db, llm, data_dir=data_dir)  # type: ignore[call-arg]
+        except TypeError as exc:
+            pytest.fail(f"OntologyAgent does not accept data_dir for note search: {exc}")
+        turn = agent.chat("nvidia", ())
+        assert ro_db.get_stats() == before_stats
+
+    assert "search_notes" in [schema["name"] for schema in llm.requests[0]["tool_schemas"]]
+    assert turn.tools_used == ("search_notes",)
+    passages = _tool_response(llm)["passages"]
+    assert {"file": "Notes/2026-11-10_channel_check.md", "line": 3} in [
+        {"file": p["file"], "line": p["line"]} for p in passages
+    ]
+    assert any("NVIDIA lead times shortened." in p["text"] for p in passages)
+    dumped = json.dumps(passages)
+    for marker in ("OUTSIDE-MARKER-1", "HIDDEN-FILE-MARKER-3", "UNSUPPORTED-MARKER-4"):
+        assert marker not in dumped

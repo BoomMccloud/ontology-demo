@@ -15,7 +15,7 @@ from stock_ontology.audit import (
     node_type_label,
     run_ontology_audit,
 )
-from stock_ontology.db import SIGNAL_CATEGORY_ALIASES, OntologyDB, node_to_dict
+from stock_ontology.db import OntologyDB, node_to_dict
 from stock_ontology.i18n import (
     DEFAULT_LANGUAGE,
     translate,
@@ -23,13 +23,22 @@ from stock_ontology.i18n import (
     translate_facet_label,
 )
 from stock_ontology.llm import LLMClient
-from stock_ontology.models import VALID_SENTIMENTS, Node, NodeType, resolve_item_sentiment
+from stock_ontology.models import VALID_SENTIMENTS, Node, resolve_item_sentiment
 from stock_ontology.registry import (
     OntologyRegistry,
     normalize_name_key,
     normalize_relation_name,
 )
-from stock_ontology.web.catalog import format_source_citation, resolve_safe_note_path
+from stock_ontology.search import (
+    SearchFilters,
+    SearchHit,
+    node_date,
+    node_source_file,
+    node_subtype,
+    resolve_safe_note_path,
+    search_ontology,
+)
+from stock_ontology.web.catalog import format_source_citation
 
 COMPANY_FACET_KEYS = (
     "ticker",
@@ -718,34 +727,6 @@ def build_theme_context(
     }
 
 
-def _node_subtype(node: Node) -> str:
-    facets = node.facets or {}
-    if node.node_type == "entity":
-        return str(facets.get("entity_type") or "").strip().lower()
-    if node.node_type == "event":
-        return str(facets.get("event_type") or "").strip().lower()
-    if node.node_type == "view":
-        return str(facets.get("view_type") or "").strip().lower()
-    if node.node_type == "theme":
-        return str(facets.get("stage") or "").strip().lower()
-    return ""
-
-
-def _node_date(node: Node) -> str:
-    facets = node.facets or {}
-    raw = facets.get("event_date") or facets.get("as_of")
-    if not raw and isinstance(facets.get("source"), dict):
-        raw = facets["source"].get("date")
-    return str(raw or "").strip()
-
-
-def _node_source_file(node: Node) -> str:
-    src = (node.facets or {}).get("source")
-    if isinstance(src, dict):
-        return str(src.get("file_path") or "").strip()
-    return ""
-
-
 def _merge_ordered(defaults: list[str], extra: set[str]) -> list[str]:
     merged = list(defaults)
     seen = set(defaults)
@@ -770,7 +751,7 @@ def build_search_filter_options(db: OntologyDB) -> dict[str, Any]:
     observed_stances: set[str] = set()
 
     for node in db.list_nodes(limit=5000):
-        sub = _node_subtype(node)
+        sub = node_subtype(node)
         if sub and node.node_type in observed_subtypes:
             observed_subtypes[node.node_type].add(sub)
         stance = str(node.facets.get("stance") or "").strip().lower()
@@ -840,185 +821,60 @@ def _resolve_result_href(db: OntologyDB, node: Node) -> str:
     return "/"
 
 
-def _format_search_result(
-    db: OntologyDB,
-    node: Node,
-    *,
-    score_type: str,
-    distance: float | None,
-    edge_facets: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    eff_sent, sent_src = resolve_item_sentiment(node.facets, edge_facets)
+def _format_search_hit(db: OntologyDB, hit: SearchHit, data_dir: Path) -> dict[str, Any]:
+    node = hit.node
+    eff_sent, sent_src = resolve_item_sentiment(node.facets, hit.edge_facets)
+    source_file = node_source_file(node) or None
+    source_label, source_exists = format_source_citation(source_file, data_dir)
     return {
         **node_to_dict(node),
-        "subtype": _node_subtype(node),
+        "subtype": node_subtype(node),
         "effective_sentiment": eff_sent,
         "sentiment_source": sent_src,
         "stance": str(node.facets.get("stance") or "").strip().lower() or None,
-        "date": _node_date(node) or None,
-        "source_file": _node_source_file(node) or None,
-        "score_type": score_type,
-        "distance": round(distance, 4) if distance is not None else None,
+        "date": node_date(node) or None,
+        "source_file": source_file,
+        "source_label": source_label or None,
+        "source_exists": source_exists,
+        "note_line": hit.note_line,
+        "match_reason": hit.match_reason,
+        "distance": hit.distance,
+        "via_relation": hit.via_relation,
+        "via_node_name": hit.via_node_name,
         "href": _resolve_result_href(db, node),
     }
 
 
-def run_hybrid_search(
+def build_search_results(
     db: OntologyDB,
     llm: LLMClient | None,
     query: str,
-    node_type: str | None = None,
-    limit: int = 20,
+    filters: SearchFilters,
+    data_dir: Path,
     *,
-    subtype: str | None = None,
-    sentiment: str | None = None,
-    stance: str | None = None,
-    entity_id: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    source_file: str | None = None,
-    search_mode: str = "hybrid",
-) -> list[dict[str, Any]]:
-    """Run vector + keyword search and structured facet filtering across the ontology."""
-    cleaned = query.strip()
-    valid_types = ("entity", "event", "view", "theme")
-    nt: NodeType | None = node_type if node_type in valid_types else None  # type: ignore[assignment]
-
-    norm_subtype: str | None = None
-    if subtype and subtype.strip():
-        sub_low = subtype.strip().lower().replace(" ", "_")
-        norm_subtype = SIGNAL_CATEGORY_ALIASES.get(sub_low, sub_low)
-
-    norm_sentiment: str | None = None
-    if sentiment and sentiment.strip():
-        s_low = sentiment.strip().lower()
-        norm_sentiment = "unclassified" if s_low in ("unknown", "unclassified", "none") else s_low
-
-    norm_stance = stance.strip().lower() if stance and stance.strip() else None
-    norm_entity_id = entity_id.strip() if entity_id and entity_id.strip() else None
-    norm_date_from = date_from.strip() if date_from and date_from.strip() else None
-    norm_date_to = date_to.strip() if date_to and date_to.strip() else None
-    norm_source_file = source_file.strip().casefold() if source_file and source_file.strip() else None
-    mode = "keyword" if search_mode.strip().lower() == "keyword" else "hybrid"
-
-    has_filters = any(
-        [
-            nt,
-            norm_subtype,
-            norm_sentiment,
-            norm_stance,
-            norm_entity_id,
-            norm_date_from,
-            norm_date_to,
-            norm_source_file,
-        ]
-    )
-    if not cleaned and not has_filters:
-        return []
-
-    connected_map: dict[str, dict[str, Any] | None] = {}
-    if norm_entity_id is not None:
-        if db.get_node(norm_entity_id) is None:
-            return []
-        connected_map = db.get_entity_connected_nodes(norm_entity_id)
-
-    def _matches_filters(node: Node) -> bool:
-        if nt is not None and node.node_type != nt:
-            return False
-        if norm_entity_id is not None and node.id not in connected_map:
-            return False
-        if norm_subtype is not None:
-            node_sub = _node_subtype(node)
-            if norm_subtype == "rumor":
-                status_val = str(node.facets.get("status") or "").strip().lower()
-                if not (
-                    (node.node_type == "view" and node_sub == "rumor")
-                    or (
-                        node.node_type == "event"
-                        and (status_val == "rumored" or node_sub == "rumor")
-                    )
-                ):
-                    return False
-            elif node_sub != norm_subtype:
-                return False
-        if norm_sentiment is not None:
-            edge_facets = connected_map.get(node.id) if norm_entity_id else None
-            eff_sent, _ = resolve_item_sentiment(node.facets, edge_facets)
-            actual = eff_sent or "unclassified"
-            if actual != norm_sentiment:
-                return False
-        if norm_stance is not None:
-            node_stance = str(node.facets.get("stance") or "").strip().lower()
-            if node_stance != norm_stance:
-                return False
-        if norm_date_from is not None or norm_date_to is not None:
-            node_date = _node_date(node)
-            if not node_date:
-                return False
-            if norm_date_from is not None and node_date < norm_date_from:
-                return False
-            if norm_date_to is not None and node_date > norm_date_to:
-                return False
-        if norm_source_file is not None:
-            if norm_source_file not in _node_source_file(node).casefold():
-                return False
-        return True
-
-    if not cleaned:
-        matched_nodes = [
-            node for node in db.list_nodes(node_type=nt, limit=5000) if _matches_filters(node)
-        ]
-        matched_nodes.sort(key=lambda n: n.name.casefold())
-        matched_nodes.sort(
-            key=lambda n: (_node_date(n) or "", n.updated_at.isoformat()),
-            reverse=True,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Run the shared entity-first search and shape it into the search page's card and sections."""
+    found = search_ontology(db, llm, query, filters=filters, data_dir=data_dir, limit=limit)
+    sections = [
+        {"key": key, "hits": [_format_search_hit(db, hit, data_dir) for hit in hits]}
+        for key, hits in (
+            ("entities", found.entities),
+            ("related", found.related),
+            ("signals", found.signals),
         )
-        return [
-            _format_search_result(
-                db,
-                node,
-                score_type="filter",
-                distance=None,
-                edge_facets=connected_map.get(node.id) if norm_entity_id else None,
-            )
-            for node in matched_nodes[:limit]
-        ]
-
-    seen: dict[str, dict[str, Any]] = {}
-    vec_limit = max(limit * 5, 100) if has_filters else limit
-    kw_limit = max(limit * 10, 500) if has_filters else limit
-
-    if mode != "keyword" and llm is not None:
-        try:
-            vec = llm.embed_texts([cleaned])[0]
-            for node, dist in db.vector_search(vec, node_type=nt, limit=vec_limit):
-                if not _matches_filters(node):
-                    continue
-                seen[node.id] = _format_search_result(
-                    db,
-                    node,
-                    score_type="semantic",
-                    distance=dist,
-                    edge_facets=connected_map.get(node.id) if norm_entity_id else None,
-                )
-        except Exception:  # noqa: BLE001
-            # Offline or missing API key gracefully degrades to keyword search.
-            pass
-
-    for node in db.keyword_search(cleaned, node_type=nt, limit=kw_limit):
-        if node.id in seen:
-            continue
-        if not _matches_filters(node):
-            continue
-        seen[node.id] = _format_search_result(
-            db,
-            node,
-            score_type="keyword",
-            distance=None,
-            edge_facets=connected_map.get(node.id) if norm_entity_id else None,
-        )
-
-    return list(seen.values())[:limit]
+    ]
+    passages = []
+    for p in found.passages:
+        label, exists = format_source_citation(p.file, data_dir)
+        passages.append({**p.to_dict(), "source_label": label or p.file, "source_exists": exists})
+    return {
+        "best_match": _format_search_hit(db, found.best_match, data_dir) if found.best_match else None,
+        "sections": [s for s in sections if s["hits"]],
+        "passages": passages,
+        "notes_truncated": found.notes_truncated,
+        "count": found.count,
+    }
 
 
 def _format_diagram_top_label(
@@ -1401,7 +1257,7 @@ def build_ontology_context(
         type_nodes = nodes_by_type[key]
         sub_counter: dict[str, int] = {}
         for n in type_nodes:
-            sub = _node_subtype(n) or "unspecified"
+            sub = node_subtype(n) or "unspecified"
             sub_counter[sub] = sub_counter.get(sub, 0) + 1
         sub_list = [
             {"name": name, "count": cnt}
@@ -1592,7 +1448,7 @@ def build_ontology_context(
         if active_subtype:
             candidates = [
                 n for n in candidates
-                if (_node_subtype(n) or "unspecified") == active_subtype
+                if (node_subtype(n) or "unspecified") == active_subtype
             ]
 
         if active_tab in ("entity", "theme"):
@@ -1603,7 +1459,7 @@ def build_ontology_context(
         else:
             candidates = sorted(
                 candidates,
-                key=lambda n: (_node_date(n) or "", n.updated_at.isoformat()),
+                key=lambda n: (node_date(n) or "", n.updated_at.isoformat()),
                 reverse=True,
             )
 
@@ -1620,7 +1476,7 @@ def build_ontology_context(
             "as_of",
         }
         for n in candidates:
-            subtype_val = _node_subtype(n) or "unspecified"
+            subtype_val = node_subtype(n) or "unspecified"
             registry_info: dict[str, Any] | None = None
             if registry is not None:
                 if n.node_type == "entity" and subtype_val == "company":
@@ -1677,7 +1533,7 @@ def build_ontology_context(
                     continue
 
             eff_sent, _ = resolve_item_sentiment(n.facets)
-            source_file = _node_source_file(n)
+            source_file = node_source_file(n)
             source_exists = (
                 resolve_safe_note_path(data_dir, source_file) is not None
                 if data_dir is not None and source_file
@@ -1704,7 +1560,7 @@ def build_ontology_context(
                     "effective_sentiment": eff_sent,
                     "stance": str(n.facets.get("stance") or "").strip().lower() or None,
                     "status": str(n.facets.get("status") or "").strip().lower() or None,
-                    "date": _node_date(n) or None,
+                    "date": node_date(n) or None,
                     "edge_count": edge_counts.get(n.id, 0),
                     "href": _resolve_result_href(db, n),
                     "source_file": source_file or None,
