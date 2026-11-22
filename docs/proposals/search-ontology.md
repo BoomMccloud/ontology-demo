@@ -1,6 +1,6 @@
 ---
 proposal_id: "search-ontology"
-state: FRAMED
+state: PROVED
 witness: independent
 candidate: "11825e6 + ledger rebase @ worktree/claude/search-ontology-proposal-f78e10"
 ---
@@ -103,8 +103,49 @@ Candidate: `11825e6 + ledger rebase @ worktree/claude/search-ontology-proposal-f
 
 ## Proof
 
-<!-- Replaced only by proposal-prove. Independent route: Proof must be authored in a
-context that did not write this Frame, before Build. -->
+Candidate: `1b4bd7a` (branch `claude/search-ontology-proposal-f78e10`), plus `tests/test_search_ontology_options.py` with blob `2554d6126bf0a03883e296a289c4b6433837ca85`.
+
+**Protected witness**
+- Every advanced-search select lists exactly the ontology's values. Witness: `tests/test_search_ontology_options.py` / `test_search_select_lists_exactly_the_ontology_values[node_type|subtype|status|sentiment|stance|support_strength|conviction|relation]`
+  - Defect and boundary: `build_search_filter_options` uses hand-kept lists merged with values observed in the DB. Subtype values are unqualified, and there are no status, support_strength, conviction or relation selects. Boundary: the web page building its options from search and storage.
+  - Assertion: GET `/search` over a seeded temp DB that stores off-vocabulary values (event_type `webinar`, stance `outperform`, relation `FROBNICATES`). Each select's non-empty option values must equal the vocab set exactly: `node_type` = `search.NODE_TYPES`; `subtype` = `<nt>:<member>` for each `SUBTYPE_FACET` vocab; `status` = `event:*` and `view:*` from `EVENT_STATUS` and `VIEW_STATUS`; `sentiment` = `SENTIMENT_FILTER_VALUES`; `stance` = `STANCE.members`; `support_strength` = `SUPPORT_STRENGTH.members`; `conviction` = `CONVICTION.members`; `relation` = the relation names from `load_registry(ontology_registry.json)`.
+  - Proves: the options come from the ontology, and DB values outside it are never offered. Limit: checks option values only, not labels, ordering or optgroup grouping. `[node_type]` and `[sentiment]` are already green, so they guard the claim but are not proof.
+- Choosing a new filter returns exactly the matching items. Witness: `tests/test_search_ontology_options.py` / `test_new_ontology_filters_return_exactly_the_matching_items[status-event|status-view|support_strength|conviction|relation-any|relation-entity]`
+  - Defect and boundary: `search_page` and `SearchFilters` silently ignore the `status`, `support_strength`, `conviction` and `relation` params. Boundary: URL → search → storage.
+  - Assertion: exact `data-result-id` sets. `status=event:upcoming` → {evt_up}. `status=view:active` → {vw_cons}. `support_strength=weak` → {vw_weak}. `conviction=high` → {vw_strong}. `node_type=event&relation=ABOUT` → {evt_up, evt_occ}. `entity_id=ent_aapl&relation=ABOUT` → {evt_up, vw_weak}, which excludes evt_occ (ABOUT to QCOM, RELATES_TO to AAPL), so the relation is scoped to the selected entity.
+  - Limit: filter-only searches (empty q), single-value filters, no combinations beyond those listed.
+- A group-qualified subtype separates theme stage from view type. Witness: `tests/test_search_ontology_options.py` / `test_group_qualified_subtype_separates_theme_stage_from_view_type` (web) and `test_search_ontology_parses_group_qualified_subtype` (`search_ontology` plus `SearchFilters.from_raw`)
+  - Defect and boundary: `from_raw` passes `theme:consensus` through as a literal category that matches nothing. This is shared search code that the web page uses and the agent's `search_nodes` reaches.
+  - Assertion: on the web, `subtype=theme:consensus` → {thm_cons} and `subtype=view:consensus` → {vw_cons}. Through `search_ontology`, `from_raw(subtype="theme:consensus")` → {thm_cons}, `from_raw(subtype="view:rumor")` → {vw_weak} (excludes the rumored event), and `from_raw(subtype="event:news")` → {evt_occ, evt_rum}.
+  - Proves: the qualified value restricts the node type and passes the bare value to the existing rule. Limit: malformed qualifiers such as `foo:bar` are not tested.
+- Guardrail, existing URLs unchanged. Witness: `tests/test_search_ontology_options.py` / `test_bare_subtype_and_existing_filters_keep_todays_results`
+  - Assertion: through `from_raw`, bare `subtype=rumor` and `subtype=rumors` → {vw_weak, evt_rum}, and bare `consensus` → {vw_cons, thm_cons}. On the web, `subtype=rumor`, `stance=cautious`, `sentiment=negative` (→ {evt_occ, vw_weak}), node_type plus date range, `source_file=QCOM/` and keyword mode `q=Rumored` each return their exact current sets.
+  - Limit: green today by design, since a guardrail cannot be RED. Agent and web parity stays guarded by `tests/test_canonical_vocabulary.py::test_agent_and_web_signal_filters_return_identical_items`.
+- Guardrail, no-registry rendering. Witness: `tests/test_search_ontology_options.py` / `test_search_without_registry_hides_only_the_relation_filter`
+  - Assertion: with `registry_path` pointing at a missing file, `/search` returns 200 with no `relation` select. The other seven selects equal their vocab sets, and `support_strength=weak` → {vw_weak}.
+  - Limit: a malformed registry file is not covered.
+- Protected paths: `tests/test_search_ontology_options.py`.
+- Protected revision: blob `2554d6126bf0a03883e296a289c4b6433837ca85`, committed with this ledger update. `tests/test_web.py` and `tests/test_search.py` are not protected. Build may add supporting tests there but must not modify existing tests.
+- The file reuses existing helpers via `from test_web import DIM, FakeWebLLM, _unit_vec`, as `tests/test_web_navigation.py` does.
+
+**Red evidence**
+- `uv run pytest tests/test_search_ontology_options.py -v` → 15 failed, 3 passed.
+  - `[subtype]`: bare values such as `company` and `catalyst` are offered instead of `entity:company`.
+  - `[status]`, `[support_strength]`, `[conviction]`, `[relation]`: select absent.
+  - `[stance]`: extra `outperform`, `overweight`, `underperform`, `underweight` and `unknown`.
+  - `[status-event]`, `[status-view]`, `[support_strength]`, `[conviction]` filters: `set()`, because the param is ignored and the page shows no results.
+  - `[relation-any]`: extra evt_off and evt_rum. `[relation-entity]`: extra ent_aapl, evt_occ, vw_strong and thm_acc.
+  - Group-qualified web and search tests: `set()` instead of {thm_cons}.
+  - No-registry test: fails on the unqualified `subtype` options.
+  - PASSED: `[node_type]` and `[sentiment]` option checks, and the existing-filters guardrail.
+- During authoring, first attempts failed at setup (a `tests.` import path and a missing `Node.summary`), fixed in the test file only. One guardrail expectation was corrected to today's behavior: `sentiment=negative` already returns the cautious rumor view.
+- `uv run pytest -q --deselect tests/test_search_ontology_options.py` → 226 passed. Full run: 15 failed, 229 passed.
+- The primary claim has no proof until those 15 are GREEN after Build with the protected blob unchanged.
+
+**Supporting test plan**
+- Parser for qualified subtype and status values, bare-value passthrough, and an unknown node-type prefix → Build: `tests/test_search.py`. Catches `from_raw` mis-splitting values or dropping the node-type restriction.
+- Storage read method returning relations per neighbor → Build: `tests/test_search.py` or `tests/test_db.py`. Catches relation loss when the best edge per neighbor is collapsed in `get_entity_connected_nodes`.
+- Active-filter chips and labels for the 4 new filters in all 6 locales → Build: `tests/test_i18n.py` or `tests/test_web.py`. Catches missing `search.*` keys.
 
 ## Build
 
