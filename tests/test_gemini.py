@@ -23,6 +23,7 @@ from stock_ontology.llm import (
     LLMRouter,
     ProviderConfigError,
 )
+from stock_ontology.llm.pydantic_ai_model import to_llm_messages
 from stock_ontology.models import ConsensusSynthesis, ExtractedEntity, ExtractionResult, Node
 
 
@@ -299,8 +300,9 @@ def test_gemini_agent_tool_calling_thought_filtering_and_empty_tools(tmp_path: P
     assert agent.last_model == "gemini-3.8-flash"
     assert agent.tool_trace[0]["tool"] == "get_entity_overview"
     # Turn 1 must not expose thought text as assistant text.
-    assert agent.messages[1]["text"] is None
-    assert agent.messages[1]["tool_calls"][0]["call_id"] == "call_gem_1"
+    history = to_llm_messages(agent.messages)
+    assert history[1]["text"] is None
+    assert history[1]["tool_calls"][0]["call_id"] == "call_gem_1"
     assert "internal reasoning" not in reply
     assert "more thoughts" not in reply
 

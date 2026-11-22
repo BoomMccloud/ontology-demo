@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
+
+from pydantic_ai import Agent, AbstractToolset, FunctionToolset, Tool, UsageLimits, capture_run_messages
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.toolsets import WrapperToolset
 
 from stock_ontology.db import OntologyDB, _node_to_dict
 from stock_ontology.i18n import (
@@ -11,7 +17,8 @@ from stock_ontology.i18n import (
     normalize_language,
     translate,
 )
-from stock_ontology.llm import LLMClient
+from stock_ontology.llm import AgentTurn, LLMClient
+from stock_ontology.llm.pydantic_ai_model import LLMClientModel
 from stock_ontology.models import VALID_SENTIMENTS, Node, NodeType
 
 AGENT_SYSTEM_PROMPT = """You are an investment research assistant for portfolio managers at a stock fund.
@@ -208,6 +215,19 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
+class _TracedToolset(WrapperToolset[Any]):
+    """Records calls to an extra toolset's tools in the agent's `tool_trace`."""
+
+    def __init__(self, wrapped: AbstractToolset[Any], tool_trace: list[dict[str, Any]]) -> None:
+        super().__init__(wrapped)
+        self.tool_trace = tool_trace
+
+    async def call_tool(self, name: str, tool_args: dict[str, Any], ctx: Any, tool: Any) -> Any:
+        result = await super().call_tool(name, tool_args, ctx, tool)
+        self.tool_trace.append({"tool": name, "args": tool_args, "result": result})
+        return result
+
+
 class OntologyAgent:
     """Read-only conversational agent that traverses the stock ontology via tools."""
 
@@ -217,6 +237,7 @@ class OntologyAgent:
         llm: LLMClient,
         *,
         language: str = DEFAULT_LANGUAGE,
+        toolsets: Sequence[AbstractToolset[Any]] = (),
     ) -> None:
         if not db.read_only:
             raise ValueError(
@@ -225,7 +246,8 @@ class OntologyAgent:
         self.db = db
         self.llm = llm
         self.language = normalize_language(language) or DEFAULT_LANGUAGE
-        self.messages: list[dict[str, Any]] = []
+        self.toolsets = list(toolsets)
+        self.messages: list[ModelMessage] = []
         self.tool_trace: list[dict[str, Any]] = []
         self.last_provider: str | None = None
         self.last_model: str | None = None
@@ -430,45 +452,59 @@ class OntologyAgent:
         self.tool_trace.append({"tool": name, "args": args, "result": result})
         return result
 
+    def _ontology_toolset(self) -> FunctionToolset[Any]:
+        """The seven read-only ontology tools, offered with their existing schemas."""
+
+        def make_handler(name: str) -> Any:
+            async def handler(**kwargs: Any) -> dict[str, Any]:
+                return self.execute_tool(name, kwargs)
+
+            return handler
+
+        return FunctionToolset(
+            [
+                Tool.from_schema(
+                    make_handler(schema["name"]),
+                    name=schema["name"],
+                    description=schema["description"],
+                    json_schema=schema["parameters"],
+                    sequential=True,
+                )
+                for schema in TOOL_SCHEMAS
+            ]
+        )
+
+    def _record_turn(self, turn: AgentTurn) -> None:
+        if turn.provider is not None:
+            self.last_provider = turn.provider
+            self.last_model = turn.model
+            self.last_fallback_used = turn.fallback_used
+
     def ask(self, user_message: str, max_rounds: int = 8) -> str:
         """Process a user query over the read-only ontology and return the final answer."""
-        self.messages.append({"role": "user", "text": user_message})
-
-        system_prompt = build_agent_system_prompt(self.language)
-        for _ in range(max_rounds):
-            turn = self.llm.generate_agent_reply(
-                system_instruction=system_prompt,
-                messages=self.messages,
-                tool_schemas=TOOL_SCHEMAS,
-            )
-            if turn.provider is not None:
-                self.last_provider = turn.provider
-                self.last_model = turn.model
-                self.last_fallback_used = turn.fallback_used
-
-            model_msg: dict[str, Any] = {
-                "role": "model",
-                "text": turn.text,
-                "tool_calls": [
-                    {"name": tc.name, "args": tc.args, "call_id": tc.call_id}
-                    for tc in turn.tool_calls
-                ],
-            }
-            if turn.raw_content is not None:
-                model_msg["raw_content"] = turn.raw_content
-            self.messages.append(model_msg)
-
-            if not turn.tool_calls:
-                return turn.text or ""
-
-            tool_responses = [
-                {
-                    "name": tc.name,
-                    "call_id": tc.call_id,
-                    "response": self.execute_tool(tc.name, tc.args),
-                }
-                for tc in turn.tool_calls
-            ]
-            self.messages.append({"role": "tool", "responses": tool_responses})
-
-        return translate("agent.max_rounds_reached", lang=self.language)
+        model = LLMClientModel(
+            self.llm,
+            system_instruction=build_agent_system_prompt(self.language),
+            on_turn=self._record_turn,
+        )
+        agent = Agent(
+            model,
+            toolsets=[
+                self._ontology_toolset(),
+                *(_TracedToolset(ts, self.tool_trace) for ts in self.toolsets),
+            ],
+        )
+        with capture_run_messages() as run_messages:
+            try:
+                result = agent.run_sync(
+                    user_message,
+                    message_history=list(self.messages),
+                    usage_limits=UsageLimits(request_limit=max_rounds),
+                    # Let `max_rounds` alone bound the run, as the hand-rolled loop did.
+                    retries={"tools": max_rounds, "output": max_rounds},
+                )
+            except UsageLimitExceeded:
+                self.messages = list(run_messages)
+                return translate("agent.max_rounds_reached", lang=self.language)
+        self.messages = result.all_messages()
+        return result.output

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
@@ -42,6 +43,9 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+# Keep Pydantic AI's startup banner out of `ask`, `chat` and `serve` output.
+os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
 
 def _load_settings(

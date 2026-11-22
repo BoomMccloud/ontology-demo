@@ -434,3 +434,141 @@ def test_agent_ux3_query_entity_signals_negative_rumors_and_news(tmp_path: Path)
         assert "error" in bad_nt
 
         assert ro_db.get_stats() == before_stats
+
+
+class ExtraToolsetLLM(ScriptedAgentLLM):
+    """Scripted model that calls a non-ontology tool only when the agent offers it."""
+
+    def generate_agent_reply(
+        self,
+        *,
+        system_instruction: str,
+        messages: list[dict[str, Any]],
+        tool_schemas: list[dict[str, Any]],
+    ) -> AgentTurn:
+        last_msg = messages[-1]
+        if last_msg["role"] == "user":
+            offered = {schema["name"] for schema in tool_schemas}
+            if "get_house_view" not in offered:
+                return AgentTurn(text="House view tool was not offered.")
+            return AgentTurn(
+                tool_calls=[
+                    ToolCall(name="get_house_view", args={"ticker": "NVDA"}, call_id="call_hv")
+                ]
+            )
+        if last_msg["role"] == "tool":
+            resp = last_msg["responses"][0]
+            return AgentTurn(text=f"House view from {resp['name']}: {json.dumps(resp['response'])}")
+        return AgentTurn(text="No action.")
+
+
+def test_agent_runs_tools_from_extra_pydantic_ai_toolset(tmp_path: Path) -> None:
+    from pydantic_ai import FunctionToolset
+
+    def get_house_view(ticker: str) -> dict[str, str]:
+        """Return the desk's house view for a ticker."""
+        return {"ticker": ticker, "house_view": "OVERWEIGHT-7731"}
+
+    db_path = tmp_path / "agent.db"
+    _seed_db(db_path)
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
+        before_stats = ro_db.get_stats()
+        agent = OntologyAgent(
+            ro_db,
+            ExtraToolsetLLM(),
+            toolsets=[FunctionToolset([get_house_view])],
+        )
+        reply = agent.ask("What is the house view on NVDA?")
+
+        assert "get_house_view" in reply
+        assert "OVERWEIGHT-7731" in reply
+        assert [entry["tool"] for entry in agent.tool_trace] == ["get_house_view"]
+        assert agent.tool_trace[0]["args"] == {"ticker": "NVDA"}
+        assert ro_db.get_stats() == before_stats
+
+
+class RecordingAgentLLM(ScriptedAgentLLM):
+    """Scripted model that records every request the agent sends to the `LLMClient` layer."""
+
+    def __init__(self, turns: list[AgentTurn]) -> None:
+        super().__init__()
+        self.turns = list(turns)
+        self.requests: list[dict[str, Any]] = []
+
+    def generate_agent_reply(
+        self,
+        *,
+        system_instruction: str,
+        messages: list[dict[str, Any]],
+        tool_schemas: list[dict[str, Any]],
+    ) -> AgentTurn:
+        self.requests.append(
+            {
+                "system_instruction": system_instruction,
+                "messages": [dict(m) for m in messages],
+                "tool_schemas": tool_schemas,
+            }
+        )
+        return self.turns.pop(0)
+
+
+def test_agent_offers_ontology_tools_with_existing_schemas_and_prompt(tmp_path: Path) -> None:
+    from stock_ontology.agent import TOOL_SCHEMAS, build_agent_system_prompt
+
+    db_path = tmp_path / "agent.db"
+    _seed_db(db_path)
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
+        llm = RecordingAgentLLM([AgentTurn(text="Hello.")])
+        agent = OntologyAgent(ro_db, llm, language="zh")
+        assert agent.ask("hi") == "Hello."
+
+    request = llm.requests[0]
+    assert request["tool_schemas"] == TOOL_SCHEMAS
+    assert request["system_instruction"] == build_agent_system_prompt("zh")
+    assert request["messages"] == [{"role": "user", "text": "hi"}]
+
+
+def test_pydantic_ai_model_round_trips_raw_content_call_ids_and_provider(tmp_path: Path) -> None:
+    from pydantic_ai.messages import ModelResponse
+
+    raw = object()  # Stands in for a Gemini `types.Content` that must be replayed as-is.
+    db_path = tmp_path / "agent.db"
+    _seed_db(db_path)
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
+        llm = RecordingAgentLLM(
+            [
+                AgentTurn(
+                    tool_calls=[ToolCall(name="list_catalog", args={})],
+                    raw_content=raw,
+                    provider="gemini",
+                    model="gemini-x",
+                    fallback_used=True,
+                ),
+                AgentTurn(text="Catalog has NVIDIA."),
+            ]
+        )
+        agent = OntologyAgent(ro_db, llm)
+        reply = agent.ask("What is in the catalog?")
+
+    assert reply == "Catalog has NVIDIA."
+    assert [entry["tool"] for entry in agent.tool_trace] == ["list_catalog"]
+    # A turn without provider info keeps the last reported provider, as before.
+    assert (agent.last_provider, agent.last_model, agent.last_fallback_used) == ("gemini", "gemini-x", True)
+
+    second = llm.requests[1]["messages"]
+    assert [m["role"] for m in second] == ["user", "model", "tool"]
+    model_msg, tool_msg = second[1], second[2]
+    assert model_msg["raw_content"] is raw
+    assert model_msg["text"] is None
+    # A provider call id of None stays None rather than becoming a framework-generated id.
+    assert model_msg["tool_calls"] == [{"name": "list_catalog", "args": {}, "call_id": None}]
+    assert tool_msg["responses"][0]["name"] == "list_catalog"
+    assert tool_msg["responses"][0]["call_id"] is None
+    assert tool_msg["responses"][0]["response"] == agent.tool_trace[0]["result"]
+
+    first_response = agent.messages[1]
+    assert isinstance(first_response, ModelResponse)
+    assert first_response.provider_details["raw_content"] is raw
