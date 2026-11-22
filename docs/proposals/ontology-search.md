@@ -9,7 +9,7 @@ candidate: "unassigned"
 
 ## Proposal
 
-Status: open choices decided, awaiting human approval.
+Status: approved by the human on 2026-11-22.
 
 ### Intent
 
