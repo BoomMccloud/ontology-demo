@@ -1,8 +1,8 @@
 ---
 proposal_id: "exact-entity-merge"
-state: FRAMED
+state: PROVED
 witness: independent
-candidate: "main @ worktree/proposal-exact-entity-merge"
+candidate: "3a73dc0 @ worktree/proposal-exact-entity-merge"
 ---
 
 # Proposal: Exact or registry-based entity merging
@@ -102,6 +102,37 @@ Candidate: `main` (`160507a`) + this ledger @ worktree `.claude/worktrees/exact-
 - None.
 
 ## Proof
+
+Candidate: `proposal/exact-entity-merge` @ `3a73dc035eb618a7511b5dcece14527fc4dc1a90` (worktree `.claude/worktrees/exact-entity-merge`; production source unchanged from `a09be2b`, which is `160507a` plus the ledger)
+
+**Protected witness**
+- Ingestion never merges a distinct entity by embedding distance. Witness: `tests/test_pipeline.py` / `test_pipeline_does_not_merge_distinct_company_by_embedding_distance`
+  - Defect and boundary: `_resolve_canonical_node` falls back to `vector_search` and merges under `CANONICAL_DISTANCE_THRESHOLD = 0.15`. The boundary is extracted note → `IngestionPipeline.run()` → stored `ontology.db` nodes.
+  - Assertion: the fake LLM `_ExactMergeFakeLLM` embeds AMD at cosine distance ~0.042 from NVIDIA. After `nvda.md` and then `amd.md` are ingested in separate runs, exactly one node is named `AMD`, its ID differs from NVIDIA's, and `AMD` is not among NVIDIA's aliases. This proves the primary claim. Limit: it covers a company entity only. A theme near-miss is not witnessed separately, and the test does not prove the probe path was removed.
+- A name listed in the registry still resolves to the existing node. Witness: `tests/test_pipeline.py` / `test_pipeline_merges_registry_alias_without_embedding_similarity`
+  - Defect and boundary: `_find_exact` never calls `OntologyRegistry.resolve_company/resolve_theme`. Today `Nvidia Corporation` merges only because its embedding sits near NVIDIA. The boundary is ingestion → stored nodes, using the default `create_minimal_registry()`.
+  - Assertion: `Nvidia Corporation` is embedded orthogonal to NVIDIA. After ingestion no node is named `Nvidia Corporation`, and NVIDIA's aliases contain it. This proves registry-alias resolution without any help from similarity. Limit: it covers a company alias with no ticker. It does not cover ticker-only resolution or theme registry resolution.
+- `audit --sync` queues each near-duplicate company or theme pair as a pending merge suggestion, keeps human decisions, and does not re-queue a rejected pair. Witness: `tests/test_registry_audit.py` / `test_cli_audit_queues_merge_suggestions_and_keeps_human_decisions`
+  - Defect and boundary: `RegistrySuggestions` has no `merges`, and `cli audit` syncs only relations, companies, and themes. The boundary is the read-only DB → CLI `audit` → registry JSON file.
+  - Assertion: the first `audit` writes `suggestions.merges` with the theme pair `{thm_div, thm_hedge}` (vector similarity) and the company pair `{ent_nvda, ent_nvda_dup}` (shared ticker), both `pending`. The test then edits the registry file as a human would, marking the theme pair `rejected` with a note and the company pair `approved`. A second `audit` keeps exactly one entry per pair, with the same statuses and reviewer note, and DB `get_stats()` is unchanged. Proves the audit guardrail. Limit: it does not check the summary count of pending merges, or that pending pairs no longer reported are dropped.
+- `repair` merges every approved pair that still exists and never merges a pending or rejected pair. Witness: `tests/test_repair.py` / `test_repair_applies_only_approved_merge_suggestions`
+  - Defect and boundary: `repair_ontology` merges exact name and alias duplicates only and never reads registry suggestions. The boundary is registry `suggestions.merges` → `repair_ontology` → stored nodes and edges.
+  - Assertion: with a registry built by `OntologyRegistry.model_validate` holding three merge suggestions with the Frame's `MergeSuggestion` fields, the approved pair (Omega) leaves exactly one node; the loser's vector is gone; the survivor carries both names and `OGS`, and both event edges point to it; the survivor is in `merged_survivor_ids` and `approved_merges_applied == 1`. Pending (Sigma) and rejected (Tau) nodes all still exist. A second run leaves the DB snapshot unchanged. Proves the repair guardrail. Limit: company pairs only, not theme pairs; library call, not CLI `repair --json` output.
+- Protected paths: `tests/test_pipeline.py`, `tests/test_registry_audit.py`, `tests/test_repair.py`. The witnesses are in the sections labeled "Proof witnesses: exact-entity-merge". Build may change only the stale comment the Frame names at `tests/test_pipeline.py:484` outside those sections.
+- Protected revision: `3a73dc035eb618a7511b5dcece14527fc4dc1a90` (commit "Proof witnesses: exact-entity-merge").
+
+**Red evidence**
+- `uv run pytest -v tests/test_pipeline.py::test_pipeline_does_not_merge_distinct_company_by_embedding_distance` → `AssertionError: AMD was merged into an existing node because its embedding is near NVIDIA` (`0 == 1` AMD nodes); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/prove3/red_pipeline_amd.log`.
+- `uv run pytest -v tests/test_pipeline.py::test_pipeline_merges_registry_alias_without_embedding_similarity` → `AssertionError: 'Nvidia Corporation' is a registry alias of NVIDIA but was stored as its own node`; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/prove3/red_pipeline_registry_alias.log`.
+- `uv run pytest -v tests/test_registry_audit.py::test_cli_audit_queues_merge_suggestions_and_keeps_human_decisions` → `AssertionError: audit --sync-suggestions wrote no suggestions.merges list to the registry`; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/prove3/red_audit_merge_suggestions.log`.
+- `uv run pytest -v tests/test_repair.py::test_repair_applies_only_approved_merge_suggestions` → `AssertionError: repair did not merge the nodes of an approved merge suggestion` (`2 == 1`); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/prove3/red_repair_approved_merges.log`.
+- `uv run pytest -q` → 4 failed (the four witnesses), 103 passed; no other regression; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/prove3/full_suite.log`. `ruff check` on the three files passes.
+- Each claim was observed RED above; none counts as proven until its witness turns GREEN on the Build candidate with the protected sections unchanged.
+
+**Supporting test plan**
+- `sync_suggestions` merge keyword: a pending pair no longer reported is dropped as resolved, a decided pair is kept, and the summary counts pending merges → Build: `tests/test_registry_audit.py`; catches stale pending merges and a wrong pending count.
+- Registry resolution by ticker during ingestion, plus a theme resolved through a `ThemeSpec` alias → Build: `tests/test_pipeline.py`; catches `_find_exact` handling only company names and aliases, or calling `resolve_company` for non-company entities.
+- Batched embedding of new canonical nodes: one `embed_texts` call per note → Build: `tests/test_pipeline.py`; catches a regression to one call per node after `_batch_probe_vectors` is removed.
 
 ## Build
 
