@@ -1,8 +1,8 @@
 ---
 proposal_id: "ingestion-followups"
-state: FRAMED
+state: PROVED
 witness: independent
-candidate: "6d4b2d7 @ worktree/proposal-ingestion-followups"
+candidate: "dc5c34a @ worktree/proposal-ingestion-followups"
 ---
 
 # Proposal: Ingestion follow-ups
@@ -156,6 +156,43 @@ Candidate: `6d4b2d7 + uncommitted ledger @ worktree .claude/worktrees/ingestion-
 - None.
 
 ## Proof
+
+Candidate: `dc5c34a` (branch `proposal/ingestion-followups`, worktree `.claude/worktrees/ingestion-followups`): production source unchanged from `5db2d3d` / `6d4b2d7`, plus the witness tests below. RED was observed on this tree.
+
+**Protected witness**
+- Primary claim, unchanged notes are not read. `tests/test_pipeline.py` / `test_pipeline_rerun_does_not_read_unchanged_notes`
+  - Defect and boundary: `_scan_files` reads and hashes every note on every run. Crosses the filesystem → ingestion log (`ingestion_log` size/mtime) → run-skip boundary.
+  - Assertion: after a first run over the 5 sample notes, a second run with untouched files opens no file under the data dir (via recorded `Path.read_text/read_bytes/open`, `builtins.open`, `io.open`) and makes zero `extract_document` calls, with `files_skipped == 5`. Proves that unchanged size and mtime skip reading. Limit: it doesn't catch reads through `os.open`/mmap, and it doesn't prove `--force` still reads everything.
+- Primary claim, a moved note is not re-extracted. `tests/test_pipeline.py` / `test_pipeline_moved_note_keeps_doc_and_skips_extraction`
+  - Defect and boundary: `doc_id` comes from the path, and deletions are handled before new paths, so a move becomes delete plus re-extract. Crosses filesystem → `ingestion_log` → stored node rows.
+  - Assertion: moving `TSMC/2026-11-05_cowos_capacity_note.md` to `archive/...` and re-running gives zero `extract_document` calls. The old path leaves the log, the new path keeps the old `doc_id`, the doc's (node, edge) counts are unchanged, no nodes keep the old `source.file_path`, all of them carry the new one, and `source.folder == "archive"`. Proves a move keeps exactly one artifact set at the new path. Limit: it doesn't cover the ambiguous case (several same-hash candidates falling back to normal ingestion), and it doesn't check that `ingested_at`/consensus are left alone.
+- Guardrail, a rolled-back note adds no consensus target. `tests/test_pipeline.py` / `test_pipeline_rolled_back_note_adds_no_consensus_target`
+  - Defect and boundary: `_write_extraction` adds company IDs to the run's `affected_company_ids` inside the per-note transaction, and they survive a rollback. Crosses the per-note transaction → run-level consensus rebuild.
+  - Assertion: note A ingests Zeta Optics cleanly. In run 2, note B mentions Zeta, then fails mid-write (malformed POISON event embedding). Run 2 reports exactly one error (`zeta_poison.md`), B is not logged, `synthesize_consensus` is never called and `consensus_updated_for == []`. Proves IDs from a rolled-back note never reach the targets. Limit: on the current code the spurious target shows up as an extra consensus rebuild, not as a second error (a missing company returns `False` silently), so the "exactly one error" part already passes today. The RED is the rebuild.
+- Guardrail, the catalog lists old entities named in the note. `tests/test_pipeline.py` / `test_pipeline_catalog_lists_old_entities_named_in_note`
+  - Defect and boundary: `_build_existing_catalog` takes only the 500 most recently updated entities and themes. Crosses DB → LLM prompt (`existing_catalog`).
+  - Assertion: with 600 newer filler entities, the catalog passed to `extract_document` contains `[ent_legacy]` (name "Legacy Corp" in the text) and `[ent_omega]` (alias "OMGH" in the text). Proves note-mentioned entities are listed whatever their age. Limit: it doesn't check themes, the size of the recent-node budget, or ordering.
+- Guardrail, repair counts self-loops and lists survivors. `tests/test_repair.py` / `test_repair_counts_self_loops_and_lists_merged_survivors`
+  - Defect and boundary: `_merge_cluster` deletes the self-loops created by repointing without counting them, and `RepairReport` has no survivor IDs. Crosses stored rows → the repair report (CLI `--json` payload).
+  - Assertion: two exact-duplicate companies joined by one edge merge into one survivor with zero edges left. The report has `self_loops_deleted == 1`, `merged_survivor_ids == [survivor]` and `total_changes == 2`. Proves every row change is reported, including self-loops, along with the survivor IDs. Limit: it doesn't test the CLI table/JSON output directly.
+- Guardrail, re-embedding refreshes the survivor's vector. `tests/test_repair.py` / `test_reembed_gives_merged_survivor_a_fresh_embedding`
+  - Defect and boundary: the survivor is upserted without an embedding, so its vector stays stale, and no function exists to recompute it. Crosses LLM embeddings → `node_vectors`.
+  - Assertion: after repair, `reembed_nodes(db, llm, merged_survivor_ids)` (looked up in `stock_ontology.repair` or `stock_ontology.pipeline`) embeds `node_embedding_text(survivor)`, a text that includes the loser's alias "Delta Power Systems". The stored vector equals the fake's vector for that text and differs from the stale one. Proves the survivor gets a freshly computed embedding. Limit: it doesn't run the CLI `repair --reembed` flag and doesn't prove plain `repair` builds no LLM client. Build covers both.
+- Protected paths: `tests/test_pipeline.py`, `tests/test_repair.py`.
+- Protected revision: `dc5c34a` (`git show dc5c34a:tests/test_pipeline.py`, `git show dc5c34a:tests/test_repair.py`). The witnesses are in the sections titled "Ingestion follow-ups: …" at the end of each file.
+
+**Red evidence**
+- `uv run pytest tests/test_pipeline.py -v -k "rerun_does_not_read or moved_note or rolled_back_note_adds or catalog_lists_old"` → 4 failed. "unchanged notes (same size and mtime) were read again on rerun" (all 5 notes read). "a moved note with identical content was re-extracted" (`['archive/2026-11-05_cowos_capacity_note.md']`). "a rolled-back note still added its company to the consensus targets" (`['Zeta Optics']`). "entity named in the note is missing from the catalog" (only filler entities listed). Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/prove2/red_pipeline.log`.
+- `uv run pytest tests/test_repair.py -v -k "self_loops or fresh_embedding"` → 2 failed. "repair deleted a self-loop edge but did not count it" (`self_loops_deleted` absent). "no reembed_nodes(db, llm, node_ids) to recompute merged survivors' embeddings". Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/prove2/red_repair.log`.
+- `uv run pytest -q` → 6 failed (only the witnesses above), 80 passed. Existing witnesses stay green. `ruff check` on both files is clean. Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology/21c6d27a-a6c6-400c-b4bd-4ebdc671ca5f/scratchpad/prove2/full_suite.log`.
+- None of the claims above has proof until these commands are observed RED. All six were observed RED on `dc5c34a`.
+
+**Supporting test plan**
+- `node_lookup` table, index, sync on upsert/delete, backfill, and read-only fallback → Build: `tests/test_db.py`. Catches a query plan that skips the index and lookups gone stale after alias edits or node deletes.
+- `ingestion_log` `size`/`mtime_ns` migration on an old-schema DB → Build: `tests/test_db.py`. Catches a broken `ALTER TABLE` migration and an `upsert_ingestion_log` that drops the new columns.
+- One batched probe `embed_texts` call per note for unmatched entities and themes → Build: `tests/test_pipeline.py` (embed-call count). Catches per-node embedding calls.
+- `repair --reembed` builds the LLM only when the flag is set, and plain `repair` needs no LLM → Build: CLI test owner (`tests/test_repair.py` or the existing CLI test file). Catches LLM construction on plain `repair`.
+- `_resolve_sentiment` precedence, the event/view helpers, and `OntologyDB.get_nodes(ids)` for the consensus rebuild → Build: the existing `test_pipeline_normalizes_event_view_consensus_and_edge_sentiment` stays green, plus a `tests/test_db.py` unit test for `get_nodes`. Catches changed sentiment outputs and missing or reordered nodes.
 
 ## Build
 
