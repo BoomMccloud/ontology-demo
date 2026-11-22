@@ -1,8 +1,8 @@
 ---
 proposal_id: "ontology-search"
-state: FRAMED
+state: PROVED
 witness: independent
-candidate: "a8701d4 @ .claude/worktrees/ontology-search"
+candidate: "d2b2c2b @ .claude/worktrees/ontology-search"
 ---
 
 # Proposal: Generic ontology search
@@ -154,6 +154,54 @@ Candidate: `a8701d4 @ .claude/worktrees/ontology-search (proposal/ontology-searc
 - None.
 
 ## Proof
+
+Candidate: `d2b2c2b @ .claude/worktrees/ontology-search` (RED observed on the source tree of `a8701d4`/`c77a84f`, with only the witness tests added)
+
+**Protected witness**
+- Primary claim, Web UI: entity-first card, sections, notes, agent column. `tests/test_web.py` / `test_web_search_entity_first_card_sections_notes_and_agent_column`
+  - Defect and boundary: `run_hybrid_search` puts vector hits first with no re-sort, has no match reasons, no edge expansion, no note grep, and the page has no agent column. The test goes over the HTTP boundary (FastAPI client → web → storage → filesystem) with fake embeddings, where "Consensus: Buy Apple Inc." is the nearest vector to "nvidia".
+  - Assertion: `GET /search?q=nvidia` renders exactly one best-match card, `ent_nvda`, with reason `name`. `vw_cons_aapl` is listed after it with reason `semantic`. `thm_power` comes in through an edge with reason `relationship`, and `evt_nvda_q3` is listed. The passage `Notes/2026-11-10_channel_check.md` line 3 appears with reason `note`. No separate passage is listed for the event's own source file. There is one agent column with `data-agent-query="nvidia"` and a detach control, the page loads `clippy.js` (which posts to `/api/chat`), and `/search` with no word carries no agent query. This proves the claim at the page boundary.
+  - Limit: the page contract is data attributes (`data-best-match`, `data-result-id`, `data-match-reason`, `data-note-file`, `data-note-line`, `data-agent-column`, `data-agent-query`, `data-agent-detach`), and Build must emit them. The test does not prove that the client-side JS actually starts the run, keeps one session across the column, floating window and dock, or detaches visually. It does not prove time ranking, the link from an event to its matching note line, or live Gemini behavior.
+- Primary claim, agent: same entity-first search. `tests/test_agent.py` / `test_agent_search_nodes_returns_entity_first_with_match_reasons`
+  - Defect and boundary: `_tool_search_nodes` is a separate vector-then-keyword merge. The test goes through the model-to-tool boundary, where a scripted model calls `search_nodes` and the test reads the response the agent returned to it.
+  - Assertion: `tools_used == ("search_nodes",)`. `results[0].id == "ent_nvda"` with `match_reason == "name"`, and `vw_cons_aapl` has `match_reason == "semantic"`. This proves the agent's tool ranks the name match first and explains it.
+  - Limit: it proves the same ordering, not that both surfaces call one function. That sharing is checked by the architecture test, per Frame.
+- Primary claim, agent note grep, plus the filesystem guardrail. `tests/test_agent.py` / `test_agent_search_notes_greps_only_supported_notes_inside_data_dir`
+  - Defect and boundary: the agent has no `data_dir` and no `search_notes` tool. The test crosses agent → filesystem.
+  - Assertion: `OntologyAgent(ro_db, llm, data_dir=...)` is accepted, and `search_notes` is among the offered tool schemas. Calling it returns `passages` that contain `{file: "Notes/2026-11-10_channel_check.md", line: 3}` and that line's text. No passage comes from a symlink that points outside, a dotfile, or a `.pdf`. DB stats are unchanged.
+  - Limit: it fixes the tool contract keys `passages[].file`, `line` and `text`. It does not cover caps or regex-literal handling.
+- Guardrail: reads stay inside `ONTOLOGY_DATA_DIR`, and the DB is never written. `tests/test_web.py` / `test_web_search_reads_only_data_dir_notes_and_never_writes_db`
+  - Defect and boundary: the new filesystem read path takes user-supplied words over HTTP.
+  - Assertion: as a positive control, the in-scope note is grepped. For the words `nvidia`, `../outside/secret`, `NVIDIA OUTSIDE`, `.hidden`, `*.md` and `MARKER`, no marker leaks from a symlink to an outside file, a hidden directory, a hidden file, or an unsupported `.pdf`. The `ontology.db` sha256 and mtime are unchanged.
+  - Limit: the RED comes from the positive control only. The exclusion assertions held vacuously before the change, so they are protected regressions, not RED-proven.
+- Guardrail: functional results survive a failed embedding or agent provider. `tests/test_web.py` / `test_web_search_functional_results_survive_embedding_and_agent_failure`
+  - Defect and boundary: a provider failure must not blank the search page. The test crosses web → llm.
+  - Assertion: with both `embed_texts` and the agent raising, `/search?q=nvidia` still renders the `ent_nvda` best-match card, the note passage, and the agent column. `/api/chat` returns 500 with `error` and `session_id`.
+  - Limit: the `/api/chat` error part was already green. It does not prove that the column visibly renders its failed state, which is client-side JS.
+- Guardrail: existing advanced-search filters keep working. There is no new witness. The owners are `tests/test_web.py::test_web_nav_and_advanced_search_filters` and `test_web_home_entity_theme_search_and_clippy_chat`, and both are green today. Behavior that must be preserved cannot be observed RED. Build may amend them only as Frame's "Invariants changed" allows: the same items must appear, in the card and sections.
+- Protected paths: `tests/test_web.py` (the block after the `# --- Generic ontology search` marker, and the existing tests above) and `tests/test_agent.py` (the block after the `# --- Generic ontology search` marker).
+- Protected revision: `d2b2c2b`, compared with `git diff d2b2c2b -- tests/test_web.py tests/test_agent.py`.
+
+**Red evidence**
+- `uv run pytest tests/test_web.py tests/test_agent.py -k "search_" -v -rA` gave these results:
+  - `test_web_search_entity_first_card_sections_notes_and_agent_column`: "search page has no single best-match card" (0 == 1).
+  - `test_web_search_reads_only_data_dir_notes_and_never_writes_db`: the positive control found no note passage.
+  - `test_web_search_functional_results_survive_embedding_and_agent_failure`: `[] == ['ent_nvda']`.
+  - `test_agent_search_nodes_returns_entity_first_with_match_reasons`: the results put the name match last, in the order `['vw_cons_aapl', 'ent_aapl', 'vw_cons_nvda', 'evt_q3', 'thm_power', 'ent_tsmc', 'ent_vrt', 'ent_nvda']`. This reproduces the reported bug.
+  - `test_agent_search_notes_greps_only_supported_notes_inside_data_dir`: `Failed: OntologyAgent does not accept data_dir for note search`. This is caught as an explicit assertion failure, not a setup error.
+  - The existing filter and search tests passed.
+- `uv run pytest -q` gave `5 failed, 144 passed`. Only the five new witnesses fail. Re-run by the orchestrator at `d2b2c2b`: same result.
+- No claim above has proof until its command is observed RED. All five were observed RED.
+
+**Supporting test plan**
+- A name match beats a nearer vector hit, alias matches get reason `alias`, and expansion uses registry-canonical relations and does not return edges as results. Build owner: `tests/test_search.py`. It catches ranking or expansion defects in the shared function.
+- Note grep treats the word literally: `a.*` matches only that text. It is case-insensitive, caps passages per file and in total, and skips traversal, hidden, and unsupported paths. Build owner: `tests/test_search.py`. It catches regex injection and unbounded output.
+- An event or view and a grepped line from the same file appear once, and the item links to the matching line. Build owner: `tests/test_search.py`, plus a page assertion in `tests/test_web.py` once the link format exists. It catches duplicated passages and missing line links.
+- A period in the word (quarter, fiscal year, year, month) narrows or boosts dated items, and recency is a bounded term with no LLM call. Build owner: `tests/test_search.py`. It catches time-ranking defects.
+- A `search` module may import shared, ontology, storage and llm, and `agent` and `web` may import `search`. Build owner: `tests/test_architecture.py` `MODULE_OF`/`ALLOWED`. It catches a layering violation or a duplicated search path.
+- `chat_endpoint` passes `data_dir` to `OntologyAgent` and still uses the agent only for `.chat`. Build owner: `tests/test_web.py::test_web_chat_endpoint_uses_only_agent_chat`. It catches an agent column without note search.
+- New strings are in all six locales. Build owner: `tests/test_i18n.py`. It catches missing translations.
+- The client-side side column, shared session, detach, and failed state have no offline pytest owner. Audit should record this as a limit unless Build adds a JS check the repo already supports.
 
 ## Build
 
