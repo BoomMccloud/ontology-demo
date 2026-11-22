@@ -122,7 +122,7 @@ def _entity(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
 
 
 def _theme(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
-    name = str((ctx.get("theme") or {}).get("name", ""))
+    name = str(getattr(ctx.get("theme"), "name", ""))
     return NavState("research", "themes", "component", [_ROOT, _crumb(_THEMES), Crumb(label=name)])
 
 

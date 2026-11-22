@@ -10,7 +10,10 @@ that talks to the agent. It never writes to `ontology.db`.
   template contexts, including `run_hybrid_search`. The entity page context holds
   only frozen presentation models (`EntityHeader`, `ConsensusSummary`,
   `EventRow`, `ViewRow`, `ThemeLinkRow`, `RelatedEntityRow`, and so on) and
-  prepared label/value pairs, so its templates never read `facets`.
+  prepared label/value pairs, so its templates never read `facets`. The theme
+  page context does the same with `ThemeHeader`, `FirstOrderRow` (with its
+  `ExposureLink`s), `SecondOrderRow` (with its `SecondOrderPath`s), `EventRow`
+  and `ViewRow`.
 - `src/stock_ontology/web/catalog.py`: the raw notes browser, path-safe note
   lookup, XSS-safe Markdown rendering, and source citations.
 - `src/stock_ontology/web/navigation.py`: the navigation registry. Every HTML
