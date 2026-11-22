@@ -1,6 +1,6 @@
 ---
 proposal_id: "codified-navigation-ux"
-state: BUILT
+state: ACCEPTED
 witness: builder
 candidate: "df390f3 @ worktree .claude/worktrees/codified-navigation-ux-0ef91c, branch claude/codified-navigation-ux-0ef91c (parent 6d4b2d7)"
 ---
@@ -163,5 +163,37 @@ Candidate: `df390f3 @ worktree .claude/worktrees/codified-navigation-ux-0ef91c, 
 - None. Judgment calls inside scope, for Audit to check: `/catalog?view=author` (and `view=person`) is owned by Research › Authors, so Notes › By author is marked only for a note opened from the author view; `/search` and Ontology tabs are pages without breadcrumbs; the Notes group heading is a label, and the Notes breadcrumb crumb links to `/catalog`.
 
 ## Audit
+
+Candidate: `df390f3` (source tree) with ledger commit `395bd01` on branch `claude/codified-navigation-ux-0ef91c`, worktree `/Users/jasonbxu/Documents/GitHub/stock_ontology/.claude/worktrees/codified-navigation-ux-0ef91c`, baseline `6d4b2d7`. The worktree was clean at HEAD `395bd01` both before and after the audit.
+
+Independence: fresh-context. Before this audit I had seen only the orchestrator's brief, which named the builder's three judgment calls. I had not seen the build session.
+
+Primary-claim verdict: PROVED. Evidence: I ran `uv run pytest tests/test_web_navigation.py -v -p no:cacheprovider` on the candidate and got 35 passed. For RED, I ran the same file against a `git archive 6d4b2d7` scratch copy and got 33 failed, 2 passed. The 2 passes are the `/api/chat` guardrail and the partials-do-not-extend-base check. Those are preservation checks, so passing on the baseline is expected. I also mutated a candidate copy in three ways: forced every entity to be owned by `_OTHER`, added `style=` to `base.html`, and added a template with an undefined class. The witness failed on all three (4 failures), so it is not vacuous. It checks that the HTML GET routes in `app.routes` match the `NAV_ROUTES` registry in both directions. It checks exactly one `aria-current="page"` each in `#top-nav` and `#side-nav` across 26 variants. It checks breadcrumb shape: workflow first, linked middle crumbs, an unlinked current last crumb. It also checks that the dock IDs and `clippy.js` are on every page, and runs the static template and CSS checks. Limit: the page-versus-component archetype is checked only as a `data-archetype` value, not as a structural rule. The dock's JS (opening, and sending the page context) is not run, only its markup.
+
+Guardrail verdicts:
+- Clippy dock sends page context to `/api/chat` and renders the reply, and reset clears the session: PROVED, with one limit. Evidence: `test_clippy_dock_chat_round_trip_uses_existing_backend` and the existing `FakeWebLLM` path in `tests/test_web.py` pass. `/api/chat` and `/api/chat/reset` are untouched in the `app.py` diff. The `clippy.js` diff only reads context from `#clippy-window[data-context]` and handles clicks on `[data-clippy-context]`. Limit: the browser-side context hand-off rests on the builder's manual smoke, not on a test.
+- Existing deep links keep working: PROVED. Evidence: `/catalog?view=person`, `/companies?kind=other`, `/entity/<id>`, `/theme/<id>`, every `/ontology?tab=`, and `/search?q=` all return 200 in `VARIANTS`. `test_ask_redirects_to_overview_with_clippy_open_and_context` shows `/ask` returns a 303 to `/?ask=1&context=…` that lands on a 200 with `data-open="1"`. Limit: only the seeded IDs are exercised.
+- One desktop width and one mobile width: PROVED. Evidence: `test_one_desktop_width_and_one_mobile_breakpoint` checks that `.portal-frame` has `max-width: 1080px`, that `.portal-frame-wide` is gone, that the only `@media` rule is `(max-width: 740px)`, and that no template mentions `wide_layout`. The `app.py` diff removes both `wide_layout` assignments. Limit: this is a static check of the CSS. Nothing renders the page at real widths.
+
+Scope and duty verdict: scope HELD; duties HELD. Evidence: every one of the 31 changed files is inside Frame's Include list (`web/templates/**` including the deleted `ask.html`, `library.css`, `clippy.js`, `app.py`, `viewmodels.py` and `catalog.py` with only `active_nav` removals, the new `navigation.py`, the six locales, both test files, and `README.md`). Running `git diff --name-only 6d4b2d7..df390f3` and filtering for `agent.py`, `db/`, `cli.py`, `pyproject` and `uv.lock` matched only `web/static/clippy.js`, which is the filename pattern hitting the `cli.py` filter, not a protected file. No search ranking or ontology data assembly code changed. The `tests/test_web.py` edits map to the Invariants changed entries for lines 191-196 and 536 (rail labels), 199 (dock present), 865 (`/ask` redirect) and 1243 (`<main>`-only link cap). Two edits fall under the rail-label invariant at line numbers Frame did not list: line 553 `>Home<` to `>Overview<`, and `>Ask<` now asserted absent. `README.md:42` changed as listed. The new `## Web UI Constraints` entry has a `**Why:**` and a `**Guarded by:** tests/test_web_navigation.py`, and that file exists. Judgment calls:
+- `/catalog?view=author` owned by Research › Authors: consistent. Frame defined Authors as the existing catalog author view, and the Proposal asks for no author-entity data. Side effect: Notes › By author links to the same URL, so clicking it highlights Authors. It is highlighted only for a note opened from the author view.
+- No breadcrumbs on `/search` or the Ontology tabs: consistent. Frame requires breadcrumbs only on detail and drill-down views, and these are top-level pages reached from the left nav.
+- Notes group heading as a label, with the Notes crumb linking to `/catalog`: consistent with "Notes (by company, by author, all)" being a group in the Proposal.
+
+Limit: "no computed-look change" from moving inline styles into classes was not checked visually.
+
+Test homes: `tests/test_web_navigation.py` is the new permanent owner Frame named for the navigation, breadcrumb, dock and template/CSS checks. `tests/test_web.py` is the existing owner of the web render tests, amended only for the listed invariants.
+
+Full gates: PASS. `uv run pytest -q -p no:cacheprovider`: 115 passed. `uv run pytest tests/test_web_navigation.py -v`: 35 passed. `uv run ruff check src/stock_ontology/web tests/test_web.py tests/test_web_navigation.py`: 2 errors, both the allowed pre-existing ones (`web/catalog.py:154` and `:822`). Limit: repo-wide ruff is not green on the baseline, so it is not a gate here. Everything ran offline with `FakeWebLLM`.
+
+Residual risks:
+- Research › Authors and Notes › By author point to the same URL (`/catalog?view=author`), so one left-nav entry never highlights when clicked. A human should decide whether By author needs its own view.
+- 56 `!important` utility classes replace the inline styles. That keeps the old precedence but makes later CSS overrides harder. Nothing checks that the look is unchanged.
+- The class-token check skips tokens built from `{{ }}` expressions, so dynamically built classes are not enforced.
+- The page/component archetype is a label on `body`. Nothing structurally stops a template from mixing the two patterns.
+- The dock's JS behavior (opening from "Ask about X", carrying the context, the minimize state in `sessionStorage`) has no automated test.
+
+Recommendation: ACCEPT
+Packet: no rework is needed. Next is human review of the Authors vs Notes › By author duplicate link. Merge and push remain human-owned actions. Accepting authorizes neither.
 
 ## Revisions
