@@ -1970,3 +1970,105 @@ def test_theme_page_templates_only_see_presentation_models(tmp_path: Path) -> No
         name for name in closure if RAW_FACET_TOKEN.search((TEMPLATES_DIR / name).read_text(encoding="utf-8"))
     )
     assert offenders == []
+
+
+# ---------------------------------------------------------------------------
+# Proof witnesses: official-edge-facets (theme readers skip `synthesized` edges)
+# ---------------------------------------------------------------------------
+
+
+def _seed_basis_theme_db(db_path: Path) -> None:
+    def view(node_id: str, name: str, view_type: str) -> Node:
+        return Node(
+            id=node_id,
+            node_type="view",
+            name=name,
+            summary=f"{name}.",
+            facets={"view_type": view_type, "stance": "buy", "as_of": "2026-11-20"},
+            source_doc_id="doc_b",
+        )
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        nodes = [
+            Node(
+                id="ent_msft",
+                node_type="entity",
+                name="Microsoft",
+                summary="Cloud and software.",
+                facets={"entity_type": "company", "ticker": "MSFT"},
+            ),
+            Node(
+                id="ent_orcl",
+                node_type="entity",
+                name="Oracle",
+                summary="Database and cloud.",
+                facets={"entity_type": "company", "ticker": "ORCL"},
+            ),
+            Node(
+                id="thm_eai",
+                node_type="theme",
+                name="Enterprise AI Monetization",
+                summary="Monetizing enterprise AI.",
+                facets={"stage": "accelerating"},
+            ),
+            view("vw_extracted", "Extracted Seat Pricing View", "analyst_report"),
+            view("vw_legacy", "Legacy Usage View", "pm_view"),
+            view("vw_soft", "Soft Linked Copilot View", "analyst_report"),
+        ]
+        for idx, n in enumerate(nodes):
+            db.upsert_node(n, embedding=_unit_vec(idx))
+        edges = [
+            ("eb1", "vw_extracted", "RELATES_TO", "thm_eai", {"basis": "extracted"}),
+            ("eb2", "vw_extracted", "ABOUT", "ent_orcl", {"basis": "extracted"}),
+            ("eb3", "vw_legacy", "RELATES_TO", "thm_eai", {}),  # no basis counts as extracted
+            ("eb4", "vw_legacy", "ABOUT", "ent_orcl", {}),
+            ("eb5", "vw_soft", "RELATES_TO", "thm_eai", {"basis": "synthesized"}),
+            ("eb6", "vw_soft", "ABOUT", "ent_msft", {"basis": "extracted"}),
+        ]
+        for eid, src, rel, dst, facets in edges:
+            db.upsert_edge(Edge(id=eid, from_id=src, to_id=dst, relation=rel, facets=facets, source_doc_id="doc_b"))
+        cons = Node(
+            id="vw_cons_msft",
+            node_type="view",
+            name="Consensus: Buy Microsoft",
+            summary="Copilot seats drive upside.",
+            facets={"view_type": "consensus", "stance": "buy", "pillars": ["Copilot seat growth"]},
+        )
+        # The theme is LLM-picked evidence for Microsoft's consensus: a synthesized SUPPORTS edge.
+        db.upsert_consensus_view("ent_msft", cons, _unit_vec(9), ["thm_eai"], [])
+
+
+def test_theme_readers_skip_synthesized_edges(tmp_path: Path) -> None:
+    from stock_ontology.web.viewmodels import build_entity_context, build_theme_context
+
+    db_path = tmp_path / "basis_theme.db"
+    _seed_basis_theme_db(db_path)
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        # Guardrail: the company page still shows the consensus view with its pillars.
+        msft_ctx = build_entity_context(db, "ent_msft", lang="en")
+        assert msft_ctx["consensus"] is not None
+        assert msft_ctx["consensus"].pillars == ("Copilot seat growth",)
+
+        ctx = build_theme_context(db, "thm_eai", lang="en")
+
+    view_names = {v.name for v in ctx["views"]}
+    assert {"Extracted Seat Pricing View", "Legacy Usage View"} <= view_names
+    assert "Consensus: Buy Microsoft" not in view_names
+    assert "Soft Linked Copilot View" not in view_names, "a view linked to the theme only by a synthesized edge is listed"
+    companies = {row.company.name for row in ctx["companies"]}
+    assert "Oracle" in companies
+    assert "Microsoft" not in companies, "Microsoft reaches the theme only through synthesized edges"
+
+
+def test_find_theme_companies_skips_synthesized_edges(tmp_path: Path) -> None:
+    db_path = tmp_path / "basis_theme.db"
+    _seed_basis_theme_db(db_path)
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        theme_companies = db.find_theme_companies("thm_eai")
+
+    via_ids = {link.get("via_node_id") for row in theme_companies["companies"] for link in row["links"]}
+    assert {"vw_extracted", "vw_legacy"} <= via_ids
+    assert "vw_cons_msft" not in via_ids
+    assert "vw_soft" not in via_ids, "find_theme_companies links a company through a synthesized edge"
+    names = {row["company"]["name"] for row in theme_companies["companies"]}
+    assert names == {"Oracle"}, names

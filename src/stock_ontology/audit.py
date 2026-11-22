@@ -28,7 +28,7 @@ from stock_ontology.registry import (
     normalize_ticker,
     theme_suggestion_sort_key,
 )
-from stock_ontology.vocab import out_of_vocabulary_node_facets
+from stock_ontology.vocab import EDGE_FACET_VOCABS, out_of_vocabulary_node_facets
 
 ALIAS_STOP_WORDS = {
     "inc",
@@ -76,6 +76,7 @@ class AuditSummary(BaseModel):
     views_missing_sentiment: int = 0
     total_views: int = 0
     out_of_vocabulary_value_count: int = 0
+    non_official_edge_facet_key_count: int = 0
 
 
 class RelationNormalizationHit(BaseModel):
@@ -160,6 +161,13 @@ class FacetAliasHit(BaseModel):
     count: int
 
 
+class NonOfficialEdgeFacetKey(BaseModel):
+    """A free-form edge facet key outside the registry's official edge vocabularies. Reported, not an error."""
+
+    key: str
+    count: int
+
+
 class OutOfVocabularyValue(BaseModel):
     """A stored enum facet value that is not a member of its `vocab` vocabulary."""
 
@@ -199,6 +207,7 @@ class AuditReport(BaseModel):
     ticker_normalization_issues: list[TickerNormalizationIssue] = Field(default_factory=list)
     facet_alias_hits: list[FacetAliasHit] = Field(default_factory=list)
     out_of_vocabulary_values: list[OutOfVocabularyValue] = Field(default_factory=list)
+    non_official_edge_facet_keys: list[NonOfficialEdgeFacetKey] = Field(default_factory=list)
 
 
 EdgeRegistryStatus = Literal[
@@ -873,6 +882,16 @@ def run_ontology_audit(
         for (nt, facet, value), cnt in sorted(oov_counts.items(), key=lambda kv: (-kv[1], kv[0]))
     ]
 
+    edge_key_counts: dict[str, int] = defaultdict(int)
+    for edge in edges:
+        for key in edge["facets"]:
+            if key not in EDGE_FACET_VOCABS:
+                edge_key_counts[key] += 1
+    non_official_edge_facet_keys = [
+        NonOfficialEdgeFacetKey(key=key, count=cnt)
+        for key, cnt in sorted(edge_key_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+
     summary = AuditSummary(
         total_edges=len(edges),
         mapped_exact_edges=mapped_exact_edges,
@@ -898,6 +917,7 @@ def run_ontology_audit(
         views_missing_sentiment=views_missing_sentiment,
         total_views=total_views,
         out_of_vocabulary_value_count=sum(v.count for v in out_of_vocabulary_values),
+        non_official_edge_facet_key_count=len(non_official_edge_facet_keys),
     )
 
     return AuditReport(
@@ -916,4 +936,5 @@ def run_ontology_audit(
         ticker_normalization_issues=ticker_normalization_issues,
         facet_alias_hits=facet_alias_hits,
         out_of_vocabulary_values=out_of_vocabulary_values,
+        non_official_edge_facet_keys=non_official_edge_facet_keys,
     )

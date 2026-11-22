@@ -8,10 +8,12 @@ layer.
 ## Files
 
 - `src/stock_ontology/models.py`: the shapes.
-- `src/stock_ontology/vocab.py`: the closed enum vocabularies and the shared
-  signal filter rules.
-- `src/stock_ontology/registry.py` and `ontology_registry.json`: the data
-  registry (relations, companies, themes, aliases, suggestions).
+- `src/stock_ontology/vocab.py`: code's typed copy of the closed enum
+  vocabularies, and the shared signal filter rules.
+- `src/stock_ontology/registry.py` and `ontology_registry.json`: the official
+  ontology (relations, companies, themes, aliases, official facet
+  vocabularies, suggestions). Code reflects the registry: `load_registry`
+  fails when `facet_vocabularies` differs from `vocab.py`.
 
 ## Models (`models.py`)
 
@@ -58,8 +60,12 @@ type.
 and `update_edge` apply it on write.
 
 `OntologyRegistry` holds canonical relations (with aliases, inverses, and
-domain and range rules), core companies, house themes, facet aliases, and a
-queue of pending suggestions. `canonicalize_edge` maps a raw relation and
+domain and range rules), core companies, house themes, facet aliases, the
+official facet vocabularies (`facet_vocabularies`: per node type and for
+edges, each vocabulary's members with definitions, aliases and fallback), and a
+queue of pending suggestions. Official edge facets are `sentiment` and `basis`
+(`extracted | synthesized`, set by code at each edge write). Other edge facet
+keys stay free-form, and `audit` reports them in `non_official_edge_facet_keys`. `canonicalize_edge` maps a raw relation and
 direction to the canonical form. `create_minimal_registry()` is the built-in
 default. `load_registry` and `save_registry` read and write the JSON file.
 

@@ -154,3 +154,99 @@ def test_audit_counts_and_lists_out_of_vocabulary_stored_values(tmp_path) -> Non
         ("view", "stance", "moonshot", 2),
         ("view", "view_type", "hunch", 1),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Proof witnesses: official-edge-facets (registry declares the official facet vocabularies)
+# ---------------------------------------------------------------------------
+
+_IDENTIFIER_KEYS = ("name", "value", "member", "id", "key")
+
+
+def _walk(tree):
+    yield tree
+    children = tree.values() if isinstance(tree, dict) else tree if isinstance(tree, list) else ()
+    for child in children:
+        yield from _walk(child)
+
+
+def _member_names(container) -> set[str] | None:
+    """Member names a dict (by key) or list (strings, or dicts by identifier key) lists."""
+    if isinstance(container, dict):
+        return set(container)
+    if isinstance(container, list):
+        names: set[str] = set()
+        for item in container:
+            if isinstance(item, str):
+                names.add(item)
+            elif isinstance(item, dict):
+                ident = next((item[k] for k in _IDENTIFIER_KEYS if isinstance(item.get(k), str)), None)
+                if ident is None:
+                    return None
+                names.add(ident)
+            else:
+                return None
+        return names
+    return None
+
+
+def _strings(tree) -> set[str]:
+    out: set[str] = set()
+    for node in _walk(tree):
+        if isinstance(node, str):
+            out.add(node)
+        elif isinstance(node, dict):
+            out.update(k for k in node if isinstance(k, str))
+    return out
+
+
+def _assert_declares_code_vocabularies(tree, label: str) -> None:
+    expected: list[tuple[str, vocab.Vocabulary]] = [
+        (f"{node_type}.{key}", v) for node_type, group in vocab.NODE_FACET_VOCABS.items() for key, v in group.items()
+    ] + [(f"edge.{key}", v) for key, v in vocab.EDGE_FACET_VOCABS.items()]
+    member_sets = [names for node in _walk(tree) if (names := _member_names(node))]
+    strings = _strings(tree)
+    alias_pairs = {
+        (k, v) for node in _walk(tree) if isinstance(node, dict) for k, v in node.items() if isinstance(v, str)
+    }
+    fallbacks = {
+        v
+        for node in _walk(tree)
+        if isinstance(node, dict)
+        for k, v in node.items()
+        if isinstance(k, str) and "fallback" in k and isinstance(v, str)
+    }
+    for where, v in expected:
+        assert set(v.members) in member_sets, f"{label}: no vocabulary lists exactly the {where} members {v.members}"
+        missing_defs = [d for d in v.definitions.values() if d not in strings]
+        assert not missing_defs, f"{label}: {where} definitions missing: {missing_defs}"
+        missing_aliases = [(a, t) for a, t in v.aliases.items() if (a, t) not in alias_pairs]
+        assert not missing_aliases, f"{label}: {where} aliases missing: {missing_aliases}"
+        if v.fallback is not None:
+            assert v.fallback in fallbacks, f"{label}: {where} fallback {v.fallback!r} not declared"
+
+
+def test_registry_and_code_declare_the_same_official_facet_vocabularies(tmp_path) -> None:
+    import json
+    from pathlib import Path
+
+    from stock_ontology.registry import create_minimal_registry, load_registry, save_registry
+
+    # The shipped registry declares every code vocabulary, member for member, and loads.
+    shipped_path = Path(__file__).resolve().parents[1] / "ontology_registry.json"
+    _assert_declares_code_vocabularies(json.loads(shipped_path.read_text(encoding="utf-8")), "ontology_registry.json")
+    load_registry(shipped_path)
+
+    # The starter registry declares the same, and survives a save/load round trip.
+    minimal = create_minimal_registry()
+    _assert_declares_code_vocabularies(minimal.model_dump(mode="json"), "create_minimal_registry()")
+    save_registry(minimal, tmp_path / "ontology_registry.json")
+    reloaded = load_registry(tmp_path / "ontology_registry.json")
+    assert reloaded.model_dump(mode="json") == minimal.model_dump(mode="json")
+
+    # Code: `basis` is an official edge vocabulary with no ingest fallback, beside `sentiment`.
+    assert "basis" in vocab.EDGE_FACET_VOCABS, "edge facet `basis` is not an official vocabulary in code"
+    basis = vocab.EDGE_FACET_VOCABS["basis"]
+    assert basis.members == ("extracted", "synthesized")
+    assert basis.fallback is None
+    assert vocab.EDGE_FACET_VOCABS["sentiment"] is vocab.SENTIMENT

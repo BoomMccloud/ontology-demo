@@ -38,6 +38,7 @@ from stock_ontology.search import (
     resolve_safe_note_path,
     search_ontology,
 )
+from stock_ontology.vocab import is_synthesized_edge
 from stock_ontology.web.catalog import format_source_citation
 
 COMPANY_FACET_KEYS = (
@@ -738,9 +739,8 @@ def build_theme_context(
     for item in db.get_incident_edges(theme_id):
         nb = item["neighbor"]
         nid = str(nb["id"])
-        # Consensus views are company-level syntheses. A theme reaches one only as
-        # LLM-picked evidence, which doesn't make the consensus about the theme.
-        if nb["node_type"] == "view" and (nb.get("facets") or {}).get("view_type") == "consensus":
+        # A synthesized edge (consensus evidence) doesn't make its neighbor about the theme.
+        if is_synthesized_edge(item.get("facets")):
             continue
         rel = str(item["relation"])
         edge_facets = item.get("facets") or {}

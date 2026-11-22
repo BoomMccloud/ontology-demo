@@ -27,6 +27,8 @@ class RepairReport:
     facets_canonicalized: int = 0
     edges_canonicalized: int = 0
     duplicate_edges_deleted: int = 0
+    # Edges that had no `basis` and got one: `synthesized` if they touch a consensus view.
+    edge_basis_backfilled: int = 0
     nodes_merged: int = 0
     self_loops_deleted: int = 0
     # Registry merge suggestions a human approved and repair applied (`suggestions.merges`).
@@ -42,6 +44,7 @@ class RepairReport:
             + self.facets_canonicalized
             + self.edges_canonicalized
             + self.duplicate_edges_deleted
+            + self.edge_basis_backfilled
             + self.nodes_merged
             + self.self_loops_deleted
         )
@@ -60,6 +63,7 @@ def repair_ontology(db: OntologyDB, registry: OntologyRegistry) -> RepairReport:
         _merge_exact_duplicates(db, report)
         _canonicalize_relations(db, registry, report)
         _delete_duplicate_edges(db, report)
+        _backfill_edge_basis(db, report)
     return report
 
 
@@ -92,6 +96,25 @@ def _canonicalize_facets(db: OntologyDB, report: RepairReport) -> None:
                 facets=facets,
             )
             report.facets_canonicalized += 1
+
+
+def _backfill_edge_basis(db: OntologyDB, report: RepairReport) -> None:
+    """Give every edge without `basis` one: `synthesized` when either end is a consensus view."""
+    consensus_ids = {
+        n.id for n in db.list_all_nodes() if n.node_type == "view" and n.facets.get("view_type") == "consensus"
+    }
+    for edge in db.list_edges_with_endpoints():
+        if edge["facets"].get("basis") is not None:
+            continue
+        synthesized = edge["from_id"] in consensus_ids or edge["to_id"] in consensus_ids
+        db.update_edge(
+            edge["edge_id"],
+            relation=edge["relation"],
+            from_id=edge["from_id"],
+            to_id=edge["to_id"],
+            facets={**edge["facets"], "basis": "synthesized" if synthesized else "extracted"},
+        )
+        report.edge_basis_backfilled += 1
 
 
 def _canonicalize_relations(
