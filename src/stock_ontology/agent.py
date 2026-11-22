@@ -247,7 +247,13 @@ class ChatTurn:
 
 
 class OntologyAgent:
-    """Read-only conversational agent that traverses the stock ontology via tools."""
+    """Read-only conversational agent that traverses the stock ontology via tools.
+
+    Public interface for other components: construct it with a read-only
+    `OntologyDB`, then call `chat(message, history)` for caller-held multi-turn
+    sessions, or `ask(message)` and `reset()` when the agent holds history.
+    Other attributes (`messages`, `tool_trace`, `last_*`) are internal.
+    """
 
     def __init__(
         self,

@@ -37,6 +37,28 @@ data/**/*.md|.txt   (any folder layout)
 - On `429 RESOURCE_EXHAUSTED`, auth errors, `5xx`, network timeouts, or invalid responses, `LLMRouter` automatically falls back to the next provider and places rate-limited/auth-failed providers on a configurable cooldown (`LLM_COOLDOWN_SECONDS`).
 - `/api/health` exposes configured LLM chain diagnostics (without secrets) and `/api/chat` + Clippy display which provider and model served each reply.
 
+### Calling the Agent (`stock_ontology.agent`)
+Other components call the agent through two entry points and nothing else.
+
+- **Multi-turn chat, for any caller that keeps its own sessions (the web app does):** `OntologyAgent.chat(message, history)` runs one turn and returns a frozen `ChatTurn`. Store `turn.history` and pass it back unchanged on the next call. Treat it as opaque, because its message format belongs to the agent.
+
+  ```python
+  from stock_ontology.agent import OntologyAgent
+  from stock_ontology.db import OntologyDB
+
+  with OntologyDB(db_path, embedding_dim=dim, read_only=True) as db:
+      agent = OntologyAgent(db, llm, language="en")
+      turn = agent.chat("What is our view on NVDA?", history)  # history: () or a previous turn.history
+  turn.reply          # str, the answer
+  turn.history        # tuple, pass back next time; don't inspect it
+  turn.tools_used     # tuple[str, ...], tools called in this turn only
+  turn.provider, turn.model, turn.fallback_used  # which LLM served this turn
+  ```
+
+- **One-shot or REPL, for a caller that lets the agent hold history (the CLI does):** `OntologyAgent.ask(message)` returns the reply string, and `reset()` clears history.
+
+`OntologyAgent` requires a read-only `OntologyDB` and raises `ValueError` otherwise. Build one agent per request, or per conversation for a REPL. An instance holds mutable state, so don't share one across concurrent callers. Attributes such as `messages`, `tool_trace` and `last_provider` are internal and may change; agent tests may read them, other components must not.
+
 ### Multi-Language Support (`en`, `zh`, `ko`, `ja`, `es`, `fr`)
 - The Web Library UI, Office-Clippy PM chat, `OntologyAgent`, and CLI support **English (`en`)**, **Chinese (`zh`)**, **Korean (`ko`)**, **Japanese (`ja`)**, **Spanish (`es`)**, and **French (`fr`)** while keeping ingested research notes and database text in their original language.
 - **Web UI**: Switch languages via the masthead language selector (`GET /set-language`), `?lang=<code>` query parameter, `stock_ontology_lang` cookie, `POST /api/language`, or browser `Accept-Language` header.
