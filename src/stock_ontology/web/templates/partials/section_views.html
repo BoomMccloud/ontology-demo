@@ -4,8 +4,8 @@
   <table class="catalog-table">
     <thead>
       <tr>
-        <th style="width: 18%;">{{ t('section.views_col_stance') }}</th>
-        <th style="width: 24%;">{{ t('section.views_col_view') }}</th>
+        <th class="u-w-18pct">{{ t('section.views_col_stance') }}</th>
+        <th class="u-w-24pct">{{ t('section.views_col_view') }}</th>
         <th>{{ t('section.views_col_thesis') }}</th>
       </tr>
     </thead>
@@ -23,7 +23,7 @@
             {% if vw.facets.get("support_strength") %}
               <span class="badge badge-{{ vw.facets.get('support_strength') | lower }}">{{ t_enum('support_strength', vw.facets.get("support_strength")) }}</span>
             {% endif %}
-            <div class="source-cite" style="margin-top: 3px;">
+            <div class="source-cite u-mt-3px">
               {{ t_enum('view_type', vw.facets.get("view_type", "view")) }}
               {% if vw.facets.get("as_of") %} &bull; {{ vw.facets.get("as_of") }}{% endif %}
             </div>
@@ -46,7 +46,7 @@
             {% set vw_src = vw.facets.get("source") if vw.facets.get("source") is mapping else {} %}
             {% set vw_author = vw_src.get("author") %}
             {% if vw.source_label or vw_author %}
-              <div class="source-cite" style="margin-top: 4px;">
+              <div class="source-cite u-mt-4px">
                 {% if vw.source_label %}
                   {{ t('common.source') }}
                   {% if vw.source_exists %}

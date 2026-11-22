@@ -926,7 +926,6 @@ def build_catalog_context(
     )
 
     return {
-        "active_nav": "catalog",
         "stats": stats,
         "data_dir_label": data_dir_label,
         "data_dir_exists": data_dir_exists,

@@ -56,25 +56,10 @@
   </div>
 
   {% if active_note %}
-    <div class="catalog-path-bar">
-      {% if view_mode == 'author' and active_group %}
-        <a href="/catalog?view=author">{{ t('catalog.dirs_by_author') }}</a>
-        &gt; <a href="/catalog?view=author&amp;author={{ active_group.id | urlencode }}">{{ active_group.label }}</a>
-        &gt; <strong>{{ active_note.title }}</strong>
-      {% elif view_mode == 'all' %}
-        <a href="/catalog?view=all">{{ t('catalog.all_notes', count=total_notes) }}</a>
-        &gt; <strong>{{ active_note.title }}</strong>
-      {% else %}
-        <a href="/catalog?view=company">{{ t('catalog.dirs_by_company') }}</a>
-        &gt; <a href="/catalog?view=company&amp;dir={{ active_note.folder | urlencode }}">{{ active_note.subject_label }}</a>
-        &gt; <strong>{{ active_note.title }}</strong>
-      {% endif %}
-    </div>
-
     <section aria-label="{{ t('catalog.reader_aria') }}">
       <div class="note-reader-header">
         <div class="entry-title-row">
-          <h2 style="border: none; margin: 0; padding: 0; font-size: 1.25rem;">
+          <h2 class="u-bd-none u-m-0 u-p-0 u-fs-1p25rem">
             {{ active_note.title }}
           </h2>
         </div>
@@ -153,11 +138,6 @@
     </section>
 
   {% elif view_mode == 'company' and active_group %}
-    <div class="catalog-path-bar">
-      <a href="/catalog?view=company">{{ t('catalog.dirs_by_company') }}</a>
-      &gt; <strong>{{ active_group.dir_label }}</strong>
-    </div>
-
     {% if active_group.entity %}
       <div class="catalog-context-bar">
         <div>
@@ -178,7 +158,7 @@
       <thead>
         <tr>
           <th>{{ t('catalog.col_note') }}</th>
-          <th style="width: 16%;">{{ t('catalog.col_date') }}</th>
+          <th class="u-w-16pct">{{ t('catalog.col_date') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -209,10 +189,10 @@
       <thead>
         <tr>
           <th>{{ t('catalog.col_company') }}</th>
-          <th style="width: 16%;">{{ t('catalog.col_consensus') }}</th>
-          <th style="width: 10%;">{{ t('catalog.col_notes') }}</th>
-          <th style="width: 16%;">{{ t('catalog.col_latest') }}</th>
-          <th style="width: 12%;">{{ t('catalog.col_profile') }}</th>
+          <th class="u-w-16pct">{{ t('catalog.col_consensus') }}</th>
+          <th class="u-w-10pct">{{ t('catalog.col_notes') }}</th>
+          <th class="u-w-16pct">{{ t('catalog.col_latest') }}</th>
+          <th class="u-w-12pct">{{ t('catalog.col_profile') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -255,8 +235,8 @@
         <thead>
           <tr>
             <th>{{ t('catalog.col_subject') }}</th>
-            <th style="width: 10%;">{{ t('catalog.col_notes') }}</th>
-            <th style="width: 16%;">{{ t('catalog.col_latest') }}</th>
+            <th class="u-w-10pct">{{ t('catalog.col_notes') }}</th>
+            <th class="u-w-16pct">{{ t('catalog.col_latest') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -274,11 +254,6 @@
     {% endif %}
 
   {% elif view_mode == 'author' and active_group %}
-    <div class="catalog-path-bar">
-      <a href="/catalog?view=author">{{ t('catalog.dirs_by_author') }}</a>
-      &gt; <strong>{{ active_group.label }}</strong>
-    </div>
-
     <div class="catalog-context-bar">
       <div>
         <strong>{{ active_group.label }}</strong>
@@ -296,10 +271,10 @@
     <table class="portal-table">
       <thead>
         <tr>
-          <th style="width: 18%;">{{ t('catalog.col_subject') }}</th>
+          <th class="u-w-18pct">{{ t('catalog.col_subject') }}</th>
           <th>{{ t('catalog.col_note') }}</th>
-          <th style="width: 16%;">{{ t('catalog.col_provenance') }}</th>
-          <th style="width: 14%;">{{ t('catalog.col_date') }}</th>
+          <th class="u-w-16pct">{{ t('catalog.col_provenance') }}</th>
+          <th class="u-w-14pct">{{ t('catalog.col_date') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -343,8 +318,8 @@
             <th>{{ t('catalog.col_author') }}</th>
             <th>{{ t('catalog.col_role_org') }}</th>
             <th>{{ t('catalog.col_companies') }}</th>
-            <th style="width: 9%;">{{ t('catalog.col_notes') }}</th>
-            <th style="width: 14%;">{{ t('catalog.col_provenance') }}</th>
+            <th class="u-w-9pct">{{ t('catalog.col_notes') }}</th>
+            <th class="u-w-14pct">{{ t('catalog.col_provenance') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -392,9 +367,9 @@
     <table class="portal-table">
       <thead>
         <tr>
-          <th style="width: 18%;">{{ t('catalog.col_subject') }}</th>
+          <th class="u-w-18pct">{{ t('catalog.col_subject') }}</th>
           <th>{{ t('catalog.col_note') }}</th>
-          <th style="width: 16%;">{{ t('catalog.col_date') }}</th>
+          <th class="u-w-16pct">{{ t('catalog.col_date') }}</th>
         </tr>
       </thead>
       <tbody>

@@ -1,4 +1,4 @@
-/* Read-Only Reference Desk Assistant (works inline on /ask or with optional dock elements) */
+/* Read-Only Reference Desk Assistant: the Ask Clippy dock rendered on every page by base.html */
 
 (function () {
   const STORAGE_KEY = "stock_ontology_clippy_session_v1";
@@ -46,7 +46,8 @@
     }
   }
 
-  const pageContext = document.body.dataset.pageContext || "Reference Desk";
+  // A context carried by /ask?context=... (rendered on the dock) wins over the page's own context.
+  let pageContext = (win && win.dataset.context) || document.body.dataset.pageContext || "Reference Desk";
   const pageLang = document.body.dataset.lang || "en";
 
   function getSessionId() {
@@ -247,7 +248,16 @@
     });
   }
 
-  if (launcher && win && sessionStorage.getItem(OPEN_KEY) === "1") {
+  // "Ask about X" links open the dock with that context instead of navigating to /ask.
+  document.addEventListener("click", (e) => {
+    const link = e.target.closest("[data-clippy-context]");
+    if (!link || !launcher || !win) return;
+    e.preventDefault();
+    pageContext = link.dataset.clippyContext || pageContext;
+    setOpen(true);
+  });
+
+  if (launcher && win && (win.dataset.open === "1" || sessionStorage.getItem(OPEN_KEY) === "1")) {
     setOpen(true);
   }
 })();

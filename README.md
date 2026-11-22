@@ -61,7 +61,7 @@ Other components call the agent through two entry points and nothing else.
 
 ### Multi-Language Support (`en`, `zh`, `ko`, `ja`, `es`, `fr`)
 - The Web Library UI, Office-Clippy PM chat, `OntologyAgent`, and CLI support **English (`en`)**, **Chinese (`zh`)**, **Korean (`ko`)**, **Japanese (`ja`)**, **Spanish (`es`)**, and **French (`fr`)** while keeping ingested research notes and database text in their original language.
-- **Web UI**: Switch languages via the masthead language selector (`GET /set-language`), `?lang=<code>` query parameter, `stock_ontology_lang` cookie, `POST /api/language`, or browser `Accept-Language` header.
+- **Web UI**: Switch languages via the top nav language selector (`GET /set-language`), `?lang=<code>` query parameter, `stock_ontology_lang` cookie, `POST /api/language`, or browser `Accept-Language` header.
 - **Environment & CLI**: Set `APP_LANGUAGE=zh` (or `en|zh|ko|ja|es|fr`) in `.env`, or pass `--lang` / `-l` to CLI commands (`serve`, `ask`, `chat`, `inspect`, `ingest`, `watch`).
 
 ## Setup
@@ -143,6 +143,12 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
 - The web app talks to the agent only through `OntologyAgent(...)` and `OntologyAgent.chat()`. It stores `ChatTurn.history` per session without inspecting it and never reads or writes other agent attributes (`messages`, `tool_trace`, `last_provider`, and so on).
   **Why:** the pydantic-ai rewrite kept `/api/chat` working only because the agent's attribute names happened to survive; a stated contract lets agent internals change without breaking the web chat (proposal `agent-chat-contract`, 2026-11-22).
   **Guarded by:** `tests/test_web.py::test_web_chat_endpoint_uses_only_agent_chat` and `tests/test_agent.py::test_agent_chat_returns_immutable_turn_contract`.
+
+## Web UI Constraints
+
+- Register every HTML route and view variant in `src/stock_ontology/web/navigation.py` (workflow, owning section, archetype, breadcrumb) and let `_render` derive navigation from it; never set nav state in a template or view model, and never use `style=` or `<style>` in templates (add a class to `library.css`).
+  **Why:** detail pages cleared every left-nav highlight because each view model hand-set `active_nav`, and 98 inline styles plus a second frame width let pages drift from one layout (proposal `codified-navigation-ux`, 2026-11-22).
+  **Guarded by:** `tests/test_web_navigation.py`.
 
 ## Tests (Offline)
 

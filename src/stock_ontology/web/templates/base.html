@@ -6,14 +6,40 @@
   <title>{% block title %}{{ t('site.title') }}{% endblock %}</title>
   <link rel="stylesheet" href="/static/library.css">
 </head>
-<body data-page-context="{{ page_context | default(t('page_context.home')) }}" data-lang="{{ lang }}">
-  <div class="portal-frame {% if wide_layout %}portal-frame-wide{% endif %}">
+<body data-page-context="{{ page_context | default(t('page_context.home')) }}" data-lang="{{ lang }}" data-archetype="{{ nav.archetype }}">
+  <div class="portal-frame">
     <header class="portal-masthead">
       <a href="/" class="portal-masthead-title">{{ t('site.portal_title') }}</a>
     </header>
 
+    <nav id="top-nav" class="portal-topnav" aria-label="{{ t('nav.top_aria') }}">
+      <div class="portal-topnav-workflows">
+        {% for wf in nav_workflows %}
+          {% if wf.key == nav.workflow %}
+            <span class="portal-topnav-active" aria-current="page" data-nav="{{ wf.key }}">{{ t(wf.label_key) }}</span>
+          {% else %}
+            <a href="{{ wf.href }}" data-nav="{{ wf.key }}">{{ t(wf.label_key) }}</a>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <div class="portal-topnav-tools">
+        <a href="/search" class="portal-topnav-search">{{ t('nav.search_quick') }}</a>
+        <span class="portal-rail-langs" aria-label="{{ t('lang.selector_label') }}">
+          {% for item in languages %}
+            {% set lang_label = (item.code | upper) if item.code in ('en', 'es', 'fr') else item.native_name %}
+            {% if item.code == lang %}
+              <strong>{{ lang_label }}</strong>
+            {% else %}
+              <a href="/set-language?lang={{ item.code }}&amp;next={{ next_path | urlencode }}" title="{{ item.native_name }}">{{ lang_label }}</a>
+            {% endif %}
+            {% if not loop.last %} &middot; {% endif %}
+          {% endfor %}
+        </span>
+      </div>
+    </nav>
+
     <div class="portal-grid">
-      <aside class="portal-rail" aria-label="Library Navigation">
+      <aside class="portal-rail" aria-label="{{ t('nav.side_aria') }}">
         <form class="portal-rail-search" action="/search" method="get">
           <div class="portal-rail-search-row">
             <input
@@ -28,73 +54,84 @@
           </div>
         </form>
 
-        <nav aria-label="Catalog Navigation">
-          {% if active_nav == 'home' %}
-            <span class="portal-rail-active">&rsaquo; {{ t('rail.home') }}</span>
-          {% else %}
-            <a href="/">{{ t('rail.home') }}</a>
-          {% endif %}
-
-          {% if active_nav == 'companies' %}
-            <span class="portal-rail-active">&rsaquo; {{ t('rail.companies') }}</span>
-          {% else %}
-            <a href="/companies">{{ t('rail.companies') }}</a>
-          {% endif %}
-
-          {% if active_nav == 'themes' %}
-            <span class="portal-rail-active">&rsaquo; {{ t('rail.themes') }}</span>
-          {% else %}
-            <a href="/themes">{{ t('rail.themes') }}</a>
-          {% endif %}
-
-          {% if active_nav == 'catalog' %}
-            <span class="portal-rail-active">&rsaquo; {{ t('rail.raw_notes') }}</span>
-          {% else %}
-            <a href="/catalog">{{ t('rail.raw_notes') }}</a>
-          {% endif %}
-
-          {% if active_nav == 'ontology' %}
-            <span class="portal-rail-active">&rsaquo; {{ t('rail.ontology') }}</span>
-          {% else %}
-            <a href="/ontology">{{ t('rail.ontology') }}</a>
-          {% endif %}
-
-          <hr class="portal-rail-divider">
-
-          {% if active_nav == 'ask' %}
-            <span class="portal-rail-active">&rsaquo; {{ t('rail.reference_desk') }}</span>
-          {% else %}
-            <a href="/ask">{{ t('rail.reference_desk') }}</a>
-          {% endif %}
-
-          {% if active_nav == 'search' %}
-            <span class="portal-rail-active">&rsaquo; {{ t('rail.advanced_search') }}</span>
-          {% else %}
-            <a href="/search">{{ t('rail.advanced_search') }}</a>
-          {% endif %}
-        </nav>
-
-        <hr class="portal-rail-divider">
-
-        <div class="portal-rail-langs" aria-label="{{ t('lang.selector_label') }}">
-          {% for item in languages %}
-            {% set lang_label = (item.code | upper) if item.code in ('en', 'es', 'fr') else item.native_name %}
-            {% if item.code == lang %}
-              <strong>{{ lang_label }}</strong>
-            {% else %}
-              <a href="/set-language?lang={{ item.code }}&amp;next={{ next_path | urlencode }}" title="{{ item.native_name }}">{{ lang_label }}</a>
+        <nav id="side-nav" aria-label="{{ t('nav.side_aria') }}">
+          {% for group in nav_groups %}
+            {% if group.label_key %}
+              <div class="portal-rail-heading">{{ t(group.label_key) }}</div>
+            {% elif not loop.first %}
+              <hr class="portal-rail-divider">
             {% endif %}
-            {% if not loop.last %} &middot; {% endif %}
+            {% for item in group.items %}
+              {% if item.key == nav.section %}
+                <span class="portal-rail-active" aria-current="page" data-nav="{{ item.key }}">&rsaquo; {{ t(item.label_key) }}</span>
+              {% else %}
+                <a href="{{ item.href }}" data-nav="{{ item.key }}">{{ t(item.label_key) }}</a>
+              {% endif %}
+            {% endfor %}
           {% endfor %}
-        </div>
+        </nav>
       </aside>
 
       <main class="portal-pane">
+        {% include "partials/breadcrumb.html" %}
         {% block content %}{% endblock %}
       </main>
     </div>
   </div>
 
+  <div id="clippy-dock" class="clippy-dock">
+    <div id="clippy-launcher" class="clippy-launcher">
+      <button id="clippy-open-btn" class="portal-btn portal-btn-primary" type="button" aria-controls="clippy-window">{{ t('clippy.open_btn') }}</button>
+    </div>
+    <section
+      id="clippy-window"
+      class="clippy-window"
+      aria-label="{{ t('clippy.dock_title') }}"
+      data-open="{{ '1' if clippy_open else '0' }}"
+      data-context="{{ clippy_context }}"
+      hidden
+    >
+      <div class="clippy-window-bar">
+        <strong>{{ t('clippy.dock_title') }}</strong>
+        <button id="clippy-minimize-btn" class="portal-btn" type="button" title="{{ t('clippy.minimize_btn') }}">{{ t('clippy.minimize_btn') }}</button>
+      </div>
+      <div class="clippy-window-body">
+        <p class="clippy-window-intro">{{ t('ask.subtitle') }}</p>
+        {% if clippy_context %}
+          <div class="refdesk-context">
+            {{ t('ask.context_prefix') }} <span class="mono">{{ clippy_context }}</span>
+          </div>
+        {% endif %}
+
+        <div id="clippy-chips" class="refdesk-prompts">
+          <button class="clippy-chip" type="button" data-fill-only="1" data-prompt="{{ t('clippy.chip_meeting_prompt') }}">{{ t('clippy.chip_meeting_label') }}</button>
+          <button class="clippy-chip" type="button" data-prompt="{{ t('clippy.chip_themes_prompt') }}">{{ t('clippy.chip_themes_label') }}</button>
+          <button class="clippy-chip" type="button" data-prompt="{{ t('clippy.chip_summarize_prompt') }}">{{ t('clippy.chip_summarize_label') }}</button>
+          <button class="clippy-chip" type="button" data-prompt="{{ t('clippy.chip_negative_prompt') }}">{{ t('clippy.chip_negative_label') }}</button>
+        </div>
+
+        <div id="clippy-messages" class="refdesk-log" aria-live="polite">
+          <div class="clippy-msg clippy-msg-bot">
+            <div class="clippy-msg-role">{{ t('clippy.role_bot') }}</div>
+            <div>{{ t('clippy.welcome_intro') }}</div>
+          </div>
+        </div>
+
+        <form id="clippy-form" class="refdesk-form">
+          <textarea id="clippy-input" rows="3" placeholder="{{ t('clippy.input_placeholder') }}"></textarea>
+          <div class="refdesk-actions">
+            <div class="refdesk-buttons">
+              <button id="clippy-send-btn" class="portal-btn portal-btn-primary" type="submit">{{ t('clippy.send_btn') }}</button>
+              <button id="clippy-reset-btn" class="portal-btn" type="button" title="{{ t('clippy.reset_title') }}">{{ t('clippy.reset_btn') }}</button>
+            </div>
+          </div>
+        </form>
+      </div>
+      <script id="clippy-i18n-data" type="application/json">{{ clippy_i18n | tojson }}</script>
+    </section>
+  </div>
+
+  <script src="/static/clippy.js"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

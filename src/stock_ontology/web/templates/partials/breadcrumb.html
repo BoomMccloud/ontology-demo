@@ -1,0 +1,14 @@
+{% if nav.crumbs %}
+<nav id="breadcrumb" class="breadcrumb catalog-path-bar" aria-label="{{ t('nav.breadcrumb_aria') }}">
+  <ol class="breadcrumb-list">
+    {% for crumb in nav.crumbs %}
+      {% set crumb_label = t(crumb.label_key) if crumb.label_key else crumb.label %}
+      {% if loop.last %}
+        <li aria-current="page">{{ crumb_label }}</li>
+      {% else %}
+        <li><a href="{{ crumb.href }}">{{ crumb_label }}</a></li>
+      {% endif %}
+    {% endfor %}
+  </ol>
+</nav>
+{% endif %}

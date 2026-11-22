@@ -187,16 +187,19 @@ def test_web_home_entity_theme_search_and_clippy_chat(tmp_path: Path) -> None:
     assert "1990s" not in r_home.text
     assert "Read-only" not in r_home.text
     assert translate("home.product_desc", lang="en") in r_home.text
+    # Top nav: workflows; left nav: Research sections; Ask only as the on-page Clippy dock.
+    assert 'aria-current="page" data-nav="research">Research<' in r_home.text
+    assert ">Ontology<" in r_home.text
+    assert 'aria-current="page" data-nav="overview">&rsaquo; Overview<' in r_home.text
     assert ">Companies<" in r_home.text
     assert ">Themes<" in r_home.text
-    assert ">Research Notes<" in r_home.text
-    assert ">Ontology<" in r_home.text
-    assert ">Ask<" in r_home.text
+    assert ">Notes<" in r_home.text
     assert ">Search<" in r_home.text
+    assert ">Ask<" not in r_home.text
     assert "Coverage Desk" not in r_home.text
     assert "Welcome to the Research Archive" not in r_home.text
     assert "Best viewed at" not in r_home.text
-    assert "clippy-dock" not in r_home.text
+    assert 'id="clippy-dock"' in r_home.text
     assert "Ontology Clippy" not in r_home.text
     assert "NVIDIA" in r_home.text
     assert "TSMC" in r_home.text
@@ -217,9 +220,11 @@ def test_web_home_entity_theme_search_and_clippy_chat(tmp_path: Path) -> None:
     assert r_themes_idx.status_code == 200
     assert "AI Data Center Power Bottleneck" in r_themes_idx.text
 
+    # /ask redirects to Overview with the Clippy dock opened.
     r_ask = client.get("/ask")
     assert r_ask.status_code == 200
-    assert "<h1>Ask</h1>" in r_ask.text
+    assert str(r_ask.url).endswith("/?ask=1")
+    assert 'data-open="1"' in r_ask.text
     assert "Mr. User" in r_ask.text
     assert "Ask Clippy" in r_ask.text
     assert "Check meeting note vs. consensus" in r_ask.text
@@ -533,12 +538,11 @@ def test_web_nav_and_advanced_search_filters(tmp_path: Path) -> None:
     # Left rail navigation on 1997 portal + minimal / (no 8-field advanced-search-panel on /).
     r_home = client.get("/")
     assert r_home.status_code == 200
-    assert "&rsaquo; Home" in r_home.text
+    assert 'aria-current="page" data-nav="overview">&rsaquo; Overview<' in r_home.text
     assert ">Companies<" in r_home.text
     assert ">Themes<" in r_home.text
-    assert ">Research Notes<" in r_home.text
+    assert ">Notes<" in r_home.text
     assert ">Ontology<" in r_home.text
-    assert ">Ask<" in r_home.text
     assert ">Search<" in r_home.text
     assert "advanced-search-panel" not in r_home.text
     assert 'id="rail-q"' in r_home.text
@@ -546,7 +550,7 @@ def test_web_nav_and_advanced_search_filters(tmp_path: Path) -> None:
     # /search expands the integrated Advanced Search panel
     r_search_blank = client.get("/search")
     assert r_search_blank.status_code == 200
-    assert ">Home<" in r_search_blank.text
+    assert ">Overview<" in r_search_blank.text
     assert '<details class="advanced-search-panel" open>' in r_search_blank.text
 
     # Filter-only searches (empty q)
@@ -1272,7 +1276,9 @@ def test_web_1997_home_minimal_link_cap(tmp_path: Path) -> None:
     assert "All themes »" in home_text
     assert "Company 11" not in r_home.text
     assert "Secular Theme 06" not in r_home.text
-    assert len(re.findall(r"<a\b", r_home.text)) <= 25
+    # The cap covers the <main> workspace only; the shell navigation is codified separately.
+    main_html = r_home.text.split('<main class="portal-pane">', 1)[1].split("</main>", 1)[0]
+    assert len(re.findall(r"<a\b", main_html)) <= 25
 
     r_all_co = client.get("/companies")
     assert r_all_co.status_code == 200

@@ -19,7 +19,7 @@
 {% endif %}
 
 {% if has_search_criteria %}
-  <h2 style="font-size: 1.15rem; border-bottom: 1px solid #6e6759; padding-bottom: 4px;">
+  <h2 class="u-fs-1p15rem u-bdb-1px-solid-6e6759 u-pb-4px">
     {% if query %}
       {{ t('search.results_heading', query=query, count=results | length) }}
     {% else %}
@@ -30,10 +30,10 @@
     <table class="catalog-table">
       <thead>
         <tr>
-          <th style="width: 15%;">{{ t('search.col_type_subtype') }}</th>
-          <th style="width: 28%;">{{ t('search.col_title_signals') }}</th>
+          <th class="u-w-15pct">{{ t('search.col_type_subtype') }}</th>
+          <th class="u-w-28pct">{{ t('search.col_title_signals') }}</th>
           <th>{{ t('search.col_summary_source') }}</th>
-          <th style="width: 14%;">{{ t('search.col_match') }}</th>
+          <th class="u-w-14pct">{{ t('search.col_match') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -50,7 +50,7 @@
               {% if item.aliases %}
                 <div class="source-cite">{{ t('search.aliases_label') }} {{ item.aliases | join(', ') }}</div>
               {% endif %}
-              <div style="margin-top: 4px;">
+              <div class="u-mt-4px">
                 {% if item.effective_sentiment %}
                   <span class="badge badge-{{ item.effective_sentiment | lower }}">{{ t_enum('sentiment', item.effective_sentiment) }}</span>
                 {% endif %}
@@ -65,7 +65,7 @@
             <td>
               <div>{{ item.summary }}</div>
               {% if item.source_label %}
-                <div class="source-cite" style="margin-top: 4px;">
+                <div class="source-cite u-mt-4px">
                   {{ t('common.source') }}
                   {% if item.source_exists %}
                     <a href="/catalog?file={{ item.source_file | urlencode }}">{{ item.source_label }}</a>

@@ -4,8 +4,8 @@
   <table class="catalog-table">
     <thead>
       <tr>
-        <th style="width: 14%;">{{ t('section.events_col_date_type') }}</th>
-        <th style="width: 24%;">{{ t('section.events_col_event') }}</th>
+        <th class="u-w-14pct">{{ t('section.events_col_date_type') }}</th>
+        <th class="u-w-24pct">{{ t('section.events_col_event') }}</th>
         <th>{{ t('section.events_col_details') }}</th>
       </tr>
     </thead>
@@ -42,7 +42,7 @@
             {% set ev_author = ev_src.get("author") %}
             {% set ev_kind = ev_src.get("kind") %}
             {% if ev.source_label or ev_author or ev_kind %}
-              <div class="source-cite" style="margin-top: 4px;">
+              <div class="source-cite u-mt-4px">
                 {% if ev.source_label %}
                   {{ t('common.source') }}
                   {% if ev.source_exists %}
