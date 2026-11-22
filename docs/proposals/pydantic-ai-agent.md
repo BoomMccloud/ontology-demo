@@ -1,8 +1,8 @@
 ---
 proposal_id: "pydantic-ai-agent"
-state: BUILT
+state: ACCEPTED
 witness: independent
-candidate: "6d4b2d7 @ main + uncommitted working tree (manifest sha256 cbf1a3b1)"
+candidate: "787ed0c @ worktree .claude/worktrees/pydantic-ai-agent (branch proposal/pydantic-ai-agent)"
 ---
 
 # Proposal: Use Pydantic AI as the agent framework
@@ -214,5 +214,56 @@ Build did not touch the other uncommitted ledgers (`entity-first-search.md`, `co
 None remain open.
 
 ## Audit
+
+Candidate: `787ed0c @ worktree .claude/worktrees/pydantic-ai-agent (branch proposal/pydantic-ai-agent)`, base `6d4b2d7`. `git diff --quiet 787ed0c -- src tests pyproject.toml uv.lock README.md` is clean. The only uncommitted change is the ledger's `candidate:` line.
+
+Independence: fresh-context. This auditing subagent did not author the Frame, Proof or Build. Before auditing it had seen only the orchestrator's brief, the ledger, `git diff 6d4b2d7 787ed0c`, and the Proof and Build scratchpad logs it names.
+
+Primary-claim verdict: PROVED. Evidence:
+- The protected witness `tests/test_agent.py::test_agent_runs_tools_from_extra_pydantic_ai_toolset` is intact. The first 18279 bytes of `git show 787ed0c:tests/test_agent.py` are byte-identical (`cmp`) to `scratchpad/proof/test_agent.protected.py`, sha256 `38459b4c…a3ef`. `git diff 6d4b2d7 787ed0c -- tests/test_agent.py` removes 0 lines.
+- I reproduced RED myself. I ran the candidate's `tests/test_agent.py` against a `git archive 6d4b2d7` tree with the project venv, and the witness fails with `TypeError: OntologyAgent.__init__() got an unexpected keyword argument 'toolsets'` (`scratchpad/audit/red-base.log`). Proof's `proof/red-overlay.log` shows the same failure.
+- It is GREEN at the candidate: `uv run pytest tests/test_agent.py::test_agent_runs_tools_from_extra_pydantic_ai_toolset -v` gives 1 passed.
+- `agent.py` `ask()` now runs `pydantic_ai.Agent.run_sync` with `toolsets=[...]`. `web/app.py` and `cli.py` still call `OntologyAgent.ask`.
+
+Limit:
+- The witness uses a `FunctionToolset`, not an MCP toolset, because the `[mcp]` extra is excluded. A2A is not shown.
+- "Every current answer behavior unchanged" holds except for the two behavior changes the human accepted, Deviations 1 and 2. An empty model turn now ends in `agent.max_rounds_reached`, and hallucinated tool names no longer appear in `tool_trace`/`tools_used`.
+
+Guardrail verdicts:
+- Writable DB rejected, ontology tools stay read-only: PROVED. Evidence: `tests/test_agent.py::test_agent_requires_read_only_db` passes unchanged and lies inside the protected bytes. The `tests/test_relationships.py` stats checks pass, and that file is unchanged in the diff. Limit: read-only is enforced by the DB handle, not by the tools.
+- `/api/chat` keeps `reply`, `tools_used`, `provider`, `model`, `fallback_used`, router fallback and session history: PROVED. Evidence:
+  - `tests/test_web.py` checks `tools_used == ["get_entity_overview"]`, and its second request in the same session sees "user turns=2".
+  - `tests/test_llm_router.py:556` checks `last_provider == "dashscope"`, `last_fallback_used is True` and matching tool-call ids.
+  - Both files are unchanged and pass.
+  - The new `test_pydantic_ai_model_round_trips_raw_content_call_ids_and_provider` was RED at base (`scratchpad/audit/red-base.log`) and passes now.
+  - Limit: Gemini `raw_content` replay is proved only with an `object()` stand-in and the `test_gemini.py` fake, never with a live `types.Content`. Unknown tool names leaving `tools_used` is an accepted change (Deviation 2).
+- `max_rounds` bounds a looping model with the localized message: PROVED. Evidence: `tests/test_agent.py::test_agent_tool_error_and_max_rounds_guard` passes and sits in the protected bytes. `tests/test_i18n.py:235` (`max_rounds=1`, ja) passes, and that file is unchanged. Limit: none beyond the accepted empty-turn change (Deviation 1).
+
+Scope and duty verdict: scope HELD; duties HELD. Evidence:
+- The changed paths are the ones Frame allowed, plus `src/stock_ontology/cli.py`, a one-line `PYDANTIC_AI_NO_BANNER` setdefault that the human approved under Build Deviation 3.
+- The adapter extends the reuse Frame named: `LLMClient`/`LLMRouter` sit under a thin `Model`. There is no `FallbackModel` and no provider or router edits, `pydantic-ai-slim==2.71.0` is pinned with no extras, and no MCP or A2A code was added.
+- `tests/test_gemini.py:302-303` only reroutes the same two assertions through `to_llm_messages` for the new message type, which Frame's Allowed scope permits explicitly. It asserts the same invariant, so I judge it consistent with `Invariants changed: None`.
+- The README "Query Agent Constraints" entry is a constraint-capture duty (step 7). It has a `**Why:**` and names an existing test, and I verified the guard bites. Changing `async def handler` to `def handler` in a scratch copy (`scratchpad/audit/mut`) fails `test_agent_ux1_meeting_note_consensus_check` along with ux2 and ux3 (`scratchpad/audit/sync-mutant.log`).
+
+Limit: the `test_gemini.py` judgment rests on Frame's Allowed scope. A strictly literal reading of step 5 would want that edit listed under `Invariants changed`.
+
+Test homes:
+- `tests/test_agent.py`: the Proof-authored witness plus Build's `RecordingAgentLLM`, `test_agent_offers_ontology_tools_with_existing_schemas_and_prompt` and `test_pydantic_ai_model_round_trips_raw_content_call_ids_and_provider`. It is the permanent owner Frame and Proof named for agent and adapter behavior, and the new adapter has no separate test file.
+- `tests/test_gemini.py`: amended only where the message type changed. It stays the owner of Gemini agent behavior.
+
+Full gates: PASS.
+- `uv sync` then `uv run pytest -v`, with provider API keys unset and fake LLM clients only, gives 83 passed in 5.20s.
+- Focused: `uv run pytest tests/test_agent.py::{test_agent_runs_tools_from_extra_pydantic_ai_toolset,test_agent_requires_read_only_db,test_agent_tool_error_and_max_rounds_guard,test_agent_ux1_meeting_note_consensus_check} -v` gives 4 passed.
+
+Limit: offline only, and no live provider was called. Ruff is not a required gate, so I did not rerun it.
+
+Residual risks:
+- Live Gemini replay of a real `types.Content` through `provider_details`, and live DashScope or OpenAI call-id pairing, are untested beyond the fakes.
+- The `async` plus `sequential=True` same-thread guarantee depends on how `pydantic-ai-slim` 2.71.0 runs `run_sync`. A version bump could move tools to another thread. The README entry and the ux tests guard this, but only at test time.
+- `cli.py` sets `PYDANTIC_AI_NO_BANNER` in the process environment on import, so it affects anything else that imports `stock_ontology.cli`.
+- MCP toolset compatibility is assumed from the shared `AbstractToolset` interface, not demonstrated. A2A support in Pydantic AI 2.71.0 is unverified (no `Agent.to_a2a`).
+
+Recommendation: ACCEPT
+Packet: No re-audit needed. The next step belongs to the human: decide whether to merge `proposal/pydantic-ai-agent` (787ed0c), which this verdict does not authorize. MCP and A2A integration stay with later proposals.
 
 ## Revisions
