@@ -476,6 +476,8 @@ class IngestionPipeline:
                     canon_facets["sentiment"] = norm_edge_sent
                 else:
                     canon_facets.pop("sentiment", None)
+            # `basis` is set by code, never taken from the LLM.
+            canon_facets["basis"] = "extracted"
             self.db.upsert_edge(
                 Edge(
                     id=f"edge_{uuid.uuid4().hex[:12]}",

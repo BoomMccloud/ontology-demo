@@ -10,7 +10,9 @@ from pathlib import Path
 from collections.abc import Iterable
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from stock_ontology.vocab import facet_vocabularies_spec, facet_vocabulary_differences
 
 SuggestionStatus = Literal["pending", "approved", "aliased", "rejected"]
 
@@ -286,7 +288,20 @@ class OntologyRegistry(BaseModel):
     companies: list[CompanySpec] = Field(default_factory=list)
     themes: list[ThemeSpec] = Field(default_factory=list)
     facet_aliases: dict[str, dict[str, str]] = Field(default_factory=dict)
+    # The official facet vocabularies. `vocab.py` holds code's typed copy; loading a
+    # registry whose vocabularies differ from it fails, naming each difference.
+    facet_vocabularies: dict[str, Any] = Field(default_factory=facet_vocabularies_spec)
     suggestions: RegistrySuggestions = Field(default_factory=RegistrySuggestions)
+
+    @field_validator("facet_vocabularies")
+    @classmethod
+    def _facet_vocabularies_match_code(cls, value: dict[str, Any]) -> dict[str, Any]:
+        diffs = facet_vocabulary_differences(value)
+        if diffs:
+            raise ValueError(  # noqa: TRY003
+                "Registry facet vocabularies differ from code (src/stock_ontology/vocab.py): " + "; ".join(diffs)
+            )
+        return value
 
     @staticmethod
     def _default_facets_for_norm(spec: RelationSpec, norm_relation: str) -> dict[str, Any]:

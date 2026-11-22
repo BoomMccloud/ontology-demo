@@ -44,6 +44,7 @@ from stock_ontology.registry import (
     normalize_relation_name,
 )
 from stock_ontology.vocab import (
+    is_synthesized_edge,
     matches_signal_filter,
     parse_category_filter,
     parse_filter_values,
@@ -415,7 +416,7 @@ class OntologyDB:
                     from_id=from_id,
                     to_id=to_id,
                     relation=relation,
-                    facets=facets,
+                    facets={**facets, "basis": "synthesized"},
                     created_at=now,
                 )
             )
@@ -1379,6 +1380,9 @@ class OntologyDB:
             )
 
         for item in self.get_incident_edges(theme.id):
+            # A synthesized edge is consensus inference, not evidence the theme affects a company.
+            if is_synthesized_edge(item.get("facets")):
+                continue
             nb = item["neighbor"]
             item_res, _ = self._canonicalize_incident_edge(theme, item)
             if _is_company(nb):
@@ -1402,13 +1406,9 @@ class OntologyDB:
                     existing_lk["facets"] = merged_facets
                     existing_lk["exposure_sentiment"] = exp_sent
             elif nb["node_type"] in ("event", "view"):
-                # A consensus view links a theme only as LLM-picked evidence, so it
-                # doesn't show the company is affected by the theme.
-                if nb["facets"].get("view_type") == "consensus":
-                    continue
                 for sub in self.get_incident_edges(nb["id"]):
                     sub_nb = sub["neighbor"]
-                    if _is_company(sub_nb):
+                    if _is_company(sub_nb) and not is_synthesized_edge(sub.get("facets")):
                         entry = _ensure_company_entry(sub_nb)
                         sub_res, _ = self._canonicalize_incident_edge(nb, sub)
                         ind_key = (nb["id"], sub_res.relation, item_res.relation)
