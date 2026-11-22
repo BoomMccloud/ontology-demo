@@ -11,51 +11,47 @@
     </thead>
     <tbody>
       {% for vw in views %}
-        {% set vw_sent = vw.effective_sentiment or vw.facets.get("sentiment") %}
         <tr id="node-{{ vw.id }}">
           <td>
-            {% if vw.facets.get("stance") %}
-              <span class="badge badge-{{ vw.facets.get('stance') | lower }}">{{ t_enum('stance', vw.facets.get("stance")) }}</span>
+            {% if vw.stance %}
+              <span class="badge badge-{{ vw.stance | lower }}">{{ t_enum('stance', vw.stance) }}</span>
             {% endif %}
-            {% if vw_sent %}
-              <span class="badge badge-{{ vw_sent | lower }}">{{ t_enum('sentiment', vw_sent) }}</span>
+            {% if vw.sentiment %}
+              <span class="badge badge-{{ vw.sentiment | lower }}">{{ t_enum('sentiment', vw.sentiment) }}</span>
             {% endif %}
-            {% if vw.facets.get("support_strength") %}
-              <span class="badge badge-{{ vw.facets.get('support_strength') | lower }}">{{ t_enum('support_strength', vw.facets.get("support_strength")) }}</span>
+            {% if vw.support_strength %}
+              <span class="badge badge-{{ vw.support_strength | lower }}">{{ t_enum('support_strength', vw.support_strength) }}</span>
             {% endif %}
             <div class="source-cite u-mt-3px">
-              {{ t_enum('view_type', vw.facets.get("view_type", "view")) }}
-              {% if vw.facets.get("as_of") %} &bull; {{ vw.facets.get("as_of") }}{% endif %}
+              {{ t_enum('view_type', vw.view_type) }}
+              {% if vw.as_of %} &bull; {{ vw.as_of }}{% endif %}
             </div>
-            {% if vw.sentiment_source == "edge" %}
-              {% if vw.facets.get("sentiment") and vw.facets.get("sentiment") != vw_sent %}
-                <div class="source-cite">{{ t('sentiment.entity_impact_overall', overall=t_enum('sentiment', vw.facets.get("sentiment"))) }}</div>
-              {% else %}
-                <div class="source-cite">{{ t('sentiment.entity_impact') }}</div>
-              {% endif %}
+            {% if vw.impact_note == "overall" %}
+              <div class="source-cite">{{ t('sentiment.entity_impact_overall', overall=t_enum('sentiment', vw.overall_sentiment)) }}</div>
+            {% elif vw.impact_note == "entity" %}
+              <div class="source-cite">{{ t('sentiment.entity_impact') }}</div>
             {% endif %}
           </td>
           <td>
             <strong>{{ vw.name }}</strong>
-            {% if vw.facets.get("conviction") %}
-              <div class="source-cite">{{ t('home.conviction_label') }} {{ t_enum('conviction', vw.facets.get("conviction")) }}</div>
+            {% if vw.conviction %}
+              <div class="source-cite">{{ t('home.conviction_label') }} {{ t_enum('conviction', vw.conviction) }}</div>
             {% endif %}
           </td>
           <td>
             <div>{{ vw.summary }}</div>
-            {% set vw_src = vw.facets.get("source") if vw.facets.get("source") is mapping else {} %}
-            {% set vw_author = vw_src.get("author") %}
-            {% if vw.source_label or vw_author %}
+            {% set src = vw.source %}
+            {% if src.label or src.author %}
               <div class="source-cite u-mt-4px">
-                {% if vw.source_label %}
+                {% if src.label %}
                   {{ t('common.source') }}
-                  {% if vw.source_exists %}
-                    <a href="/catalog?file={{ vw.source_file | urlencode }}">{{ vw.source_label }}</a>
+                  {% if src.exists %}
+                    <a href="/catalog?file={{ src.file | urlencode }}">{{ src.label }}</a>
                   {% else %}
-                    {{ vw.source_label }}
+                    {{ src.label }}
                   {% endif %}
                 {% endif %}
-                {% if vw_author %}{% if vw.source_label %} &bull; {% endif %}{{ t('common.author') }} {{ vw_author }}{% endif %}
+                {% if src.author %}{% if src.label %} &bull; {% endif %}{{ t('common.author') }} {{ src.author }}{% endif %}
               </div>
             {% endif %}
           </td>

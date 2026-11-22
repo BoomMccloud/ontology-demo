@@ -64,6 +64,22 @@ Other components call the agent through two entry points and nothing else.
 - **Web UI**: Switch languages via the top nav language selector (`GET /set-language`), `?lang=<code>` query parameter, `stock_ontology_lang` cookie, `POST /api/language`, or browser `Accept-Language` header.
 - **Environment & CLI**: Set `APP_LANGUAGE=zh` (or `en|zh|ko|ja|es|fr`) in `.env`, or pass `--lang` / `-l` to CLI commands (`serve`, `ask`, `chat`, `inspect`, `ingest`, `watch`).
 
+## Repository Layout
+
+```text
+src/stock_ontology/       application code, nine modules (see docs/architecture/)
+tests/                    offline test suite with fake LLM clients
+tests/fixtures/sample_data/   research notes used by the tests
+data/                     research notes to ingest (default ONTOLOGY_DATA_DIR)
+ontology_registry.json    canonical relations, companies, themes, and pending suggestions
+docs/architecture/        one page per module, plus data flow and dependency layers
+docs/proposals/           proposal pipeline ledgers, one per change
+.codex/skills/            proposal pipeline and diagnostic skills
+.claude/skills/           symlinks to .codex/skills/ for Claude Code
+```
+
+Start with [docs/architecture/README.md](docs/architecture/README.md) for the module map. `tests/test_architecture.py` keeps that map and the import layers in sync with the code. See [AGENTS.md](AGENTS.md) for the change process.
+
 ## Setup
 
 ```bash
@@ -149,6 +165,9 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
 - Register every HTML route and view variant in `src/stock_ontology/web/navigation.py` (workflow, owning section, archetype, breadcrumb) and let `_render` derive navigation from it; never set nav state in a template or view model, and never use `style=` or `<style>` in templates (add a class to `library.css`).
   **Why:** detail pages cleared every left-nav highlight because each view model hand-set `active_nav`, and 98 inline styles plus a second frame width let pages drift from one layout (proposal `codified-navigation-ux`, 2026-11-22).
   **Guarded by:** `tests/test_web_navigation.py`.
+- Give the entity page templates (`entity.html` and every partial it includes, among them `section_events.html` and `section_views.html`, which `theme.html` shares) only the presentation models built in `web/viewmodels.py`. Never pass a raw ontology node, `facets`, or `edge_facets` to them, and never read `.facets` in them; add a field to the model and map it in the view model instead.
+  **Why:** templates read raw facets and resolved sentiment inline, so the page depended on how ontology data is shaped (proposal `company-view-separation`, 2026-11-22).
+  **Guarded by:** `tests/test_web.py::test_entity_page_templates_only_see_presentation_models`.
 
 ## Tests (Offline)
 

@@ -39,11 +39,11 @@ VARIANTS: list[tuple[str, str, str, str | None]] = [
     ("/themes", "research", "themes", None),
     ("/catalog", "research", "notes_by_company", None),
     ("/catalog?view=company", "research", "notes_by_company", None),
-    ("/catalog?view=author", "research", "authors", None),
-    ("/catalog?view=person", "research", "authors", None),
+    ("/catalog?view=author", "research", "notes_by_author", None),
+    ("/catalog?view=person", "research", "notes_by_author", None),
     ("/catalog?view=all", "research", "notes_all", None),
     ("/catalog?view=company&dir=NVDA", "research", "notes_by_company", "NVIDIA"),
-    ("/catalog?view=author&author=Kenji+Sato", "research", "authors", "Kenji Sato"),
+    ("/catalog?view=author&author=Kenji+Sato", "research", "notes_by_author", "Kenji Sato"),
     (f"/catalog?file={NOTE_FILE}", "research", "notes_by_company", "NVDA Q3 Preview"),
     (f"/catalog?view=all&file={NOTE_FILE}", "research", "notes_all", "NVDA Q3 Preview"),
     ("/search", "research", "search", None),
@@ -295,8 +295,12 @@ def test_one_desktop_width_and_one_mobile_breakpoint() -> None:
 
 def test_navigation_registry_lookup() -> None:
     from stock_ontology.web.navigation import resolve_nav
+    from stock_ontology.web.viewmodels import EntityHeader
 
-    nav = resolve_nav("/entity/{entity_id}", {}, {"entity": {"name": "NVIDIA"}, "is_company": True})
+    header = EntityHeader(
+        id="ent_nvda", name="NVIDIA", summary="", aliases=(), ticker="NVDA", entity_type="company"
+    )
+    nav = resolve_nav("/entity/{entity_id}", {}, {"entity": header, "is_company": True})
     assert (nav.workflow, nav.section, nav.archetype) == ("research", "companies", "component")
     assert [c.label_key or c.label for c in nav.crumbs][-1] == "NVIDIA"
 

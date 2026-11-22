@@ -7,7 +7,10 @@ that talks to the agent. It never writes to `ontology.db`.
 
 - `src/stock_ontology/web/app.py`: `create_app(settings, llm=None)` and routes.
 - `src/stock_ontology/web/viewmodels.py`: turns `OntologyDB` results into
-  template contexts, including `run_hybrid_search`.
+  template contexts, including `run_hybrid_search`. The entity page context holds
+  only frozen presentation models (`EntityHeader`, `ConsensusSummary`,
+  `EventRow`, `ViewRow`, `ThemeLinkRow`, `RelatedEntityRow`, and so on) and
+  prepared label/value pairs, so its templates never read `facets`.
 - `src/stock_ontology/web/catalog.py`: the raw notes browser, path-safe note
   lookup, XSS-safe Markdown rendering, and source citations.
 - `src/stock_ontology/web/navigation.py`: the navigation registry. Every HTML

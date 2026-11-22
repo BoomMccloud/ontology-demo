@@ -52,16 +52,34 @@
 <section aria-label="{{ t('home.browse_by_theme') }}">
   <h2>{{ t('rail.themes') }}</h2>
   {% if featured_themes %}
-    <ul class="portal-list">
-      {% for thm in featured_themes %}
-        <li>
-          <a href="/theme/{{ thm.id }}">{{ thm.name }}</a>
-          {% if thm.stage %}
-            <span class="badge badge-{{ thm.stage | lower }}">{{ t_enum('stage', thm.stage) }}</span>
-          {% endif %}
-        </li>
-      {% endfor %}
-    </ul>
+    <table class="portal-table">
+      <thead>
+        <tr>
+          <th class="u-w-38pct">{{ t('themes_index.col_theme') }}</th>
+          <th class="u-w-20pct">{{ t('themes_index.col_stage') }}</th>
+          <th class="u-w-14pct u-num">{{ t('home.col_companies') }}</th>
+          <th class="u-w-14pct u-num">{{ t('home.col_views') }}</th>
+          <th class="u-w-14pct u-num">{{ t('home.col_events') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for thm in featured_themes %}
+          <tr>
+            <td><a href="/theme/{{ thm.id }}">{{ thm.name }}</a></td>
+            <td>
+              {% if thm.stage %}
+                <span class="badge badge-{{ thm.stage | lower }}">{{ t_enum('stage', thm.stage) }}</span>
+              {% else %}
+                <span class="source-cite">{{ t('common.none') }}</span>
+              {% endif %}
+            </td>
+            <td class="mono u-num">{{ thm.first_order_count }}</td>
+            <td class="mono u-num">{{ thm.view_count }}</td>
+            <td class="mono u-num">{{ thm.event_count }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
     {% if total_themes > (featured_themes | length) %}
       <p class="portal-more-link">
         <a href="/themes">{{ t('home.all_themes_link') }}</a>
