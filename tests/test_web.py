@@ -1434,3 +1434,217 @@ def test_web_chat_endpoint_uses_only_agent_chat() -> None:
         and id(node) not in chat_receivers
     ]
     assert other_uses == []
+
+
+# --- Generic ontology search (ledger: docs/proposals/ontology-search.md) ---
+#
+# Page contract the search page exposes, used by the witnesses below:
+#   - the best-match card is one element with `data-best-match`, `data-result-id`, and
+#     `data-match-reason`;
+#   - every listed ontology item is an element with `data-result-id` and `data-match-reason`
+#     (one of name, alias, relationship, note, semantic);
+#   - every grepped note passage is an element with `data-note-file` (path relative to
+#     ONTOLOGY_DATA_DIR), `data-note-line` (1-based), and `data-match-reason="note"`;
+#   - the agent side column is one element with `data-agent-column` and `data-agent-query`
+#     (the search word, empty when there is none), and holds a `data-agent-detach` control.
+
+_SEARCH_NOTE_FILE = "Notes/2026-11-10_channel_check.md"
+_SEARCH_EVENT_FILE = "NVDA/2026-11-01_q3.md"
+_SEARCH_ATTRS = ("data-result-id", "data-note-file", "data-agent-", "data-best-match")
+
+
+def _search_tags(page: str) -> list[dict[str, str]]:
+    """Attributes of start tags carrying search-page data attributes, in document order."""
+    tags: list[dict[str, str]] = []
+    for match in re.finditer(r"<[a-zA-Z][^>]*>", page):
+        raw = match.group(0)
+        if not any(marker in raw for marker in _SEARCH_ATTRS):
+            continue
+        pairs = re.findall(r'([\w:-]+)(?:\s*=\s*"([^"]*)")?', raw[1:-1])[1:]
+        tags.append({name: html.unescape(value) for name, value in pairs})
+    return tags
+
+
+def _seed_search_db(db_path: Path) -> None:
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        nvda = Node(
+            id="ent_nvda",
+            node_type="entity",
+            name="NVIDIA",
+            summary="AI GPU platform leader.",
+            aliases=["NVDA"],
+            facets={"entity_type": "company", "ticker": "NVDA"},
+        )
+        aapl = Node(
+            id="ent_aapl",
+            node_type="entity",
+            name="Apple Inc.",
+            summary="Consumer devices and services.",
+            aliases=["AAPL"],
+            facets={"entity_type": "company", "ticker": "AAPL"},
+        )
+        theme = Node(
+            id="thm_power",
+            node_type="theme",
+            name="AI Data Center Power Bottleneck",
+            summary="Grid power and rack cooling density constraints.",
+            facets={"stage": "accelerating"},
+        )
+        event = Node(
+            id="evt_nvda_q3",
+            node_type="event",
+            name="Q3 Data Center Beat",
+            summary="Data center revenue beat guidance.",
+            facets={
+                "event_type": "fact",
+                "event_date": "2026-11-01",
+                "status": "occurred",
+                "source": {"file_path": _SEARCH_EVENT_FILE},
+            },
+            source_doc_id="doc_q3",
+        )
+        db.upsert_node(nvda, embedding=_unit_vec(1))
+        db.upsert_node(aapl, embedding=_unit_vec(2))
+        db.upsert_node(theme, embedding=_unit_vec(3))
+        db.upsert_node(event, embedding=_unit_vec(4))
+        db.upsert_edge(Edge(id="se1", from_id="ent_nvda", to_id="thm_power", relation="EXPOSED_TO"))
+        db.upsert_edge(
+            Edge(id="se2", from_id="evt_nvda_q3", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_q3")
+        )
+        # FakeWebLLM embeds every query as _unit_vec(0), so this consensus is the nearest vector.
+        cons = Node(
+            id="vw_cons_aapl",
+            node_type="view",
+            name="Consensus: Buy Apple Inc.",
+            summary="Maintain Buy on services growth.",
+            facets={"stance": "buy", "as_of": "2026-11-15"},
+        )
+        db.upsert_consensus_view("ent_aapl", cons, _unit_vec(0), [], [])
+
+
+def _seed_search_notes(data_dir: Path) -> None:
+    (data_dir / "Notes").mkdir(parents=True)
+    (data_dir / _SEARCH_NOTE_FILE).write_text(
+        "# Channel check\n\nChannel check: NVIDIA lead times shortened.\n",
+        encoding="utf-8",
+    )
+    (data_dir / "NVDA").mkdir(parents=True)
+    (data_dir / _SEARCH_EVENT_FILE).write_text(
+        "# Q3 call\n\nNVIDIA data center revenue beat guidance.\n",
+        encoding="utf-8",
+    )
+
+
+def _search_client(tmp_path: Path, llm: Any) -> tuple[TestClient, Path, Path]:
+    db_path = tmp_path / "search.db"
+    _seed_search_db(db_path)
+    data_dir = tmp_path / "data"
+    _seed_search_notes(data_dir)
+    settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=data_dir)
+    return TestClient(create_app(settings, llm=llm)), db_path, data_dir
+
+
+def test_web_search_entity_first_card_sections_notes_and_agent_column(tmp_path: Path) -> None:
+    client, _, _ = _search_client(tmp_path, FakeWebLLM())
+
+    r = client.get("/search", params={"q": "nvidia"})
+    assert r.status_code == 200
+    tags = _search_tags(r.text)
+
+    # Best-match card: the entity whose name matches, labeled "name".
+    best = [t for t in tags if "data-best-match" in t]
+    assert len(best) == 1, "search page has no single best-match card"
+    assert best[0].get("data-result-id") == "ent_nvda"
+    assert best[0].get("data-match-reason") == "name"
+
+    # The nearer vector hit is listed below the entity and says it matched semantically.
+    items = [t for t in tags if "data-result-id" in t]
+    order = [t["data-result-id"] for t in items]
+    reason = {t["data-result-id"]: t.get("data-match-reason") for t in reversed(items)}
+    assert "vw_cons_aapl" in order
+    assert order.index("ent_nvda") < order.index("vw_cons_aapl")
+    assert reason["vw_cons_aapl"] == "semantic"
+
+    # Expansion from the matched entity through its edges.
+    assert reason.get("thm_power") == "relationship"
+    assert "evt_nvda_q3" in order
+
+    # Grepped note passage with file and line; the event's own source line is not listed again.
+    passages = [t for t in tags if "data-note-file" in t]
+    note = [t for t in passages if t["data-note-file"] == _SEARCH_NOTE_FILE]
+    assert len(note) == 1
+    assert note[0].get("data-note-line") == "3"
+    assert note[0].get("data-match-reason") == "note"
+    assert "NVIDIA lead times shortened." in r.text
+    assert all(t["data-note-file"] != _SEARCH_EVENT_FILE for t in passages)
+
+    # Agent side column for this search, detachable, on the shared Clippy chat session.
+    columns = [t for t in tags if "data-agent-column" in t]
+    assert len(columns) == 1
+    assert columns[0].get("data-agent-query") == "nvidia"
+    assert any("data-agent-detach" in t for t in tags)
+    assert "/static/clippy.js" in r.text
+    assert "/api/chat" in client.get("/static/clippy.js").text
+
+    # No search word, no agent run.
+    r_empty = client.get("/search")
+    assert r_empty.status_code == 200
+    assert all(not t.get("data-agent-query") for t in _search_tags(r_empty.text))
+
+
+def test_web_search_reads_only_data_dir_notes_and_never_writes_db(tmp_path: Path) -> None:
+    import hashlib
+
+    client, db_path, data_dir = _search_client(tmp_path, FakeWebLLM())
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("NVIDIA OUTSIDE-MARKER-1\n", encoding="utf-8")
+    (data_dir / "linked.md").symlink_to(outside / "secret.md")
+    (data_dir / ".hidden").mkdir()
+    (data_dir / ".hidden" / "x.md").write_text("NVIDIA HIDDEN-DIR-MARKER-2\n", encoding="utf-8")
+    (data_dir / ".dotnote.md").write_text("NVIDIA HIDDEN-FILE-MARKER-3\n", encoding="utf-8")
+    (data_dir / "Notes" / "deck.pdf").write_text("NVIDIA UNSUPPORTED-MARKER-4\n", encoding="utf-8")
+
+    def db_digest() -> tuple[str, int]:
+        return hashlib.sha256(db_path.read_bytes()).hexdigest(), db_path.stat().st_mtime_ns
+
+    before = db_digest()
+
+    r = client.get("/search", params={"q": "nvidia"})
+    assert r.status_code == 200
+    # Positive control: an in-scope note is grepped, so the exclusions below are meaningful.
+    assert any(t.get("data-note-file") == _SEARCH_NOTE_FILE for t in _search_tags(r.text))
+
+    markers = ("OUTSIDE-MARKER-1", "HIDDEN-DIR-MARKER-2", "HIDDEN-FILE-MARKER-3", "UNSUPPORTED-MARKER-4")
+    for word in ("nvidia", "../outside/secret", "NVIDIA OUTSIDE", ".hidden", "*.md", "MARKER"):
+        page = client.get("/search", params={"q": word})
+        assert page.status_code == 200
+        for marker in markers:
+            assert marker not in page.text, f"{marker} leaked for search word {word!r}"
+
+    assert db_digest() == before
+
+
+class EmbeddingAndAgentDownWebLLM(FakeWebLLM):
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("embedding provider unavailable")
+
+    def generate_agent_reply(self, **kwargs: Any) -> AgentTurn:
+        raise RuntimeError("agent provider unavailable")
+
+
+def test_web_search_functional_results_survive_embedding_and_agent_failure(tmp_path: Path) -> None:
+    client, _, _ = _search_client(tmp_path, EmbeddingAndAgentDownWebLLM())
+
+    r = client.get("/search", params={"q": "nvidia"})
+    assert r.status_code == 200
+    tags = _search_tags(r.text)
+    assert [t.get("data-result-id") for t in tags if "data-best-match" in t] == ["ent_nvda"]
+    assert any(t.get("data-note-file") == _SEARCH_NOTE_FILE for t in tags)
+    assert [t.get("data-agent-query") for t in tags if "data-agent-column" in t] == ["nvidia"]
+
+    # The agent run the column starts fails as a JSON error the column can show.
+    r_chat = client.post("/api/chat", json={"message": "nvidia", "page_context": "Search: nvidia"})
+    assert r_chat.status_code == 500
+    assert r_chat.json()["error"]
+    assert r_chat.json()["session_id"]
