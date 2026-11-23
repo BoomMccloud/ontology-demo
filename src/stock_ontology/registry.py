@@ -304,6 +304,13 @@ def _ensure_unique_id(candidate: str, used_ids: set[str]) -> str:
     return unique
 
 
+class RegistryPublication(BaseModel):
+    version: int
+    revision: str
+    previous_revision: str
+    confirmed_at: str
+
+
 class OntologyRegistry(BaseModel):
     """Official stock ontology registry with canonical definitions and suggestion queue."""
 
@@ -322,6 +329,15 @@ class OntologyRegistry(BaseModel):
     # Max length of node `name` and `summary`; longer text is refused on write.
     metadata_max_length: dict[str, int]
     suggestions: RegistrySuggestions = Field(default_factory=RegistrySuggestions)
+    publications: list[RegistryPublication] = Field(default_factory=list)
+
+    def official_definitions(self) -> dict[str, Any]:
+        """Versioned definitions, with review records kept outside their identity."""
+        return self.model_dump(mode="json", exclude={"suggestions", "publications"})
+
+    def revision(self) -> str:
+        payload = json.dumps(self.official_definitions(), sort_keys=True, ensure_ascii=False)
+        return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @field_validator("facet_vocabularies")
     @classmethod
@@ -1178,9 +1194,14 @@ def load_registry(path: Path | str) -> OntologyRegistry:
 
 def save_registry(registry: OntologyRegistry, path: Path | str) -> None:
     """Atomically serialize an OntologyRegistry to UTF-8 JSON."""
+    save_registry_json(registry.model_dump(mode="json", exclude_none=True), path)
+
+
+def save_registry_json(value: dict[str, Any], path: Path | str) -> None:
+    """Atomically serialize a registry or its separate suggestion queue."""
     reg_path = Path(path)
     reg_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = registry.model_dump_json(indent=2) + "\n"
+    payload = json.dumps(value, indent=2, ensure_ascii=False) + "\n"
     tmp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(

@@ -13,7 +13,7 @@ import struct
 import uuid
 from collections import deque
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -39,6 +39,7 @@ from stock_ontology.models import (
 )
 from stock_ontology.registry import (
     CanonicalEdgeResult,
+    FacetSchemaError,
     OntologyRegistry,
     create_minimal_registry,
     normalize_relation_name,
@@ -55,6 +56,8 @@ from stock_ontology.vocab import (
 REGISTRY_VERSION_KEY = "registry_version"
 """`db_metadata` key holding the registry schema stamp (`OntologyRegistry.schema_stamp`) the stored
 facets were migrated to."""
+APPLIED_REGISTRY_KEY = "applied_registry"
+APPLIED_REVISION_KEY = "applied_registry_revision"
 
 
 def _edge_rank(relation: Any, edge_facets: dict[str, Any]) -> tuple[int, int]:
@@ -92,9 +95,8 @@ class OntologyDB:
         self.registry: OntologyRegistry = (
             registry if registry is not None else create_minimal_registry()
         )
-        # Writes are always checked against `self.registry`; the default declares the shipped schema.
-        # Only an explicit registry migrates and stamps on open, so opening without one leaves rows as stored.
-        self._explicit_registry = registry is not None
+        self._active_revision: str | None = None
+        self._registry_selected = False
         self._tx_depth = 0
 
         if self.read_only and self.db_path != ":memory:" and not Path(self.db_path).exists():
@@ -120,6 +122,15 @@ class OntologyDB:
             if self.db_path != ":memory:":
                 self.conn.execute("PRAGMA journal_mode = WAL;")
             self._init_schema()
+        if self.read_only:
+            self.registry = self.applied_registry() or self.registry
+        else:
+            try:
+                self._select_registry(registry)
+            except (ValueError, sqlite3.Error):
+                self.close()
+                raise
+        self._registry_selected = True
 
     def __enter__(self) -> OntologyDB:
         return self
@@ -132,8 +143,14 @@ class OntologyDB:
         self.conn.close()
 
     @contextmanager
-    def transaction(self) -> Iterator[None]:
+    def transaction(self, *, immediate: bool = False) -> Iterator[None]:
         """Group writes into one atomic unit; only the outermost scope commits or rolls back."""
+        if self._tx_depth == 0 and not self.read_only and (immediate or self._registry_selected):
+            if not self.conn.in_transaction:
+                self.conn.execute("BEGIN IMMEDIATE")
+            if self.get_metadata(APPLIED_REVISION_KEY) != self._active_revision:
+                self.conn.rollback()
+                raise FacetSchemaError("The applied registry changed. Reopen the database and retry.")  # noqa: TRY003
         self._tx_depth += 1
         try:
             yield
@@ -150,27 +167,63 @@ class OntologyDB:
         lookup_existed = self._has_node_lookup()
         init_schema(self.conn, self.embedding_dim)
         self._migrate_schema(backfill_lookup=not lookup_existed)
-        if self._explicit_registry:
-            self._migrate_facets_if_stale()
-
     def use_registry(self, registry: OntologyRegistry) -> None:
-        """Write under `registry` from now on; a writable DB stamped under another schema is migrated to it."""
-        self.registry = registry
-        self._explicit_registry = True
-        if not self.read_only:
-            self._migrate_facets_if_stale()
+        """Select the applied registry, with a fallback for fresh and legacy stores."""
+        self._select_registry(registry)
 
-    def _migrate_facets_if_stale(self) -> None:
-        """Migrate stored facets when the DB's stamp is missing or differs from the registry's schema stamp.
-
-        Only an explicit registry migrates or stamps. Read-only opens never call this.
-        """
-        if self.get_metadata(REGISTRY_VERSION_KEY) == self.registry.schema_stamp():
+    def _select_registry(self, fallback: OntologyRegistry | None) -> None:
+        applied = self.applied_registry()
+        if applied is not None:
+            self.registry = applied
+            self._active_revision = applied.revision()
             return
-        self.migrate_facets()
+        if fallback is None:
+            return
+        self.registry = fallback
+        if self.read_only:
+            return
+        with self.transaction(immediate=True):
+            stamp = self.get_metadata(REGISTRY_VERSION_KEY)
+            if stamp == fallback.schema_stamp():
+                return
+            if stamp is not None or self.conn.execute("SELECT 1 FROM nodes LIMIT 1").fetchone():
+                raise FacetSchemaError("This database needs an explicit registry adoption. Run registry-apply.")  # noqa: TRY003
+            self.set_metadata(REGISTRY_VERSION_KEY, fallback.schema_stamp())
+
+    def applied_registry(self) -> OntologyRegistry | None:
+        payload = self.get_metadata(APPLIED_REGISTRY_KEY)
+        return OntologyRegistry.model_validate_json(payload) if payload else None
+
+    def record_registry_adoption(self, registry: OntologyRegistry, from_revision: str | None, plan: str) -> None:
+        """Store the full applied version alongside the legacy facet schema stamp."""
+        revision = registry.revision()
+        confirmed_at = now_iso()
+        with self.transaction():
+            self.set_metadata(APPLIED_REGISTRY_KEY, json.dumps(registry.official_definitions(), ensure_ascii=False))
+            self.set_metadata(APPLIED_REVISION_KEY, revision)
+            self.set_metadata(REGISTRY_VERSION_KEY, registry.schema_stamp())
+            self.set_metadata(f"registry_rollout:{revision}:{confirmed_at}", json.dumps({
+                "from_revision": from_revision,
+                "to_revision": revision,
+                "plan": plan,
+                "confirmed_at": confirmed_at,
+            }))
+
+    def copy_to(self, path: Path) -> None:
+        """Copy a consistent database snapshot for a disposable migration preview."""
+        with closing(sqlite3.connect(path)) as destination:
+            self.conn.backup(destination)
+
+    def registry_rollout_rows(self) -> list[str]:
+        """Serialize logical migration inputs and effects in deterministic row order."""
+        result: list[str] = []
+        for table, key in (("nodes", "id"), ("edges", "id"), ("pending_edges", "id"), ("ingestion_log", "file_path")):
+            for row in self.conn.execute(f"SELECT * FROM {table} ORDER BY {key}"):
+                result.append(json.dumps({"table": table, **dict(row)}, ensure_ascii=False, sort_keys=True))
+        return result
 
     def migrate_facets(self, registry: OntologyRegistry | None = None) -> int:
-        """Coerce every stored official facet to its registry kind where lossless, then stamp the schema.
+        """Coerce every stored official facet to its registry kind where lossless.
 
         Uses `registry` (default: this DB's) without changing what writes are checked against.
         Values that cannot be coerced stay as stored. Returns how many nodes and edges changed.
@@ -194,7 +247,6 @@ class OntologyDB:
                         "UPDATE edges SET facets_json = ? WHERE id = ?", (json.dumps(migrated), r["id"])
                     )
                     changed += 1
-            self.set_metadata(REGISTRY_VERSION_KEY, reg.schema_stamp())
         return changed
 
     def _migrate_schema(self, *, backfill_lookup: bool) -> None:

@@ -18,7 +18,7 @@ from typing import Any
 
 from stock_ontology.db import OntologyDB, merge_edge_facets
 from stock_ontology.models import Edge, Node
-from stock_ontology.registry import OntologyRegistry, normalize_name_key
+from stock_ontology.registry import FacetSchemaError, OntologyRegistry, normalize_name_key
 from stock_ontology.vocab import VIEW_TYPE, canonicalize_edge_facets, canonicalize_node_facets, coerce_facet_value
 
 
@@ -85,9 +85,30 @@ def repair_ontology(db: OntologyDB, registry: OntologyRegistry, data_dir: Path |
         _canonicalize_relations(db, registry, report)
         _promote_pending_edges(db, registry, report)
         _delete_duplicate_edges(db, report)
-        # The same migration a writable open runs when the DB is stamped older; it also stamps.
         report.facets_migrated = db.migrate_facets(registry)
     return report
+
+
+def validate_rollout(db: OntologyDB, registry: OntologyRegistry) -> None:
+    """Check active graph rows against the proposed registry before recording adoption."""
+    for node in db.list_all_nodes():
+        try:
+            registry.check_metadata(node.name, node.summary)
+            registry.check_facets(node.node_type, node.facets)
+        except FacetSchemaError as exc:
+            raise FacetSchemaError(f"Node {node.id}: {exc}") from exc  # noqa: TRY003
+    for edge in db.list_edges_with_endpoints():
+        try:
+            registry.check_endpoints(
+                edge["relation"],
+                from_type=edge["from_type"],
+                from_entity_type=edge["from_entity_type"],
+                to_type=edge["to_type"],
+                to_entity_type=edge["to_entity_type"],
+            )
+            registry.check_facets(None, edge["facets"], relation=edge["relation"])
+        except FacetSchemaError as exc:
+            raise FacetSchemaError(f"Edge {edge['edge_id']}: {exc}") from exc  # noqa: TRY003
 
 
 def _delete_orphan_artifacts(db: OntologyDB, report: RepairReport) -> None:
@@ -277,7 +298,7 @@ def _promote_pending_edges(db: OntologyDB, registry: OntologyRegistry, report: R
             continue
         db.upsert_edge(
             Edge(
-                id=f"edge_{uuid.uuid4().hex[:12]}",
+                id=f"edge_{uuid.uuid5(uuid.NAMESPACE_OID, edge['edge_id']).hex}",
                 from_id=canon.from_id,
                 to_id=canon.to_id,
                 relation=canon.relation,

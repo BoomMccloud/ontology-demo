@@ -756,12 +756,12 @@ def test_cli_repair_reports_changes_then_zero_on_rerun(
     args = ["repair", "--db", str(db_path), "--registry", str(reg_path), "--json"]
 
     runner = CliRunner()
-    first = runner.invoke(app, args)
+    first = runner.invoke(app, args, input="y\n")
     assert first.exit_code == 0, first.output
-    assert json.loads(first.output)["total_changes"] > 0
-    second = runner.invoke(app, args)
+    assert json.loads(first.stdout)["total_changes"] > 0
+    second = runner.invoke(app, args, input="y\n")
     assert second.exit_code == 0, second.output
-    assert json.loads(second.output)["total_changes"] == 0
+    assert json.loads(second.stdout)["total_changes"] == 0
 
 
 class _CliIngestFakeLLM:
@@ -1015,17 +1015,124 @@ def test_cli_repair_builds_llm_only_with_reembed(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(cli_module, "create_llm_client", fake_llm)
     seed()
     args = ["repair", "--db", str(db_path), "--registry", str(reg_path), "--json"]
-    plain = CliRunner().invoke(cli_module.app, args)
+    plain = CliRunner().invoke(cli_module.app, args, input="y\n")
     assert plain.exit_code == 0, plain.output
     assert calls == []
-    assert json.loads(plain.output)["reembedded"] == 0
+    assert json.loads(plain.stdout)["reembedded"] == 0
 
     db_path.unlink()
     seed()
-    with_flag = CliRunner().invoke(cli_module.app, [*args, "--reembed"])
+    with_flag = CliRunner().invoke(cli_module.app, [*args, "--reembed"], input="y\n")
     assert with_flag.exit_code == 0, with_flag.output
     assert calls == [1]
-    assert json.loads(with_flag.output)["reembedded"] == 1
+    assert json.loads(with_flag.stdout)["reembedded"] == 1
+
+
+def test_confirmed_registry_rollout_rejects_data_changed_during_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    import stock_ontology.cli as cli_module
+    from stock_ontology.registry import create_minimal_registry, save_registry
+
+    db_path = tmp_path / "ontology.db"
+    registry_path = tmp_path / "ontology_registry.json"
+    reg = create_minimal_registry()
+    save_registry(reg, registry_path)
+    with OntologyDB(db_path, registry=reg) as db:
+        db.upsert_node(_company("first", "First"))
+
+    def confirm_after_an_ingest(_prompt: str, **_kwargs: Any) -> bool:
+        with OntologyDB(db_path, registry=reg) as db:
+            db.upsert_node(_company("concurrent", "Concurrent"))
+        return True
+
+    monkeypatch.setattr(cli_module.typer, "confirm", confirm_after_an_ingest)
+    result = CliRunner().invoke(
+        cli_module.app, ["registry-apply", "--db", str(db_path), "--registry", str(registry_path)]
+    )
+    assert result.exit_code == 1, result.output
+    assert "changed during review" in result.output
+    with OntologyDB(db_path, read_only=True) as db:
+        assert db.get_node("concurrent") is not None
+        assert not any(key.startswith("registry_rollout:") for key in db.get_all_metadata())
+
+
+def test_writer_opened_before_first_adoption_cannot_write_under_an_old_registry(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    import stock_ontology.cli as cli_module
+    from stock_ontology.registry import FacetSchemaError, create_minimal_registry, save_registry
+
+    db_path = tmp_path / "ontology.db"
+    registry_path = tmp_path / "ontology_registry.json"
+    proposal_path = tmp_path / "proposal.json"
+    baseline = create_minimal_registry()
+    save_registry(baseline, registry_path)
+    candidate = baseline.model_copy(deep=True)
+    candidate.version += 1
+    candidate.facet_schema["node"]["view"]["priority"] = {"kind": "number", "required": False}
+    save_registry(candidate, proposal_path)
+
+    runner = CliRunner()
+    options = ["--db", str(db_path), "--registry", str(registry_path)]
+    with OntologyDB(db_path, registry=baseline) as old_writer:
+        for args in (["registry-apply"], ["registry-publish", str(proposal_path)], ["registry-apply"]):
+            result = runner.invoke(cli_module.app, [*args, *options], input="y\n")
+            assert result.exit_code == 0, result.output
+        with pytest.raises(FacetSchemaError, match="applied registry changed"):
+            old_writer.upsert_node(Node(
+                id="stale",
+                node_type="view",
+                name="Stale registry view",
+                summary="",
+                facets={"view_type": "rumor", "priority": "invalid"},
+            ))
+    with OntologyDB(db_path, read_only=True) as db:
+        assert db.get_node("stale") is None
+
+
+def test_later_registry_confirmations_preserve_earlier_receipts(tmp_path: Path) -> None:
+    import json
+
+    from typer.testing import CliRunner
+
+    import stock_ontology.cli as cli_module
+    from stock_ontology.registry import create_minimal_registry, save_registry
+
+    db_path = tmp_path / "ontology.db"
+    registry_path = tmp_path / "ontology_registry.json"
+    proposal_path = tmp_path / "proposal.json"
+    registry = create_minimal_registry()
+    save_registry(registry, registry_path)
+    with OntologyDB(db_path, registry=registry):
+        pass
+    runner = CliRunner()
+    options = ["--db", str(db_path), "--registry", str(registry_path)]
+
+    def approve(*args: str) -> None:
+        result = runner.invoke(cli_module.app, [*args, *options], input="y\n")
+        assert result.exit_code == 0, result.output
+
+    approve("registry-apply")
+    previous = registry.revision()
+    for version in (2, 3):
+        registry.version = version
+        save_registry(registry, proposal_path)
+        approve("registry-publish", str(proposal_path))
+        approve("registry-apply")
+        if version == 2:
+            second = registry.revision()
+            approve("registry-apply")
+
+    with OntologyDB(db_path, read_only=True) as db:
+        records = [json.loads(value) for k, value in db.get_all_metadata().items() if k.startswith("registry_rollout:")]
+    assert any(record["from_revision"] == previous and record["to_revision"] == second for record in records)
+    assert any(record["from_revision"] == second and record["to_revision"] == registry.revision() for record in records)
+    publications = json.loads(registry_path.read_text(encoding="utf-8"))["publications"]
+    assert [receipt["version"] for receipt in publications] == [2, 3]
+    assert [receipt["revision"] for receipt in publications] == [second, registry.revision()]
 
 
 def test_node_lookup_backfills_when_table_exists_but_misses_nodes(tmp_path: Path) -> None:
@@ -1196,7 +1303,7 @@ def test_merge_node_into_writes_no_facets_and_survivor_upsert_is_checked(tmp_pat
         assert db.get_node("ent_a").facets == {"entity_type": "company", "sector": "Tech"}
 
 
-def test_writable_open_stamps_fresh_db_skips_matching_stamp_and_migrates_any_other(tmp_path: Path) -> None:
+def test_writable_open_stamps_fresh_db_but_preserves_existing_rows_and_stamp(tmp_path: Path) -> None:
     import json
 
     from stock_ontology.registry import load_registry
@@ -1223,11 +1330,13 @@ def test_writable_open_stamps_fresh_db_skips_matching_stamp_and_migrates_any_oth
     # A matching stamp skips the migration: the coercible row stays as stored.
     with OntologyDB(path, embedding_dim=8, registry=reg) as db:
         assert target_price(db, "vw_num") == "USD 630"
-        # Any other stamp migrates, an old integer version or a "newer" one alike.
+        # Older metadata is preserved until an approved rollout.
         db.set_metadata("registry_version", str(reg.version + 5))
-    with OntologyDB(path, embedding_dim=8, registry=reg) as db:
-        assert db.get_metadata("registry_version") == reg.schema_stamp()
-        assert target_price(db, "vw_num") == {"amount": 630, "currency": "USD"}
+    with pytest.raises(ValueError, match="explicit registry adoption"):
+        OntologyDB(path, embedding_dim=8, registry=reg)
+    with OntologyDB(path, embedding_dim=8, read_only=True) as db:
+        assert db.get_metadata("registry_version") == str(reg.version + 5)
+        assert target_price(db, "vw_num") == "USD 630"
         assert target_price(db, "vw_lots") == "lots"
 
 

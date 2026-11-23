@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import tempfile
 from dataclasses import asdict
+from datetime import UTC, datetime
+from difflib import unified_diff
+from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -30,12 +35,14 @@ from stock_ontology.llm import create_llm_client
 from stock_ontology.pipeline import IngestionPipeline, reembed_all_nodes, reembed_nodes
 from stock_ontology.registry import (
     OntologyRegistry,
+    RegistryPublication,
+    RegistrySuggestions,
     SuggestionSyncSummary,
     create_minimal_registry,
     load_registry,
-    save_registry,
+    save_registry_json,
 )
-from stock_ontology.repair import repair_ontology
+from stock_ontology.repair import RepairReport, repair_ontology, validate_rollout
 
 app = typer.Typer(
     name="stock-ontology",
@@ -634,10 +641,11 @@ def _render_audit_report(
     db_path: Path,
     registry_path: Path,
     sync_summary: SuggestionSyncSummary | None,
+    suggestion_path: Path,
 ) -> None:
     s = report.summary
     sync_line = (
-        f"\nSuggestions synced -> {registry_path}: "
+        f"\nSuggestions synced -> {suggestion_path}: "
         f"added={sync_summary.added}, updated={sync_summary.updated}, "
         f"auto_resolved={sync_summary.auto_resolved}, preserved_decided={sync_summary.preserved_decided} "
         f"(pending: rel={sync_summary.pending_relations}, co={sync_summary.pending_companies}, "
@@ -801,7 +809,7 @@ def audit(
         bool,
         typer.Option(
             "--sync-suggestions/--no-sync-suggestions",
-            help="Write unmapped relations, companies, and themes as pending suggestions in registry.",
+            help="Write pending proposals to a separate suggestions file.",
         ),
     ] = True,
     json_out: Annotated[
@@ -818,31 +826,183 @@ def audit(
 
     with _open_readonly_db(settings) as store:
         report = run_ontology_audit(store, reg)
+        applied = store.applied_registry()
+        stamp = store.get_metadata("registry_version")
+
+    status = {
+        "published_version": reg.version,
+        "published_revision": reg.revision(),
+        "applied_version": applied.version if applied else None,
+        "applied_revision": applied.revision() if applied else None,
+        "schema_stamp_matches": stamp == reg.schema_stamp(),
+    }
 
     sync_summary: SuggestionSyncSummary | None = None
+    suggestion_path = settings.registry_path.with_suffix(".suggestions.json")
     if sync_suggestions:
+        reg.suggestions = _load_suggestions(suggestion_path, reg.suggestions)
         sync_summary = reg.sync_suggestions(
             report.unmapped_relations,
             report.unmapped_companies,
             report.unmapped_themes,
             merge_candidates=[*report.duplicate_company_candidates, *report.near_duplicate_themes],
         )
-        save_registry(reg, settings.registry_path)
+        save_registry_json({"suggestions": reg.suggestions.model_dump(mode="json")}, suggestion_path)
 
     if json_out:
         payload = {
             "report": report.model_dump(),
             "sync": sync_summary.model_dump() if sync_summary is not None else None,
+            "registry": status,
         }
         print(json.dumps(payload, indent=2))
         return
 
+    typer.echo(f"Registry version published: {reg.version}. Applied: {applied.version if applied else 'unrecorded'}.")
     _render_audit_report(
         report,
         db_path=settings.db_path,
         registry_path=settings.registry_path,
         sync_summary=sync_summary,
+        suggestion_path=suggestion_path,
     )
+
+
+def _load_suggestions(path: Path, fallback: RegistrySuggestions) -> RegistrySuggestions:
+    if not path.exists():
+        return fallback
+    return RegistrySuggestions.model_validate(json.loads(path.read_text(encoding="utf-8"))["suggestions"])
+
+
+def _echo_diff(before: list[str], after: list[str], from_label: str, to_label: str, *, err: bool = False) -> None:
+    for line in unified_diff(before, after, fromfile=from_label, tofile=to_label, lineterm=""):
+        typer.echo(line, err=err)
+
+
+def _confirm_review(prompt: str, *, json_out: bool = False) -> bool:
+    if not json_out:
+        return typer.confirm(prompt)
+    typer.echo(f"{prompt} [y/N]: ", nl=False, err=True)
+    return sys.stdin.readline().strip().casefold() in {"y", "yes"}
+
+
+@app.command()
+def registry_publish(
+    proposal: Annotated[Path, typer.Argument(help="Proposed full registry JSON.")],
+    db: Annotated[Path | None, typer.Option("--db")] = None,
+    registry: Annotated[Path | None, typer.Option("--registry")] = None,
+) -> None:
+    """Review a proposal and confirm publication of its registry version."""
+    settings = _load_settings(db=db, registry=registry)
+    try:
+        current = load_registry(settings.registry_path)
+        proposed = load_registry(proposal)
+        if proposed.version <= current.version:
+            raise ValueError("The proposal must have a version higher than the published version.")  # noqa: TRY003, TRY301
+        with _open_readonly_db(settings) as store:
+            if store.applied_registry() is None:
+                raise ValueError("Record the current applied registry with registry-apply before publishing.")  # noqa: TRY003, TRY301
+        before = json.dumps(current.official_definitions(), indent=2, sort_keys=True, ensure_ascii=False)
+        after = json.dumps(proposed.official_definitions(), indent=2, sort_keys=True, ensure_ascii=False)
+        _echo_diff(before.splitlines(), after.splitlines(), f"published v{current.version}", f"proposal v{proposed.version}")
+        if not typer.confirm(f"Publish registry version {proposed.version} to {settings.registry_path}?"):
+            return
+        with OntologyDB(settings.db_path, embedding_dim=settings.embedding_dim) as store, store.transaction(
+            immediate=True
+        ):
+            if load_registry(settings.registry_path).revision() != current.revision():
+                raise ValueError("The published registry changed during review. Preview the proposal again.")  # noqa: TRY003, TRY301
+            suggestion_path = settings.registry_path.with_suffix(".suggestions.json")
+            if not suggestion_path.exists():
+                save_registry_json({"suggestions": current.suggestions.model_dump(mode="json")}, suggestion_path)
+            official = proposed.official_definitions()
+            publication = RegistryPublication(
+                version=proposed.version,
+                revision=proposed.revision(),
+                previous_revision=current.revision(),
+                confirmed_at=datetime.now(UTC).isoformat(),
+            )
+            official["publications"] = [
+                item.model_dump(mode="json") for item in [*current.publications, publication]
+            ]
+            save_registry_json(official, settings.registry_path)
+        typer.echo(f"Published registry version {proposed.version}. Use registry-apply to review database adoption.")
+    except (OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _review_registry_rollout(
+    settings: Settings, target: OntologyRegistry, *, adoption: bool, err: bool = False
+) -> RepairReport | None:
+    """Preview a repair on a copy, then apply exactly the reviewed result under a write lock."""
+    published_revision = load_registry(settings.registry_path).revision()
+    if adoption and published_revision != target.revision():
+        raise ValueError("The published registry changed. Run a new preview.")  # noqa: TRY003
+    with tempfile.TemporaryDirectory(prefix="ontology-rollout-") as temp_dir:
+        copy_path = Path(temp_dir) / "preview.db"
+        with _open_readonly_db(settings) as source:
+            source.copy_to(copy_path)
+        with OntologyDB(copy_path, embedding_dim=settings.embedding_dim) as preview:
+            applied = preview.applied_registry()
+            old_revision = applied.revision() if applied else None
+            old_stamp = preview.get_metadata("registry_version")
+            if adoption and applied and old_revision != target.revision() and (
+                not target.publications or target.publications[-1].revision != target.revision()
+            ):
+                raise ValueError("Publish this registry proposal using registry-publish before applying it.")  # noqa: TRY003
+            if not adoption and (old_revision or old_stamp) and (
+                old_revision != target.revision() if applied else old_stamp != target.schema_stamp()
+            ):
+                raise ValueError("Use registry-apply to review and adopt a different registry version.")  # noqa: TRY003
+            before = preview.registry_rollout_rows()
+            planned = repair_ontology(preview, target, data_dir=settings.data_dir)
+            validate_rollout(preview, target)
+            after = preview.registry_rollout_rows()
+
+    starting_version = f"v{applied.version}" if applied else "unrecorded"
+    typer.echo(f"Database {settings.db_path}. Applied {starting_version}. Target v{target.version}.", err=err)
+    _echo_diff(before, after, "current database", "reviewed database", err=err)
+    if before == after:
+        typer.echo("No graph rows will change.", err=err)
+    prompt = "Apply this registry rollout?" if adoption else "Apply this repair?"
+    if not _confirm_review(prompt, json_out=err):
+        return None
+
+    with OntologyDB(settings.db_path, embedding_dim=settings.embedding_dim) as store, store.transaction(immediate=True):
+        current = store.applied_registry()
+        current_revision = current.revision() if current else None
+        if (
+            load_registry(settings.registry_path).revision() != published_revision
+            or current_revision != old_revision
+            or store.get_metadata("registry_version") != old_stamp
+            or store.registry_rollout_rows() != before
+        ):
+            raise ValueError("Registry or database changed during review. Run a new preview.")  # noqa: TRY003
+        result = repair_ontology(store, target, data_dir=settings.data_dir)
+        validate_rollout(store, target)
+        if store.registry_rollout_rows() != after or result != planned:
+            raise ValueError("The migration result changed during review. Run a new preview.")  # noqa: TRY003
+        if adoption:
+            plan = sha256(json.dumps([before, after]).encode("utf-8")).hexdigest()
+            store.record_registry_adoption(target, old_revision, plan)
+    return result
+
+
+@app.command()
+def registry_apply(
+    db: Annotated[Path | None, typer.Option("--db")] = None,
+    registry: Annotated[Path | None, typer.Option("--registry")] = None,
+) -> None:
+    """Review and separately confirm adoption of the published registry."""
+    settings = _load_settings(db=db, registry=registry)
+    try:
+        published = load_registry(settings.registry_path)
+        if _review_registry_rollout(settings, published, adoption=True) is not None:
+            typer.echo(f"Applied registry version {published.version}.")
+    except (OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()
@@ -868,6 +1028,7 @@ def repair(
     settings = _load_settings(db=db, registry=registry)
     try:
         reg = load_registry(settings.registry_path)
+        reg.suggestions = _load_suggestions(settings.registry_path.with_suffix(".suggestions.json"), reg.suggestions)
     except (FileNotFoundError, ValueError) as exc:
         console.print(f"[red]Registry error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -875,11 +1036,20 @@ def repair(
         console.print(f"[red]Ontology database does not exist at {settings.db_path}.[/red]")
         raise typer.Exit(code=1)
 
-    llm = create_llm_client(settings) if reembed else None
+    try:
+        if reembed:
+            typer.echo("Merged survivors will be reembedded after the confirmed repair.", err=json_out)
+        report = _review_registry_rollout(settings, reg, adoption=False, err=json_out)
+    except (OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    if report is None:
+        return
+
     reembedded = 0
-    with OntologyDB(settings.db_path, embedding_dim=settings.embedding_dim, read_only=False) as store:
-        report = repair_ontology(store, reg, data_dir=settings.data_dir)
-        if llm is not None and report.merged_survivor_ids:
+    if reembed and report.merged_survivor_ids:
+        llm = create_llm_client(settings)
+        with OntologyDB(settings.db_path, embedding_dim=settings.embedding_dim) as store:
             reembedded = reembed_nodes(store, llm, report.merged_survivor_ids)
 
     payload = {**asdict(report), "total_changes": report.total_changes, "reembedded": reembedded}

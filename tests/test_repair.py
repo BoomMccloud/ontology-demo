@@ -406,7 +406,7 @@ def test_repair_backfills_edge_basis_and_is_idempotent(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_repair_migrates_facet_kinds_and_stamps_registry_version(tmp_path: Path) -> None:
+def test_repair_migrates_facet_kinds_without_recording_adoption(tmp_path: Path) -> None:
     import json
 
     from stock_ontology.registry import load_registry
@@ -428,7 +428,7 @@ def test_repair_migrates_facet_kinds_and_stamps_registry_version(tmp_path: Path)
         assert report.total_changes == 1
         row = db.conn.execute("SELECT facets_json FROM nodes WHERE id = 'vw'").fetchone()
         assert json.loads(row[0])["target_price"] == {"amount": 630, "currency": "USD"}
-        assert db.get_metadata("registry_version") == reg.schema_stamp()
+        assert db.get_metadata("registry_version") is None
 
         again = repair_ontology(db, reg)
         assert again.facets_migrated == 0 and again.total_changes == 0

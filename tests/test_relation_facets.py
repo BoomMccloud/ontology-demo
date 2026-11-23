@@ -13,7 +13,7 @@ from stock_ontology.db import OntologyDB
 from stock_ontology.llm.prompts import EXTRACTION_SYSTEM_PROMPT
 from stock_ontology.models import Edge, ExtractionResult, Node
 from stock_ontology.pipeline import IngestionPipeline
-from stock_ontology.registry import FacetSchemaError, load_registry
+from stock_ontology.registry import FacetSchemaError, load_registry, save_registry
 from stock_ontology.repair import repair_ontology
 from stock_ontology.vocab import ENTITY_TYPE, coerce_facet_value
 from test_db import insert_legacy_edge
@@ -174,7 +174,7 @@ def test_endpoint_violation_is_held_reported_and_promoted_once_allowed(tmp_path:
         assert [r[0] for r in db.conn.execute("SELECT relation FROM edges")] == ["COMPETE"]
 
 
-def test_cli_repair_promotes_a_relation_approved_in_the_registry_file(
+def test_cli_adoption_promotes_a_relation_in_a_published_registry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from typer.testing import CliRunner
@@ -186,6 +186,7 @@ def test_cli_repair_promotes_a_relation_approved_in_the_registry_file(
     db_path, _ = _ingest(tmp_path, llm, reg)
 
     def approve(raw: dict) -> None:
+        raw["version"] += 1
         raw["relations"].append(
             {"name": "MENTORS", "description": "Mentorship.", "from_types": ["entity:person"],
              "to_types": ["entity:company"], "aliases": [], "inverse_aliases": [], "alias_facets": {},
@@ -193,13 +194,20 @@ def test_cli_repair_promotes_a_relation_approved_in_the_registry_file(
         )
 
     _edited_registry(tmp_path, approve)
+    official = tmp_path / "official.json"
+    save_registry(reg, official)
     monkeypatch.setenv("EMBEDDING_DIM", str(DIM))
     monkeypatch.setenv("ONTOLOGY_DATA_DIR", str(tmp_path / "data"))
-    result = CliRunner().invoke(
-        cli_module.app, ["repair", "--db", str(db_path), "--registry", str(tmp_path / "edited.json"), "--json"]
+    runner = CliRunner()
+    options = ["--db", str(db_path), "--registry", str(official)]
+    bootstrap = runner.invoke(cli_module.app, ["registry-apply", *options], input="y\n")
+    assert bootstrap.exit_code == 0, bootstrap.output
+    publish = runner.invoke(
+        cli_module.app, ["registry-publish", str(tmp_path / "edited.json"), *options], input="y\n"
     )
+    assert publish.exit_code == 0, publish.output
+    result = runner.invoke(cli_module.app, ["registry-apply", *options], input="y\n")
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["pending_edges_promoted"] == 1
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
         assert [r[0] for r in db.conn.execute("SELECT relation FROM edges")] == ["MENTORS"]
 

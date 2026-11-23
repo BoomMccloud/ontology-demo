@@ -15,7 +15,7 @@ from typing import Any
 from stock_ontology.config import SUPPORTED_EXTENSIONS
 from stock_ontology.db import OntologyDB, node_meta
 from stock_ontology.llm import LLMClient
-from stock_ontology.registry import FacetSchemaError, OntologyRegistry, create_minimal_registry
+from stock_ontology.registry import FacetSchemaError, OntologyRegistry
 from stock_ontology.models import (
     Edge,
     Node,
@@ -115,10 +115,9 @@ class IngestionPipeline:
         self.db = db
         self.llm = llm
         self.data_dir = Path(data_dir)
-        self.registry = registry if registry is not None else create_minimal_registry()
         if registry is not None:
-            # The DB enforces, migrates and stamps under the registry this run writes with.
             db.use_registry(registry)
+        self.registry = db.registry
 
     @staticmethod
     def _required_subtype(item: Any, field: str) -> str | None:
@@ -660,6 +659,10 @@ class IngestionPipeline:
 
     def run(self, force: bool = False, rebuild_consensus: bool = False) -> IngestReport:
         """Scan `data_dir`, incrementally extract changed files, and update consensus."""
+        applied = self.db.applied_registry()
+        if applied is not None and self.registry.revision() != applied.revision():
+            self.db.use_registry(applied)
+            self.registry = self.db.registry
         report = IngestReport()
         on_disk = self._scan_files()
         report.files_scanned = len(on_disk)
