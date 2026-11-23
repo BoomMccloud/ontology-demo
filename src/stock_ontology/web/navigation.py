@@ -59,6 +59,7 @@ _OTHER = NavItem("other_entities", "companies.tab_other", "/companies?kind=other
 _NOTES_BY_COMPANY = NavItem("notes_by_company", "nav.notes_by_company", "/catalog?view=company")
 _NOTES_BY_AUTHOR = NavItem("notes_by_author", "nav.notes_by_author", "/catalog?view=author")
 _NOTES_ALL = NavItem("notes_all", "nav.notes_all", "/catalog?view=all")
+_NOTES_NEW = NavItem("notes_new", "nav.notes_new", "/notes/new")
 _SEARCH = NavItem("search", "nav.search", "/search")
 # Notes keeps its own Search entry; `in=notes` keeps the Notes workflow selected on /search.
 _NOTES_SEARCH = NavItem("notes_search", "nav.search", "/search?in=notes")
@@ -70,7 +71,7 @@ LEFT_NAV: dict[str, tuple[NavGroup, ...]] = {
     ),
     "notes": (
         NavGroup(None, (_NOTES_BY_COMPANY, _NOTES_BY_AUTHOR, _NOTES_ALL)),
-        NavGroup(None, (_NOTES_SEARCH,)),
+        NavGroup(None, (_NOTES_SEARCH, _NOTES_NEW)),
     ),
     "ontology": (
         NavGroup(
@@ -169,6 +170,10 @@ def _catalog(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
     return NavState("notes", notes_item.key, "component")
 
 
+def _note_new(_q: Mapping[str, str], _ctx: Mapping[str, Any]) -> NavState:
+    return NavState("notes", "notes_new", "page")
+
+
 _ONTOLOGY_TABS = {item.key for group in LEFT_NAV["ontology"] for item in group.items}
 
 
@@ -185,6 +190,7 @@ NAV_ROUTES: dict[str, Resolver] = {
     "/entity/{entity_id}": _entity,
     "/theme/{theme_id}": _theme,
     "/catalog": _catalog,
+    "/notes/new": _note_new,
     "/ontology": _ontology,
 }
 

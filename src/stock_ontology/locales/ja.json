@@ -716,5 +716,17 @@
   "enum.match_reason.relationship": "関係",
   "enum.match_reason.note": "ノート本文",
   "enum.match_reason.semantic": "意味的類似",
-  "enum.match_reason.filter": "フィルター"
+  "enum.match_reason.filter": "フィルター",
+  "nav.notes_new": "ノートを貼り付け",
+  "notes_new.page_title": "ノートを貼り付け",
+  "notes_new.heading": "ノートを貼り付け",
+  "notes_new.intro": "テキストを貼り付けて Markdown ノートとして保存します。次回の取り込みでオントロジーに反映されます。",
+  "notes_new.title_label": "タイトル",
+  "notes_new.content_label": "ノート本文",
+  "notes_new.save": "ノートを保存",
+  "notes_new.saving": "保存中...",
+  "notes_new.error_generic": "ノートを保存できませんでした。",
+  "notes_new.error_title": "タイトルを入力してください。",
+  "notes_new.error_content": "有効なテキストを貼り付けてください。",
+  "notes_new.error_too_large": "ノートが 1 MB の上限を超えています。"
 }

@@ -46,6 +46,7 @@ VARIANTS: list[tuple[str, str, str, str | None]] = [
     ("/catalog?view=author&author=Kenji+Sato", "notes", "notes_by_author", "Kenji Sato"),
     (f"/catalog?file={NOTE_FILE}", "notes", "notes_by_company", "NVDA Q3 Preview"),
     (f"/catalog?view=all&file={NOTE_FILE}", "notes", "notes_all", "NVDA Q3 Preview"),
+    ("/notes/new", "notes", "notes_new", None),
     ("/search", "research", "search", None),
     ("/search?q=Blackwell", "research", "search", None),
     ("/search?in=notes", "notes", "notes_search", None),

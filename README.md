@@ -177,6 +177,9 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
 
 ## Web UI Constraints
 
+- Add notes from the web app only through `web/note_intake.py::save_pasted_note`. Never write a note directly to its final path or replace an existing one: write a hidden temp file and publish it with `os.link`.
+  **Why:** ingestion scans the data folder at any time, so a direct write can be read half-finished, and a check-then-write can overwrite a note saved at the same moment (proposal `paste-note`, 2026-11-23).
+  **Guarded by:** `tests/test_web.py::test_paste_note_never_overwrites_including_concurrent_same_title` and `tests/test_web.py::test_paste_note_is_never_visible_to_ingestion_partially_written`.
 - Register every HTML route and view variant in `src/stock_ontology/web/navigation.py` (workflow, owning section, archetype, breadcrumb) and let `_render` derive navigation from it; never set nav state in a template or view model, and never use `style=` or `<style>` in templates (add a class to `library.css`).
   **Why:** detail pages cleared every left-nav highlight because each view model hand-set `active_nav`, and 98 inline styles plus a second frame width let pages drift from one layout (proposal `codified-navigation-ux`, 2026-11-22).
   **Guarded by:** `tests/test_web_navigation.py`.

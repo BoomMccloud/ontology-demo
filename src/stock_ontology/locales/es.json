@@ -716,5 +716,17 @@
   "enum.match_reason.relationship": "relación",
   "enum.match_reason.note": "texto de nota",
   "enum.match_reason.semantic": "similitud semántica",
-  "enum.match_reason.filter": "filtro"
+  "enum.match_reason.filter": "filtro",
+  "nav.notes_new": "Pegar una nota",
+  "notes_new.page_title": "Pegar una nota",
+  "notes_new.heading": "Pegar una nota",
+  "notes_new.intro": "Pega texto para guardarlo como nota Markdown. Se añadirá a la ontología en la próxima ingesta.",
+  "notes_new.title_label": "Título",
+  "notes_new.content_label": "Texto de la nota",
+  "notes_new.save": "Guardar nota",
+  "notes_new.saving": "Guardando...",
+  "notes_new.error_generic": "No se pudo guardar la nota.",
+  "notes_new.error_title": "Escribe un título.",
+  "notes_new.error_content": "Pega un texto válido.",
+  "notes_new.error_too_large": "La nota supera el límite de 1 MB."
 }

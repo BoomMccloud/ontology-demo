@@ -716,5 +716,17 @@
   "enum.match_reason.relationship": "relation",
   "enum.match_reason.note": "texte de note",
   "enum.match_reason.semantic": "similarité sémantique",
-  "enum.match_reason.filter": "filtre"
+  "enum.match_reason.filter": "filtre",
+  "nav.notes_new": "Coller une note",
+  "notes_new.page_title": "Coller une note",
+  "notes_new.heading": "Coller une note",
+  "notes_new.intro": "Collez du texte pour l'enregistrer en note Markdown. Elle rejoindra l'ontologie à la prochaine ingestion.",
+  "notes_new.title_label": "Titre",
+  "notes_new.content_label": "Texte de la note",
+  "notes_new.save": "Enregistrer la note",
+  "notes_new.saving": "Enregistrement...",
+  "notes_new.error_generic": "Impossible d'enregistrer la note.",
+  "notes_new.error_title": "Saisissez un titre.",
+  "notes_new.error_content": "Collez un texte valide.",
+  "notes_new.error_too_large": "La note dépasse la limite de 1 Mo."
 }

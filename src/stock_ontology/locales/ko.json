@@ -716,5 +716,17 @@
   "enum.match_reason.relationship": "관계",
   "enum.match_reason.note": "노트 텍스트",
   "enum.match_reason.semantic": "의미 유사도",
-  "enum.match_reason.filter": "필터"
+  "enum.match_reason.filter": "필터",
+  "nav.notes_new": "노트 붙여넣기",
+  "notes_new.page_title": "노트 붙여넣기",
+  "notes_new.heading": "노트 붙여넣기",
+  "notes_new.intro": "텍스트를 붙여넣어 Markdown 노트로 저장합니다. 다음 수집 실행 시 온톨로지에 반영됩니다.",
+  "notes_new.title_label": "제목",
+  "notes_new.content_label": "노트 내용",
+  "notes_new.save": "노트 저장",
+  "notes_new.saving": "저장 중...",
+  "notes_new.error_generic": "노트를 저장할 수 없습니다.",
+  "notes_new.error_title": "제목을 입력하세요.",
+  "notes_new.error_content": "유효한 텍스트를 붙여넣으세요.",
+  "notes_new.error_too_large": "노트가 1 MB 제한을 초과했습니다."
 }

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import html
 import math
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +21,7 @@ from stock_ontology.db import OntologyDB
 from stock_ontology.i18n import LANG_COOKIE_NAME, SUPPORTED_LANGUAGE_CODES, get_language_spec, translate
 from stock_ontology.llm import AgentTurn, ToolCall
 from stock_ontology.models import ConsensusSynthesis, Edge, ExtractionResult, Node
+from stock_ontology.pipeline import IngestionPipeline
 from stock_ontology.registry import create_minimal_registry, save_registry
 from stock_ontology.web import create_app
 from test_db import insert_legacy_edge
@@ -2220,3 +2224,232 @@ def test_find_theme_companies_skips_synthesized_edges(tmp_path: Path) -> None:
     assert "vw_soft" not in via_ids, "find_theme_companies links a company through a synthesized edge"
     names = {row["company"]["name"] for row in theme_companies["companies"]}
     assert names == {"Oracle"}, names
+
+
+# --- Paste a note: POST /api/notes {title, content} -> 201 {"file": "_general/<name>.md"} ---
+
+_PASTE_TITLE = "NVDA channel check"
+_PASTE_BODY = "# Pasted channel check\n\nPASTE-MARKER-7: CoWoS lead times shortened.\n"
+
+
+class _PasteIngestLLM(FakeWebLLM):
+    """Offline extractor that records what ingestion read for each note."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.extracted: dict[str, str] = {}
+
+    def extract_document(self, **kwargs: Any) -> ExtractionResult:
+        self.extracted[kwargs["source_meta"]["file_path"]] = kwargs["text"]
+        return ExtractionResult()
+
+
+def _note_tree(root: Path) -> dict[str, bytes]:
+    """Every regular file under `root`, hidden ones included, without following links."""
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
+
+
+def _db_digest(db_path: Path) -> tuple[str, int]:
+    return hashlib.sha256(db_path.read_bytes()).hexdigest(), db_path.stat().st_mtime_ns
+
+
+def test_paste_note_saves_md_lists_in_catalog_and_next_ingest_reads_it(tmp_path: Path) -> None:
+    client, db_path, data_dir = _search_client(tmp_path, FakeWebLLM())
+    before_db = _db_digest(db_path)
+    before_tree = _note_tree(data_dir)
+
+    assert 'href="/notes/new"' in client.get("/catalog").text
+    form = client.get("/notes/new")
+    assert form.status_code == 200
+    assert "<textarea" in form.text and "/api/notes" in form.text
+    controls = re.findall(r"<(?:input|select|datalist)\b[^>]*>", form.text, flags=re.IGNORECASE)
+    assert not [c for c in controls if "folder" in c.lower()], "the form must offer no folder choice"
+
+    # No cookie, token, or credential: the demo's root user has no permission check.
+    saved = client.post("/api/notes", json={"title": _PASTE_TITLE, "content": _PASTE_BODY})
+    assert saved.status_code == 201, saved.text
+    rel = saved.json()["file"]
+    assert re.fullmatch(r"_general/\d{4}-\d{2}-\d{2}[^/]*nvda[^/]*channel[^/]*check[^/]*\.md", rel)
+
+    after_tree = _note_tree(data_dir)
+    assert set(after_tree) - set(before_tree) == {rel}, "exactly one new file, no temp left behind"
+    assert after_tree[rel].decode("utf-8") == _PASTE_BODY
+    assert {k: after_tree[k] for k in before_tree} == before_tree
+
+    assert "Pasted channel check" in client.get("/catalog", params={"view": "all"}).text
+    assert "PASTE-MARKER-7" in client.get("/catalog", params={"file": rel}).text
+    assert _db_digest(db_path) == before_db, "saving must not write ontology.db"
+
+    llm = _PasteIngestLLM()
+    with OntologyDB(tmp_path / "ingest.db", embedding_dim=DIM, read_only=False) as db:
+        IngestionPipeline(db, llm, data_dir).run()
+    assert "PASTE-MARKER-7" in llm.extracted[rel]
+
+
+def test_paste_note_never_overwrites_including_concurrent_same_title(tmp_path: Path) -> None:
+    client, _, data_dir = _search_client(tmp_path, FakeWebLLM())
+    first = client.post("/api/notes", json={"title": _PASTE_TITLE, "content": "first\n"})
+    assert first.status_code == 201, first.text
+    first_file = first.json()["file"]
+
+    count = 24
+    barrier = threading.Barrier(count)
+
+    def save(index: int) -> tuple[int, str]:
+        barrier.wait(timeout=10)
+        resp = client.post(
+            "/api/notes", json={"title": _PASTE_TITLE, "content": f"concurrent {index}\n"}
+        )
+        assert resp.status_code == 201, resp.text
+        return index, resp.json()["file"]
+
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        results = list(pool.map(save, range(count)))
+
+    files = [file for _, file in results]
+    assert len(set(files)) == count and first_file not in files
+    assert all(Path(file).parent.as_posix() == "_general" for file in [first_file, *files])
+    assert (data_dir / first_file).read_text(encoding="utf-8") == "first\n"
+    for index, file in results:
+        assert (data_dir / file).read_text(encoding="utf-8") == f"concurrent {index}\n"
+
+
+@pytest.mark.parametrize(
+    "folder",
+    [
+        "Notes",
+        "_general/../Notes",
+        "../outside",
+        "Notes/../../outside",
+        "/etc",
+        "..\\outside",
+        ".hidden",
+        "Notes/.hidden",
+        "escape",
+        "escape/nested",
+        "bad\x00folder",
+    ],
+)
+def test_paste_note_extra_folder_field_cannot_move_the_note_out_of_general(
+    tmp_path: Path, folder: str
+) -> None:
+    client, _, data_dir = _search_client(tmp_path, FakeWebLLM())
+    outside = tmp_path / "outside"
+    (outside / "nested").mkdir(parents=True)
+    (data_dir / ".hidden").mkdir()
+    (data_dir / "Notes" / ".hidden").mkdir(parents=True)
+    (data_dir / "escape").symlink_to(outside, target_is_directory=True)
+
+    # Positive control: the route exists, so a rejection below is not just a missing route.
+    control = client.post("/api/notes", json={"title": "control", "content": "ok\n"})
+    assert control.status_code == 201, control.text
+
+    before_data, before_outside = _note_tree(data_dir), _note_tree(outside)
+    resp = client.post(
+        "/api/notes", json={"title": _PASTE_TITLE, "content": _PASTE_BODY, "folder": folder}
+    )
+    after_data = _note_tree(data_dir)
+    assert _note_tree(outside) == before_outside
+    assert {k: after_data.get(k) for k in before_data} == before_data
+    # The field may be ignored or rejected. It may never choose where the note lands.
+    if resp.status_code == 201:
+        rel = resp.json()["file"]
+        assert Path(rel).parent.as_posix() == "_general"
+        assert set(after_data) - set(before_data) == {rel}
+    else:
+        assert resp.status_code in (400, 422), resp.text
+        assert after_data == before_data
+
+
+@pytest.mark.parametrize("target", ["external", "external_missing", "inside_data"])
+def test_paste_note_refuses_general_symlink_that_leaves_the_folder(
+    tmp_path: Path, target: str
+) -> None:
+    client, _, data_dir = _search_client(tmp_path, FakeWebLLM())
+    (data_dir / "Notes").mkdir(exist_ok=True)
+
+    # Positive control: the route saves normally before `_general` is swapped for a link.
+    control = client.post("/api/notes", json={"title": "control", "content": "ok\n"})
+    assert control.status_code == 201, control.text
+    (data_dir / "_general").rename(tmp_path / "moved_general")
+
+    outside = tmp_path / "outside"
+    if target == "external":
+        outside.mkdir()
+    destination = data_dir / "Notes" if target == "inside_data" else outside
+    (data_dir / "_general").symlink_to(destination, target_is_directory=True)
+
+    before_data = _note_tree(data_dir)
+    resp = client.post("/api/notes", json={"title": _PASTE_TITLE, "content": _PASTE_BODY})
+
+    assert 400 <= resp.status_code < 500, resp.text
+    assert _note_tree(data_dir) == before_data
+    if target == "external":
+        assert _note_tree(outside) == {}
+    if target == "external_missing":
+        assert not outside.exists()
+
+
+@pytest.mark.parametrize("title", ["../../evil", "/etc/evil", ".hidden", "a/b\\c", "..", "evil\x00name"])
+def test_paste_note_hostile_title_stays_a_visible_file_in_general(
+    tmp_path: Path, title: str
+) -> None:
+    client, _, data_dir = _search_client(tmp_path, FakeWebLLM())
+    before_outside = {p for p in tmp_path.rglob("*") if data_dir not in p.parents and p != data_dir}
+
+    resp = client.post("/api/notes", json={"title": title, "content": _PASTE_BODY})
+    assert resp.status_code == 201, resp.text
+    rel = Path(resp.json()["file"])
+    assert rel.parent.as_posix() == "_general"
+    assert rel.suffix == ".md" and not rel.name.startswith(".")
+    target = (data_dir / rel).resolve()
+    assert target.parent == (data_dir / "_general").resolve()
+    assert target.read_text(encoding="utf-8") == _PASTE_BODY
+    assert {p for p in tmp_path.rglob("*") if data_dir not in p.parents and p != data_dir} == before_outside
+
+
+def test_paste_note_is_never_visible_to_ingestion_partially_written(tmp_path: Path) -> None:
+    client, _, data_dir = _search_client(tmp_path, FakeWebLLM())
+    before = set(_note_tree(data_dir))
+    body = "# Large paste\n\n" + ("PASTE-LINE complete content.\n" * 2200) + "PASTE-END\n"
+    stop = threading.Event()
+    partial: list[str] = []
+    observed: set[str] = set()
+
+    def watch() -> None:
+        # The same visibility rule the ingestion scan applies: non-hidden `.md` files.
+        while not stop.is_set():
+            for path in data_dir.rglob("*.md"):
+                rel = path.relative_to(data_dir)
+                if rel.as_posix() in before or any(p.startswith(".") for p in rel.parts):
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except (FileNotFoundError, UnicodeDecodeError):
+                    partial.append(rel.as_posix())
+                    continue
+                observed.add(rel.as_posix())
+                if text != body:
+                    partial.append(rel.as_posix())
+
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+    try:
+        saved = [
+            client.post("/api/notes", json={"title": f"large {i}", "content": body})
+            for i in range(30)
+        ]
+    finally:
+        stop.set()
+        watcher.join(timeout=10)
+
+    assert all(r.status_code == 201 for r in saved), [r.text for r in saved if r.status_code != 201]
+    assert observed, "the watcher must see at least one published note"
+    assert not partial, f"ingestion-visible partial notes: {sorted(set(partial))[:3]}"
+    files = {r.json()["file"] for r in saved}
+    assert all(Path(file).parent.as_posix() == "_general" for file in files)
+    assert set(_note_tree(data_dir)) - before == files, "no temp files left"

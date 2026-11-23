@@ -1,7 +1,8 @@
 # Web app
 
 A FastAPI app with a 1990s library-style UI over the graph and a Clippy chat
-that talks to the agent. It never writes to `ontology.db`.
+that talks to the agent. It never writes to `ontology.db`. Its only write is
+adding a pasted note file under `ONTOLOGY_DATA_DIR`.
 
 ## Files
 
@@ -25,13 +26,22 @@ that talks to the agent. It never writes to `ontology.db`.
   (left nav), an archetype (`page` or `component`), and a breadcrumb trail.
   `_render` resolves it for every page, so templates never set navigation
   state themselves.
+- `src/stock_ontology/web/note_intake.py`: saves pasted text as a new `.md`
+  note in `_general/`. It writes a hidden temp file and publishes it with a
+  hard link, so a note is never partial or overwritten. The next `ingest` or
+  `watch` run picks it up.
 - `src/stock_ontology/web/templates/` and `src/stock_ontology/web/static/`.
 
 ## Routes
 
 Pages: `/`, `/companies`, `/themes`, `/entity/{id}`, `/theme/{id}`, `/search`,
-`/catalog`, `/ontology`. `/ask` redirects to `/` with the Clippy dock open and
-the page context carried. The Clippy dock is on every page.
+`/catalog`, `/notes/new`, `/ontology`. `/ask` redirects to `/` with the Clippy
+dock open and the page context carried. The Clippy dock is on every page.
+
+`/notes/new` posts JSON `{title, content}` to `POST /api/notes`, which returns
+201 `{"file": "_general/<date>_<slug>.md"}`. The demo has only a
+root user, so this route has no permission check. Don't expose it with a
+non-local `--host` without adding one.
 
 `/search` shows the functional results first: a best-match card, then
 sections for entities and themes, items connected through relationships,

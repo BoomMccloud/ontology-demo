@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('notes_new.page_title') }}{% endblock %}
+
+{% block content %}
+<h1>{{ t('notes_new.heading') }}</h1>
+<p class="portal-intro">{{ t('notes_new.intro') }}</p>
+
+<form
+  id="note-new-form"
+  class="note-form"
+  data-save-url="/api/notes"
+  data-saving-label="{{ t('notes_new.saving') }}"
+  data-error-label="{{ t('notes_new.error_generic') }}"
+>
+  <label for="note-title">{{ t('notes_new.title_label') }}</label>
+  <input id="note-title" name="title" type="text" required>
+
+  <label for="note-content">{{ t('notes_new.content_label') }}</label>
+  <textarea id="note-content" name="content" rows="20" required></textarea>
+
+  <p id="note-new-status" class="note-form-status" role="status"></p>
+  <button id="note-new-save" type="submit">{{ t('notes_new.save') }}</button>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/note_new.js"></script>
+{% endblock %}

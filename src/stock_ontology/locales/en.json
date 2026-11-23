@@ -716,5 +716,17 @@
   "enum.match_reason.relationship": "relationship",
   "enum.match_reason.note": "note text",
   "enum.match_reason.semantic": "semantic similarity",
-  "enum.match_reason.filter": "filter"
+  "enum.match_reason.filter": "filter",
+  "nav.notes_new": "Paste a note",
+  "notes_new.page_title": "Paste a Note",
+  "notes_new.heading": "Paste a Note",
+  "notes_new.intro": "Paste text to save it as a Markdown note. It joins the ontology on the next ingest run.",
+  "notes_new.title_label": "Title",
+  "notes_new.content_label": "Note text",
+  "notes_new.save": "Save note",
+  "notes_new.saving": "Saving...",
+  "notes_new.error_generic": "The note could not be saved.",
+  "notes_new.error_title": "Enter a title.",
+  "notes_new.error_content": "Paste some valid text.",
+  "notes_new.error_too_large": "This note is over the 1 MB limit."
 }

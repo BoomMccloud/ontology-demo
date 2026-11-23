@@ -1,4 +1,7 @@
-"""FastAPI read-only web application for the 1990s Library UI and Clippy PM chat."""
+"""FastAPI web application for the 1990s Library UI and Clippy PM chat.
+
+It reads `ontology.db` strictly read-only. Its only write is adding a pasted note file.
+"""
 
 from __future__ import annotations
 
@@ -36,6 +39,7 @@ from stock_ontology.registry import OntologyRegistry, load_registry
 from stock_ontology.search import SearchFilters, split_qualified_value
 from stock_ontology.web.catalog import build_catalog_context
 from stock_ontology.web.navigation import LEFT_NAV, WORKFLOWS, resolve_nav
+from stock_ontology.web.note_intake import NoteSaveError, save_pasted_note
 from stock_ontology.web.viewmodels import (
     build_companies_context,
     build_entity_context,
@@ -69,6 +73,11 @@ class LanguageRequest(BaseModel):
     lang: str
 
 
+class NoteCreateRequest(BaseModel):
+    title: str
+    content: str
+
+
 def _sanitize_next_path(raw_next: str | None) -> str:
     """Validate an internal relative redirect path and strip any stale `lang` query param."""
     if not raw_next:
@@ -98,7 +107,7 @@ def _build_next_path(request: Request) -> str:
 
 
 def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
-    """Create the FastAPI app wired strictly read-only to `settings.db_path`."""
+    """Create the FastAPI app, wired strictly read-only to `settings.db_path`."""
     app = FastAPI(title="Stock Ontology Library", version="0.1.0")
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -503,6 +512,28 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
                 ) from exc
             ctx["rail"] = build_rail_context(db)
         return _render(request, "catalog.html", ctx, lang)
+
+    @app.get("/notes/new", response_class=HTMLResponse)
+    def note_new_page(request: Request) -> HTMLResponse:
+        lang = _resolve_request_lang(request)
+        with _open_ro_db(lang) as db:
+            ctx = {"rail": build_rail_context(db)}
+        return _render(request, "note_new.html", ctx, lang)
+
+    @app.post("/api/notes", status_code=201)
+    def create_note(request: Request, payload: NoteCreateRequest) -> dict[str, str]:
+        """Save pasted text as a note. The demo has only a root user, so there is no auth."""
+        lang = _resolve_request_lang(request)
+        try:
+            rel_path = save_pasted_note(
+                settings.data_dir, title=payload.title, content=payload.content
+            )
+        except NoteSaveError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=translate(f"notes_new.error_{exc.code}", lang=lang),
+            ) from exc
+        return {"file": rel_path}
 
     @app.get("/ontology", response_class=HTMLResponse)
     def ontology_page(

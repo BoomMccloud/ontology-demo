@@ -601,7 +601,7 @@ def serve(
         typer.Option("--lang", "-l", help="Default web UI language (en, zh, ko, ja, es, fr)."),
     ] = None,
 ) -> None:
-    """Start the read-only 1990s Library UI and Office-Clippy PM chat server."""
+    """Start the 1990s Library UI and Office-Clippy PM chat (read-only DB, can add pasted notes)."""
     import uvicorn
 
     from stock_ontology.web import create_app

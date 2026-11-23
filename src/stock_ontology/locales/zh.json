@@ -716,5 +716,17 @@
   "enum.match_reason.relationship": "关系",
   "enum.match_reason.note": "笔记文本",
   "enum.match_reason.semantic": "语义相似",
-  "enum.match_reason.filter": "筛选"
+  "enum.match_reason.filter": "筛选",
+  "nav.notes_new": "粘贴笔记",
+  "notes_new.page_title": "粘贴笔记",
+  "notes_new.heading": "粘贴笔记",
+  "notes_new.intro": "粘贴文本并保存为 Markdown 笔记。下次运行摄取后，它将进入本体。",
+  "notes_new.title_label": "标题",
+  "notes_new.content_label": "笔记内容",
+  "notes_new.save": "保存笔记",
+  "notes_new.saving": "正在保存...",
+  "notes_new.error_generic": "无法保存笔记。",
+  "notes_new.error_title": "请输入标题。",
+  "notes_new.error_content": "请粘贴有效的文本。",
+  "notes_new.error_too_large": "笔记超过 1 MB 上限。"
 }
