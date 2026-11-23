@@ -19,9 +19,10 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Literal, cast, get_args
 
-EntityType = Literal["company", "person", "product", "institution", "sector", "region"]
+EntityType = Literal["company", "person", "institution", "sector", "region"]
 EventType = Literal["fact", "news", "earnings", "catalyst", "meeting"]
 EventStatus = Literal["occurred", "upcoming", "rumored"]
 ViewType = Literal["rumor", "analyst_report", "pm_view", "channel_check", "consensus"]
@@ -98,7 +99,6 @@ ENTITY_TYPE = Vocabulary(
     {
         "company": "A business, listed or private.",
         "person": "An individual, such as an executive, analyst or author.",
-        "product": "A product, technology or platform.",
         "institution": "A government body, regulator, fund or other non-company organization.",
         "sector": "An industry or market segment.",
         "region": "A country, region or market geography.",
@@ -236,7 +236,17 @@ EDGE_BASIS = Vocabulary(
 )
 """Set by code at each edge write, never by the LLM."""
 
-EDGE_FACET_VOCABS: dict[str, Vocabulary] = {"sentiment": SENTIMENT, "basis": EDGE_BASIS}
+EDGE_CONFIDENCE = Vocabulary(
+    "confidence",
+    Conviction,
+    {
+        "high": "The source states the link directly.",
+        "medium": "The source implies the link.",
+        "low": "The link is tentative.",
+    },
+)
+
+EDGE_FACET_VOCABS: dict[str, Vocabulary] = {"sentiment": SENTIMENT, "basis": EDGE_BASIS, "confidence": EDGE_CONFIDENCE}
 
 ALL_VOCABS: tuple[Vocabulary, ...] = (
     ENTITY_TYPE,
@@ -491,7 +501,7 @@ def facet_schema_problems(declared: Any) -> list[str]:
     root = "facet_schema"
     if not isinstance(declared, Mapping):
         return [f"{root}: not an object"]
-    problems = [f"{root}.{k}: unknown section" for k in sorted(set(declared) - {"node", "edge"})]
+    problems = [f"{root}.{k}: unknown section" for k in sorted(set(declared) - {"node", "edge", "relation"})]
 
     def check_group(where: str, group: Any) -> Mapping[str, Any]:
         if not isinstance(group, Mapping):
@@ -534,13 +544,22 @@ def facet_schema_problems(declared: Any) -> list[str]:
     check_group(f"{root}.edge", edge)
     for key in REQUIRED_EDGE_FACETS:
         require_enum(f"{root}.edge", edge, key)
+    relations = declared.get("relation", {})
+    if not isinstance(relations, Mapping):
+        problems.append(f"{root}.relation: not an object")
+        relations = {}
+    for relation, group in relations.items():
+        where = f"{root}.relation.{relation}"
+        checked = check_group(where, group)
+        problems.extend(f"{where}.{key}: a relation cannot redeclare it" for key in REQUIRED_EDGE_FACETS if key in checked)
     return problems
 
 
 _INT_RE = re.compile(r"-?(0|[1-9][0-9]*)")
 _FLOAT_RE = re.compile(r"-?(0|[1-9][0-9]*)\.[0-9]+")
 _MONEY_SYMBOLS = {"US$": "USD", "NT$": "TWD", "HK$": "HKD"}
-_MONEY_AMOUNT = r"(?P<amount>[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)(?P<plus>\+)?"
+_MONEY_AMOUNT = r"(?P<amount>[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)(?P<scale>[KMBT])?(?P<plus>\+)?"
+_MONEY_SCALES = {"K": 10**3, "M": 10**6, "B": 10**9, "T": 10**12}
 _MONEY_RES = (
     re.compile(rf"(?P<currency>US\$|NT\$|HK\$|[A-Z]{{3}})\s*{_MONEY_AMOUNT}"),
     re.compile(rf"{_MONEY_AMOUNT}\s*(?P<currency>[A-Z]{{3}})"),
@@ -556,8 +575,9 @@ def _coerce_money(value: Any) -> dict[str, Any]:
         if match is None:
             raise ValueError(f"expected an amount with a currency, got {value!r}")  # noqa: TRY003
         raw = match["amount"].replace(",", "")
+        scaled = Decimal(raw) * _MONEY_SCALES.get(match["scale"] or "", 1)
         money: dict[str, Any] = {
-            "amount": float(raw) if "." in raw else int(raw),
+            "amount": int(scaled) if scaled == scaled.to_integral_value() else float(scaled),
             "currency": _MONEY_SYMBOLS.get(match["currency"], match["currency"]),
         }
         if match["plus"]:

@@ -76,7 +76,7 @@ STRUCTURE_DEFINITIONS: tuple[dict[str, str], ...] = (
         "number": "1",
         "title": "Entity",
         "plural": "Entities",
-        "subtitle": "Companies, People, Products, Institutions & Regions",
+        "subtitle": "Companies, People, Institutions & Regions",
         "lifecycle": "Canonical (deduplicated across notes)",
         "subtype_key": "entity_type",
         "description": "Durable real-world actors and instruments. Merged across documents by name, alias, and vector similarity.",
@@ -659,7 +659,7 @@ def build_entity_context(
     data_dir: Path | None = None,
     lang: str = DEFAULT_LANGUAGE,
 ) -> dict[str, Any]:
-    """Prepare dynamic facet-driven context for any entity (company, person, product, etc.)."""
+    """Prepare dynamic facet-driven context for any entity (company, person, etc.)."""
     overview = db.get_entity_overview(entity_id)
     entity = overview["entity"]
     if entity["node_type"] != "entity":

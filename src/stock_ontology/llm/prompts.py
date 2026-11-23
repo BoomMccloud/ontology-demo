@@ -25,7 +25,8 @@ _SENTIMENTS_TIGHT = format_choices(SENTIMENT.members, sep="|")
 EXTRACTION_SYSTEM_PROMPT = f"""You are an investment research ontology extractor for a stock fund.
 Extract structured knowledge strictly using the 4 ontology node types and directed edges:
 
-1. entity: Company, Person, Product/Tech, Institution, Sector, or Region.
+1. entity: Company, Person, Institution, Sector, or Region.
+   - Do not extract products, technologies or platforms as entities. Keep them in the text of events and views.
    - Use canonical names (e.g., "NVIDIA", "TSMC", "Vertiv"). Put tickers/abbreviations in `aliases`.
    - Include `entity_type` ({format_choices(ENTITY_TYPE.members, sep=", ")}).
    - Every entity must carry the facets listed for its type under "Required entity facets" at the end of the catalog. If the document does not state one, use well-established public knowledge. If you still cannot determine a required facet, do not extract that entity.
@@ -44,6 +45,7 @@ Extract structured knowledge strictly using the 4 ontology node types and direct
 4. theme: A meta-narrative, secular trend, or investment thesis (e.g., "AI Data Center Power Bottleneck").
 
 Resolution & linking rules:
+- Every edge must carry the facets listed for its relation under "Required edge facets" at the end of the catalog.
 - If an entity or theme already exists in the provided Existing Catalog, DO NOT create a duplicate node; reference its exact existing `id` in `edges` (`from_ref` / `to_ref`).
 - Only create a new entity or theme (with a `temp_id` like `e1`, `t1`) when it is not present in the catalog.
 - Reuse facet keys from Known Facets where appropriate, and add new snake_case facets on the fly whenever useful.

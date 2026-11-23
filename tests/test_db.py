@@ -26,6 +26,16 @@ def insert_legacy_edge(db: OntologyDB, edge: Edge) -> None:
     db.conn.commit()
 
 
+def seed_edge(db: OntologyDB, edge: Edge) -> None:
+    """Write `edge` normally, or as a legacy row when the registry would now refuse its relation or endpoints."""
+    from stock_ontology.registry import FacetSchemaError
+
+    try:
+        db.upsert_edge(edge)
+    except FacetSchemaError:
+        insert_legacy_edge(db, edge)
+
+
 def _unit_vec(index: int, dim: int = 8) -> list[float]:
     vec = [0.0] * dim
     vec[index % dim] = 1.0
@@ -441,14 +451,15 @@ def test_query_entity_signals_sentiment_categories_and_edge_overrides() -> None:
             )
         )
         # Two edges from evt_rumored_news to ent_qcom to verify deduplication.
-        db.upsert_edge(
+        insert_legacy_edge(
+            db,
             Edge(
                 id="ed_rn_rel",
                 from_id="evt_rumored_news",
                 to_id="ent_qcom",
                 relation="RELATES_TO",
                 source_doc_id="doc_1", facets={"basis": "extracted"},
-            )
+            ),
         )
         db.upsert_edge(
             Edge(
@@ -480,7 +491,8 @@ def test_query_entity_signals_sentiment_categories_and_edge_overrides() -> None:
                 source_doc_id="doc_legacy", facets={"basis": "extracted"},
             )
         )
-        db.upsert_edge(
+        seed_edge(
+            db,
             Edge(
                 id="ed_auth",
                 from_id="evt_authored",
@@ -753,7 +765,7 @@ def test_cli_repair_reports_changes_then_zero_on_rerun(
 
 
 class _CliIngestFakeLLM:
-    """Minimal offline LLM for CLI ingest wiring: two people linked by a custom alias."""
+    """Minimal offline LLM for CLI ingest wiring: a person and a company linked by a custom alias."""
 
     def format_chain_summary(self) -> str:
         return "fake"
@@ -765,7 +777,7 @@ class _CliIngestFakeLLM:
         return ExtractionResult(
             entities=[
                 ExtractedEntity(temp_id="p1", name="Ann Lee", summary="Analyst.", entity_type="person"),
-                ExtractedEntity(temp_id="p2", name="Bo Kim", summary="Analyst.", entity_type="person"),
+                ExtractedEntity(temp_id="p2", name="Bo Corp", summary="A company.", entity_type="company"),
             ],
             edges=[ExtractedEdge(from_ref="p1", to_ref="p2", relation="EMPLOYED_BY_CUSTOM")],
         )

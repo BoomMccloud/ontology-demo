@@ -1889,7 +1889,7 @@ def test_extraction_catalog_lists_required_entity_facets_from_the_registry(tmp_p
     from stock_ontology.registry import load_registry
 
     raw = json.loads((Path(__file__).parents[1] / "ontology_registry.json").read_text(encoding="utf-8"))
-    raw["facet_schema"]["node"]["entity:product"] = {"process_node": {"kind": "text", "required": True}}
+    raw["facet_schema"]["node"]["entity:region"] = {"process_node": {"kind": "text", "required": True}}
     path = tmp_path / "registry.json"
     path.write_text(json.dumps(raw), encoding="utf-8")
     data_dir = tmp_path / "data"
@@ -1898,7 +1898,7 @@ def test_extraction_catalog_lists_required_entity_facets_from_the_registry(tmp_p
         catalog = IngestionPipeline(db, FakePipelineLLM(), data_dir, registry=load_registry(path))._build_existing_catalog()
     assert "- company: sector" in catalog
     assert "- person: organization, role" in catalog
-    assert "- product: process_node" in catalog
+    assert "- region: process_node" in catalog
 
 
 class _BadTargetConsensusFakeLLM(_SchemaBreakingFakeLLM):

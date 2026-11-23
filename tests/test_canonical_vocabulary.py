@@ -306,7 +306,7 @@ def test_upsert_edge_and_update_edge_store_normalize_relation_name_output(tmp_pa
         db.upsert_node(_plain_entity("ent_j", "Jane", "person"), embedding=_embed("j"))
 
         db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation=" supplies--to ", source_doc_id=None, facets={"basis": "extracted"}))
-        db.upsert_edge(Edge(id="e2", from_id="ent_j", to_id="ent_a", relation="compete", source_doc_id=None, facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="e2", from_id="ent_j", to_id="ent_a", relation="WORKS_AT", source_doc_id=None, facets={"basis": "extracted"}))
         db.update_edge("e2", relation="works-at", from_id="ent_j", to_id="ent_a", facets={"basis": "extracted"})
 
         stored = {

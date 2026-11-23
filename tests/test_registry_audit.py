@@ -24,7 +24,7 @@ from stock_ontology.registry import (
     save_registry,
 )
 
-from test_db import insert_legacy_edge
+from test_db import insert_legacy_edge, seed_edge
 
 DIM = 16
 
@@ -139,7 +139,7 @@ def _seed_audit_db(db_path: Path) -> None:
                     name="Private Cloud Compute",
                     summary="Confidential inference cluster.",
                     aliases=["PCC"],
-                    facets={"entity_type": "product"},
+                    facets={"entity_type": "institution"},
                 ),
                 _unit_vec(8),
             ),
@@ -150,7 +150,7 @@ def _seed_audit_db(db_path: Path) -> None:
                     name="Blackwell GPU",
                     summary="NVIDIA GPU architecture.",
                     aliases=[],
-                    facets={"entity_type": "product"},
+                    facets={"entity_type": "institution"},
                 ),
                 _unit_vec(9),
             ),
@@ -290,10 +290,7 @@ def _seed_audit_db(db_path: Path) -> None:
             ),
         ]
         for edge in edges:
-            if db.registry.resolve_relation(edge.relation) is None:
-                insert_legacy_edge(db, edge)  # PRODUCES, written before unmapped relations were refused
-            else:
-                db.upsert_edge(edge)
+            seed_edge(db, edge)  # PRODUCES and reversed edges are legacy rows the registry now refuses
 
 
 def test_minimal_registry_save_load_and_resolution(tmp_path: Path) -> None:
@@ -413,7 +410,7 @@ def test_minimal_registry_save_load_and_resolution(tmp_path: Path) -> None:
         from_entity_type="company",
         to_id="ent_blackwell",
         to_type="entity",
-        to_entity_type="product",
+        to_entity_type="institution",
     )
     assert canon_oov.matched is False
     assert canon_oov.relation == "PRODUCES"
@@ -476,7 +473,7 @@ def test_audit_detects_unmapped_drift_direction_and_false_merges(tmp_path: Path)
     assert [r.name for r in report.unmapped_relations] == ["PRODUCES"]
     assert report.unmapped_relations[0].edge_count == 1
     assert report.unmapped_relations[0].observed_signatures[0].from_type == "entity:company"
-    assert report.unmapped_relations[0].observed_signatures[0].to_type == "entity:product"
+    assert report.unmapped_relations[0].observed_signatures[0].to_type == "entity:institution"
 
     assert s.total_companies == 5
     assert s.mapped_companies == 3
@@ -842,7 +839,7 @@ def _seed_pending_db(db_path: Path) -> None:
     with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
         nodes = [
             Node(id="ent_nvda", node_type="entity", name="NVIDIA", summary="GPU.", facets={"entity_type": "company"}),
-            Node(id="ent_bw", node_type="entity", name="Blackwell", summary="GPU.", facets={"entity_type": "product"}),
+            Node(id="ent_bw", node_type="entity", name="Blackwell", summary="GPU.", facets={"entity_type": "institution"}),
             Node(id="vw_1", node_type="view", name="Desk View", summary="View.", facets={"view_type": "pm_view"}),
         ]
         for idx, node in enumerate(nodes):
@@ -868,7 +865,7 @@ def test_audit_merges_pending_edges_into_unmapped_relation_suggestions(tmp_path:
     produces = by_name["PRODUCES"]
     assert produces.edge_count == 3  # one stored legacy edge plus two pending rows
     assert {(s.from_type, s.to_type): s.count for s in produces.observed_signatures} == {
-        ("entity:company", "entity:product"): 2,
+        ("entity:company", "entity:institution"): 2,
         ("view", "entity:company"): 1,
     }
     assert {(s.from_name, s.to_name) for s in produces.sample_edges} == {("NVIDIA", "Blackwell"), ("Desk View", "NVIDIA")}

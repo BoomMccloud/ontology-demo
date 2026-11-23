@@ -36,7 +36,7 @@ from stock_ontology.pipeline import IngestionPipeline
 from stock_ontology.registry import create_minimal_registry, load_registry, save_registry
 from stock_ontology.repair import repair_ontology
 from stock_ontology.web import create_app
-from test_db import insert_legacy_edge
+from test_db import insert_legacy_edge, seed_edge
 
 DIM = 32
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -297,7 +297,7 @@ def _seed_read_consolidation_db(db_path: Path) -> None:
             Edge(id="e_emp2", from_id="ent_vrt", to_id="ent_jane", relation="WORKS_AT", source_doc_id="doc_2", facets={"basis": "extracted"}),
         ]
         for edge in edges:
-            db.upsert_edge(edge)
+            seed_edge(db, edge)  # reversed edges are legacy rows the registry now refuses
 
 
 # ---------------------------------------------------------------------------
@@ -648,10 +648,7 @@ def test_registry_driven_repair_and_reciprocal_contradiction_audit(tmp_path: Pat
             Edge(id="e_rcp_2", from_id="ent_d", to_id="ent_c", relation="SUPPLIES_TO", source_doc_id="doc_2", facets={"basis": "extracted"}),
         ]
         for edge in legacy_edges:
-            if db.registry.resolve_relation(edge.relation) is None:
-                insert_legacy_edge(db, edge)  # PARTNERS_WITH, written before unmapped relations were refused
-            else:
-                db.upsert_edge(edge)
+            seed_edge(db, edge)  # PARTNERS_WITH and reversed edges are legacy rows the registry now refuses
 
         rep1 = repair_ontology(db, reg)
         assert rep1.total_changes > 0

@@ -186,9 +186,9 @@ class OntologyDB:
                         "UPDATE nodes SET facets_json = ? WHERE id = ?", (json.dumps(migrated), r["id"])
                     )
                     changed += 1
-            for r in self.conn.execute("SELECT id, facets_json FROM edges").fetchall():
+            for r in self.conn.execute("SELECT id, relation, facets_json FROM edges").fetchall():
                 facets = json.loads(r["facets_json"] or "{}")
-                migrated = reg.migrate_facets(None, facets)
+                migrated = reg.migrate_facets(None, facets, relation=str(r["relation"]))
                 if migrated != facets:
                     self.conn.execute(
                         "UPDATE edges SET facets_json = ? WHERE id = ?", (json.dumps(migrated), r["id"])
@@ -291,9 +291,10 @@ class OntologyDB:
     def upsert_edge(self, edge: Edge) -> str:
         """Insert an edge or update facets if an identical (from, to, relation, doc) exists.
 
-        A relation the registry does not map is refused.
+        A relation the registry does not map, or endpoints it does not allow, are refused.
         """
         self.registry.check_relation(edge.relation)
+        self._check_edge_endpoints(edge.relation, edge.from_id, edge.to_id)
         norm_rel = normalize_relation_name(edge.relation)
         with self.transaction():
             existing = self.conn.execute(
@@ -306,7 +307,7 @@ class OntologyDB:
             if existing is not None:
                 existing_facets = json.loads(existing["facets_json"])
                 merged_facets = self.registry.check_facets(
-                    None, merge_edge_facets(existing_facets, edge.facets)
+                    None, merge_edge_facets(existing_facets, edge.facets), relation=norm_rel
                 )
                 self.conn.execute(
                     "UPDATE edges SET facets_json = ? WHERE id = ?",
@@ -314,7 +315,7 @@ class OntologyDB:
                 )
                 return str(existing["id"])
 
-            facets = self.registry.check_facets(None, edge.facets)
+            facets = self.registry.check_facets(None, edge.facets, relation=norm_rel)
             self.conn.execute(
                 """
                 INSERT INTO edges (id, from_id, to_id, relation, facets_json, source_doc_id, created_at)
@@ -331,6 +332,34 @@ class OntologyDB:
                 ),
             )
             return edge.id
+
+    @contextmanager
+    def checking_against(self, registry: OntologyRegistry) -> Iterator[None]:
+        """Check writes in this block against `registry`, without migrating stored rows."""
+        previous = self.registry
+        self.registry = registry
+        try:
+            yield
+        finally:
+            self.registry = previous
+
+    def _check_edge_endpoints(self, relation: str, from_id: str, to_id: str) -> None:
+        """Refuse endpoints the relation does not allow. A missing node is left to the foreign key."""
+        rows = self.conn.execute(
+            "SELECT id, node_type, json_extract(facets_json, '$.entity_type') AS entity_type "
+            "FROM nodes WHERE id IN (?, ?)",
+            (from_id, to_id),
+        ).fetchall()
+        by_id = {str(r["id"]): r for r in rows}
+        if from_id in by_id and to_id in by_id:
+            start, end = by_id[from_id], by_id[to_id]
+            self.registry.check_endpoints(
+                relation,
+                from_type=str(start["node_type"]),
+                from_entity_type=start["entity_type"],
+                to_type=str(end["node_type"]),
+                to_entity_type=end["entity_type"],
+            )
 
     def insert_pending_edge(self, edge: Edge) -> str:
         """Hold an edge whose relation the registry does not map, with its raw relation, out of `edges`."""
@@ -446,7 +475,8 @@ class OntologyDB:
     ) -> None:
         """Overwrite an edge's relation, endpoints, and facets in place; an unmapped relation is refused."""
         self.registry.check_relation(relation)
-        facets = self.registry.check_facets(None, facets)
+        self._check_edge_endpoints(relation, from_id, to_id)
+        facets = self.registry.check_facets(None, facets, relation=relation)
         with self.transaction():
             self.conn.execute(
                 "UPDATE edges SET relation = ?, from_id = ?, to_id = ?, facets_json = ? WHERE id = ?",

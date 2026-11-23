@@ -290,7 +290,8 @@ def test_code_facet_schema_declares_every_vocabulary_as_an_enum() -> None:
     for node_type, group in vocab.NODE_FACET_SCHEMA.items():
         enums = {k for k, spec in group.items() if spec.kind == "enum"}
         assert enums == set(vocab.NODE_FACET_VOCABS[node_type]), node_type
-    assert {k for k, s in vocab.EDGE_FACET_SCHEMA.items() if s.kind == "enum"} == set(vocab.EDGE_FACET_VOCABS)
+    # `confidence` has a vocabulary, but only the registry's BUY relation layer declares it.
+    assert {k for k, s in vocab.EDGE_FACET_SCHEMA.items() if s.kind == "enum"} == set(vocab.EDGE_FACET_VOCABS) - {"confidence"}
     for group in [*vocab.NODE_FACET_SCHEMA.values(), vocab.EDGE_FACET_SCHEMA]:
         assert all(spec.kind in vocab.FACET_KINDS for spec in group.values())
 
@@ -301,7 +302,7 @@ def test_shipped_registry_declares_the_initial_required_sets_and_kinds() -> None
     assert {k for k in reg.facet_schema["node"] if k.startswith("entity:")} == {"entity:person", "entity:company"}
     assert reg.required_facets("entity", "person") == {"entity_type", "role", "organization"}
     assert reg.required_facets("entity", "company") == {"entity_type", "sector"}
-    assert reg.required_facets("entity", "product") == {"entity_type"}
+    assert reg.required_facets("entity", "institution") == {"entity_type"}
     assert all(
         spec == {"kind": "text", "required": True}
         for layer in ("entity:person", "entity:company")
@@ -410,12 +411,12 @@ def test_entity_subtype_layer_merges_over_entity_and_overrides_a_base_key(tmp_pa
     reg = _layered_registry(tmp_path)
     assert reg.required_facets("entity", "person") == {"entity_type", "organization", "region"}
     # Without the person layer, `region` keeps the base spec: optional.
-    assert reg.required_facets("entity", "product") == {"entity_type"}
+    assert reg.required_facets("entity", "institution") == {"entity_type"}
     assert reg.required_facets("entity") == {"entity_type"}
     # The layer is chosen by the stored subtype, after the vocabulary rule (`Person` is `person`).
     with pytest.raises(FacetSchemaError, match="region"):
         reg.check_facets("entity", {"entity_type": "Person", "organization": "Omega"})
-    assert reg.check_facets("entity", {"entity_type": "product"}) == {"entity_type": "product"}
+    assert reg.check_facets("entity", {"entity_type": "institution"}) == {"entity_type": "institution"}
 
 
 def test_entity_subtype_layer_does_not_leak_to_other_node_types(tmp_path) -> None:

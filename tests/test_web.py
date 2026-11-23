@@ -24,7 +24,7 @@ from stock_ontology.models import ConsensusSynthesis, Edge, ExtractionResult, No
 from stock_ontology.pipeline import IngestionPipeline
 from stock_ontology.registry import create_minimal_registry, save_registry
 from stock_ontology.web import create_app
-from test_db import insert_legacy_edge
+from test_db import insert_legacy_edge, seed_edge
 
 DIM = 16
 
@@ -1052,7 +1052,7 @@ def test_web_ontology_view_connected_to_registry_and_audit(tmp_path: Path) -> No
             node_type="entity",
             name="Blackwell GPU",
             summary="Data center GPU.",
-            facets={"entity_type": "product"},
+            facets={"entity_type": "institution"},
         )
         thm_official_alias = Node(
             id="thm_power",
@@ -1113,7 +1113,7 @@ def test_web_ontology_view_connected_to_registry_and_audit(tmp_path: Path) -> No
             Edge(id="ed6", from_id="ent_nvda", to_id="ent_kenji", relation="WORKS_AT", facets={"basis": "extracted"}),
             Edge(id="ed7", from_id="thm_power", to_id="ent_vrt", relation="BENEFITS_FROM", facets={"basis": "extracted"}),
         ):
-            db.upsert_edge(edge)
+            seed_edge(db, edge)
         insert_legacy_edge(
             db, Edge(id="ed8", from_id="ent_nvda", to_id="ent_blackwell", relation="PRODUCES", facets={"basis": "extracted"})
         )

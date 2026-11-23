@@ -181,6 +181,11 @@ class IngestionPipeline:
             lines.append("")
             lines.append("Required entity facets (put each in `facets`):")
             lines.extend(f"- {entity_type}: {', '.join(keys)}" for entity_type, keys in required.items())
+        required_edges = self.registry.relation_required_facets()
+        if required_edges:
+            lines.append("")
+            lines.append("Required edge facets (put each in the edge's `facets`):")
+            lines.extend(f"- {relation}: {', '.join(keys)}" for relation, keys in required_edges.items())
         return "\n".join(lines)
 
     def _resolve_canonical_node(
@@ -427,12 +432,14 @@ class IngestionPipeline:
         relation, not written to `edges`; its name is counted in `pending_relations`.
         """
 
-        def clean(node_type: str | None, facets: dict[str, Any]) -> dict[str, Any]:
+        def clean(node_type: str | None, facets: dict[str, Any], relation: str | None = None) -> dict[str, Any]:
             """Drop bad optional facets. A bad date or money value stays, to force a regeneration, until the last try."""
-            kept = self.registry.drop_uncoercible_optional(node_type, facets, kinds=DROP_WITHOUT_RETRY_KINDS)
+            kept = self.registry.drop_uncoercible_optional(
+                node_type, facets, kinds=DROP_WITHOUT_RETRY_KINDS, relation=relation
+            )
             if not final_attempt:
                 return kept
-            final = self.registry.drop_uncoercible_optional(node_type, kept, kinds=REGENERATE_KINDS)
+            final = self.registry.drop_uncoercible_optional(node_type, kept, kinds=REGENERATE_KINDS, relation=relation)
             for key in kept.keys() - final.keys():
                 logger.warning("Dropping invalid %s facet after %d attempts", key, MAX_EXTRACTION_ATTEMPTS)
                 if dropped_facets is not None:
@@ -559,8 +566,9 @@ class IngestionPipeline:
                     canon_facets.pop("sentiment", None)
             # `basis` is set by code, never taken from the LLM.
             canon_facets["basis"] = "extracted"
-            canon_facets = clean(None, canon_facets)
-            if not canon.matched:
+            canon_facets = clean(None, canon_facets, canon.relation if canon.matched else None)
+            # Unknown relations, and known ones between endpoints they do not allow, wait for approval.
+            if not canon.matched or not canon.endpoints_ok:
                 self.db.insert_pending_edge(
                     Edge(
                         id=f"pedge_{uuid.uuid4().hex[:12]}",

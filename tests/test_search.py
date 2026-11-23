@@ -24,6 +24,8 @@ from stock_ontology.web import create_app
 
 DIM = 16
 
+from test_db import insert_legacy_edge
+
 
 def _unit_vec(idx: int) -> list[float]:
     vec = [0.0] * DIM
@@ -327,9 +329,9 @@ def test_get_relation_node_ids_keeps_every_relation_per_neighbor(tmp_path: Path)
             db.upsert_node(Node(id=nid, node_type=nt, name=nid, summary="", facets=subtype), embedding=_unit_vec(idx))
         # evt_1 has two edges to ent_a; the best-edge collapse in get_entity_connected_nodes keeps one.
         db.upsert_edge(Edge(id="e1", from_id="evt_1", to_id="ent_a", relation="ABOUT", facets={"basis": "extracted"}))
-        db.upsert_edge(Edge(id="e2", from_id="evt_1", to_id="ent_a", relation="RELATES_TO", facets={"basis": "extracted"}))
+        insert_legacy_edge(db, Edge(id="e2", from_id="evt_1", to_id="ent_a", relation="RELATES_TO", facets={"basis": "extracted"}))
         db.upsert_edge(Edge(id="e3", from_id="evt_2", to_id="ent_b", relation="ABOUT", facets={"basis": "extracted"}))
-        db.upsert_edge(Edge(id="e4", from_id="ent_a", to_id="evt_2", relation="RELATES_TO", facets={"basis": "extracted"}))
+        insert_legacy_edge(db, Edge(id="e4", from_id="ent_a", to_id="evt_2", relation="RELATES_TO", facets={"basis": "extracted"}))
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
         assert db.get_relation_node_ids("ABOUT") == {"evt_1", "evt_2", "ent_a", "ent_b"}

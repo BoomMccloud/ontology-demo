@@ -27,7 +27,7 @@ from stock_ontology.vocab import EVENT_STATUS, SENTIMENT_FILTER_VALUES, SIGNAL_C
 
 AGENT_SYSTEM_PROMPT = """You are an investment research assistant for portfolio managers at a stock fund.
 You query a strictly read-only 4-node stock ontology database containing:
-- entity (companies, people, products, institutions, sectors)
+- entity (companies, people, institutions, sectors, regions)
 - event (facts, earnings, news, meetings, catalysts; each carries `facets.source` and `facets.sentiment`: `positive` | `negative` | `neutral` | `mixed`, with optional per-company `ABOUT` edge overrides)
 - view (rumors, analyst reports, channel checks, PM views, and pipeline-synthesized fund `consensus` views; carries `stance` plus `facets.sentiment`, with optional per-company `ABOUT` edge overrides)
 - theme (meta-narratives / investment theses)

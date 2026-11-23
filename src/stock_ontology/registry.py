@@ -245,6 +245,8 @@ class CanonicalEdgeResult(BaseModel):
     matched: bool = False
     symmetric: bool = False
     flipped: bool = False
+    # The final direction satisfies the relation's from and to types. False for an unmapped relation.
+    endpoints_ok: bool = False
 
 
 def _entity_type(node_type: str | None, facets: dict[str, Any]) -> str | None:
@@ -363,6 +365,10 @@ class OntologyRegistry(BaseModel):
             raise ValueError(  # noqa: TRY003
                 "Registry facet_schema declares enum facets with no facet_vocabularies entry: " + ", ".join(missing)
             )
+        known = {spec.name for spec in self.relations}
+        unknown = sorted(set(self.facet_schema.get("relation", {})) - known)
+        if unknown:
+            raise ValueError("Registry facet_schema.relation names unknown relations: " + ", ".join(unknown))  # noqa: TRY003
         return self
 
     def _declared_spec_groups(self) -> list[tuple[str | None, dict[str, Any]]]:
@@ -370,15 +376,23 @@ class OntologyRegistry(BaseModel):
             (owner, dict(specs)) for owner, specs in self.facet_schema.get("node", {}).items()
         ]
         groups.append((None, dict(self.facet_schema.get("edge", {}))))
+        groups.extend((None, dict(specs)) for specs in self.facet_schema.get("relation", {}).values())
         return groups
 
-    def _facet_specs(self, node_type: str | None, entity_type: str | None = None) -> dict[str, Any]:
+    def _facet_specs(
+        self, node_type: str | None, entity_type: str | None = None, relation: str | None = None
+    ) -> dict[str, Any]:
         """The declared `{facet: {kind, required}}` for a node type, or for edges when None.
 
         An entity also gets `node.entity:<entity_type>` layered on `node.entity`; a subtype key overrides.
+        An edge gets `relation.<canonical relation>` layered on `edge` the same way.
         """
         if node_type is None:
-            return dict(self.facet_schema.get("edge", {}))
+            specs = dict(self.facet_schema.get("edge", {}))
+            match = self.resolve_relation(relation) if relation else None
+            if match is not None:
+                specs.update(self.facet_schema.get("relation", {}).get(match.canonical, {}))
+            return specs
         node_specs = self.facet_schema.get("node", {})
         specs = dict(node_specs.get(node_type, {}))
         if node_type == "entity" and isinstance(entity_type, str) and entity_type:
@@ -409,6 +423,35 @@ class OntologyRegistry(BaseModel):
         if self.resolve_relation(relation) is None:
             raise FacetSchemaError(f"edge relation {relation!r} is not mapped by the registry")  # noqa: TRY003
 
+    def check_endpoints(
+        self,
+        relation: str,
+        *,
+        from_type: str,
+        from_entity_type: str | None,
+        to_type: str,
+        to_entity_type: str | None,
+    ) -> None:
+        """Raise `FacetSchemaError` when the endpoints break the relation's from and to types."""
+        match = self.resolve_relation(relation)
+        if match is None:
+            raise FacetSchemaError(f"edge relation {relation!r} is not mapped by the registry")  # noqa: TRY003
+        first, second = (from_type, from_entity_type), (to_type, to_entity_type)
+        if match.flip_direction:
+            first, second = second, first
+        allowed = matches_type_spec(first[0], first[1], match.spec.from_types) and matches_type_spec(
+            second[0], second[1], match.spec.to_types
+        )
+        if match.spec.symmetric:  # Stored in id order, so either direction may be the allowed one.
+            allowed = allowed or (
+                matches_type_spec(second[0], second[1], match.spec.from_types)
+                and matches_type_spec(first[0], first[1], match.spec.to_types)
+            )
+        if not allowed:
+            raise FacetSchemaError(  # noqa: TRY003
+                f"edge {match.canonical} does not allow {first[1] or first[0]} -> {second[1] or second[0]}"
+            )
+
     def _vocabulary(self, node_type: str | None, key: str) -> dict[str, Any]:
         group = (
             self.facet_vocabularies.get("edge", {})
@@ -421,9 +464,22 @@ class OntologyRegistry(BaseModel):
         """Facets every node of `node_type` (or every edge, when None) must carry."""
         return {k for k, spec in self._facet_specs(node_type, entity_type).items() if spec.get("required")}
 
-    def facet_keys_of_kind(self, node_type: str | None, kind: str) -> list[str]:
-        """Official facets of `kind` on `node_type` (or on edges, when None)."""
-        return [k for k, spec in self._facet_specs(node_type).items() if spec.get("kind") == kind]
+    def facet_keys_of_kind(self, node_type: str | None, kind: str, *, relation: str | None = None) -> list[str]:
+        """Official facets of `kind` on `node_type` (or on edges of `relation`, when None)."""
+        return [k for k, spec in self._facet_specs(node_type, relation=relation).items() if spec.get("kind") == kind]
+
+    def edge_facet_keys(self, relation: str) -> set[str]:
+        """Official facet keys on an edge of `relation`: the base edge spec plus its relation layer."""
+        return set(self._facet_specs(None, relation=relation))
+
+    def relation_required_facets(self) -> dict[str, list[str]]:
+        """Facets each relation must carry beyond the base edge requirements; others are left out."""
+        base = self.required_facets(None)
+        required = {
+            name: sorted(k for k, spec in self._facet_specs(None, relation=name).items() if spec.get("required") and k not in base)
+            for name in self.facet_schema.get("relation", {})
+        }
+        return {name: keys for name, keys in required.items() if keys}
 
     def entity_type_required_facets(self) -> dict[str, list[str]]:
         """Facets each entity type must carry beyond `entity_type`; types requiring none are left out."""
@@ -439,12 +495,14 @@ class OntologyRegistry(BaseModel):
             aliases=vocab.get("aliases") or {},
         )
 
-    def check_facets(self, node_type: str | None, facets: dict[str, Any]) -> dict[str, Any]:
+    def check_facets(
+        self, node_type: str | None, facets: dict[str, Any], *, relation: str | None = None
+    ) -> dict[str, Any]:
         """Return `facets` with official values coerced to their kind, or raise `FacetSchemaError`.
 
         `node_type` None means an edge. Facets the registry does not declare pass through unchanged.
         """
-        specs = self._facet_specs(node_type, _entity_type(node_type, facets))
+        specs = self._facet_specs(node_type, _entity_type(node_type, facets), relation)
         owner = f"{node_type} node" if node_type is not None else "edge"
         out = dict(facets)
         for key, spec in specs.items():
@@ -460,7 +518,12 @@ class OntologyRegistry(BaseModel):
         return out
 
     def drop_uncoercible_optional(
-        self, node_type: str | None, facets: dict[str, Any], *, kinds: Iterable[str] | None = None
+        self,
+        node_type: str | None,
+        facets: dict[str, Any],
+        *,
+        kinds: Iterable[str] | None = None,
+        relation: str | None = None,
     ) -> dict[str, Any]:
         """Ingest rule: remove each optional official facet whose value cannot be coerced to its kind.
 
@@ -470,7 +533,7 @@ class OntologyRegistry(BaseModel):
         """
         only = set(kinds) if kinds is not None else None
         out = dict(facets)
-        for key, spec in self._facet_specs(node_type, _entity_type(node_type, facets)).items():
+        for key, spec in self._facet_specs(node_type, _entity_type(node_type, facets), relation).items():
             value = out.get(key)
             if value is None or spec.get("required"):
                 continue
@@ -482,10 +545,12 @@ class OntologyRegistry(BaseModel):
                 out.pop(key)
         return out
 
-    def migrate_facets(self, node_type: str | None, facets: dict[str, Any]) -> dict[str, Any]:
+    def migrate_facets(
+        self, node_type: str | None, facets: dict[str, Any], *, relation: str | None = None
+    ) -> dict[str, Any]:
         """Coerce each official facet to its kind where that is lossless; leave the rest unchanged."""
         out = dict(facets)
-        for key, spec in self._facet_specs(node_type, _entity_type(node_type, facets)).items():
+        for key, spec in self._facet_specs(node_type, _entity_type(node_type, facets), relation).items():
             value = out.get(key)
             if value is None:
                 continue
@@ -604,6 +669,10 @@ class OntologyRegistry(BaseModel):
             cur_from, cur_to = cur_to, cur_from
             flipped = not flipped
 
+        # Checked before a symmetric edge is reordered by id, since that order ignores the types.
+        endpoints_ok = matches_type_spec(cur_from[1], cur_from[2], spec.from_types) and matches_type_spec(
+            cur_to[1], cur_to[2], spec.to_types
+        )
         if spec.symmetric and cur_from[0] > cur_to[0]:
             cur_from, cur_to = cur_to, cur_from
             flipped = not flipped
@@ -620,6 +689,7 @@ class OntologyRegistry(BaseModel):
             matched=True,
             symmetric=spec.symmetric,
             flipped=flipped,
+            endpoints_ok=endpoints_ok,
         )
 
     def resolve_company(

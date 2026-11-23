@@ -18,7 +18,7 @@ Pure definitions. Nothing here opens a connection.
   `nodes`, `edges`, `node_vectors` (a `vec0` virtual table, cosine distance),
   `ingestion_log`, `db_metadata`, `node_lookup` (casefolded names and
   aliases, for exact-match resolution), and `pending_edges` (extracted edges
-  whose relation the registry does not map: from_id, to_id, the raw relation,
+  whose relation the registry does not map, or whose endpoints it does not allow: from_id, to_id, the raw relation,
   facets, source_doc_id, created_at; rows cascade when an endpoint node is
   deleted; `merge_node_into` repoints them to the survivor and drops self-loops). It then adds columns that shipped
   later, listed in `_ADDED_COLUMNS` (`ingestion_log.size` and `mtime_ns`). It

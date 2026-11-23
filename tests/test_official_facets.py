@@ -427,8 +427,8 @@ def _write_registry(tmp_path: Path, mutate, name: str = "ontology_registry.json"
     return path
 
 
-def _require_product_process_node(raw: dict) -> None:
-    raw["facet_schema"]["node"].setdefault("entity:product", {})["process_node"] = {
+def _require_region_process_node(raw: dict) -> None:
+    raw["facet_schema"]["node"].setdefault("entity:region", {})["process_node"] = {
         "kind": "text",
         "required": True,
     }
@@ -452,12 +452,12 @@ def _entity(nid: str, entity_type: str, **facets) -> Node:
 
 
 def test_entity_type_required_facet_is_a_registry_edit_enforced_on_write(tmp_path: Path) -> None:
-    reg = load_registry(_write_registry(tmp_path, _require_product_process_node))
+    reg = load_registry(_write_registry(tmp_path, _require_region_process_node))
     with OntologyDB(tmp_path / "t.db", embedding_dim=DIM, registry=reg) as db:
         with pytest.raises(ValueError):
-            db.upsert_node(_entity("ent_p1", "product"))
+            db.upsert_node(_entity("ent_p1", "region"))
         assert _node_count(db) == 0
-        db.upsert_node(_entity("ent_p2", "product", process_node="3nm"))
+        db.upsert_node(_entity("ent_p2", "region", process_node="3nm"))
         db.upsert_node(_entity("ent_c1", "company"))
         assert {n.id for n in db.list_all_nodes()} == {"ent_p2", "ent_c1"}
 

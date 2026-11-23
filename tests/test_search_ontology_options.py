@@ -23,7 +23,7 @@ from stock_ontology.vocab import (
 )
 from stock_ontology.web import create_app
 
-from test_db import insert_legacy_edge
+from test_db import insert_legacy_edge, seed_edge
 from test_web import DIM, FakeWebLLM, _unit_vec
 
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "ontology_registry.json"
@@ -118,7 +118,7 @@ def _seed(db_path: Path) -> None:
         for idx, node in enumerate(nodes):
             db.upsert_node(node, embedding=_unit_vec(idx))
         for edge in edges:
-            db.upsert_edge(edge)
+            seed_edge(db, edge)
         insert_legacy_edge(
             db, Edge(id="e_off", from_id="vw_cons", to_id="ent_qcom", relation="FROBNICATES", facets={"basis": "extracted"})
         )

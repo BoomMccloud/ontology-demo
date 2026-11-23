@@ -94,10 +94,24 @@ Code checks only a minimum (`facet_schema_problems`): each spec is
 facet must have a vocabulary in `facet_vocabularies`. `NODE_FACET_SCHEMA` and
 `EDGE_FACET_SCHEMA` in `vocab.py` are only the built-in registry's base schema.
 In the shipped registry, event `event_date` and view `as_of` are dates, view
-`target_price` is `money`; the other vocabulary facets are optional enums. A
+`target_price` is `money`; the other vocabulary facets are optional enums. Entity types are
+company, person, institution, sector and region. Products stay in event and
+view text and are not entities. A
 `money` value is `{amount, currency[, qualifier]}` with a 3-letter currency and
-`qualifier: at_least` for a target like `NT$3100+`. A bare number or a plain
+`qualifier: at_least` for a target like `NT$3100+`. Magnitudes parse exactly
+(`USD 1.45B` is 1,450,000,000). A bare number or a plain
 `$` names no currency and is refused.
+
+`facet_schema.relation.<RELATION>` layers facets on the base `edge` spec, the
+way `entity:<type>` layers on `entity`. `EXPOSED_TO` requires `sentiment`;
+`WORKS_AT.role`, `BUY.confidence`, `BUY.product_type`, `COMPETE.area` and
+`OWNS.transaction_value` (money) are optional. A layer must name a registry
+relation and cannot redeclare `basis`. Consensus flags stay free-form.
+
+`OntologyDB.upsert_edge` and `update_edge` refuse endpoints outside the
+relation's `from_types` and `to_types`. Ingest holds such an edge in
+`pending_edges`; `audit` reports it in `pending_endpoint_issues`, and `repair`
+promotes it once the registry allows those endpoints.
 
 `metadata_max_length` declares the max length of node `name` (200) and
 `summary` (1,000); `check_metadata` refuses longer text on write.

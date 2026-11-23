@@ -308,7 +308,6 @@
           "members": {
             "company": "A business, listed or private.",
             "person": "An individual, such as an executive, analyst or author.",
-            "product": "A product, technology or platform.",
             "institution": "A government body, regulator, fund or other non-company organization.",
             "sector": "An industry or market segment.",
             "region": "A country, region or market geography."
@@ -448,6 +447,15 @@
         "aliases": {},
         "fallback": null
       },
+      "confidence": {
+        "members": {
+          "high": "The source states the link directly.",
+          "medium": "The source implies the link.",
+          "low": "The link is tentative."
+        },
+        "aliases": {},
+        "fallback": null
+      },
       "basis": {
         "members": {
           "extracted": "Read from a source note by extraction.",
@@ -549,6 +557,42 @@
       "basis": {
         "kind": "enum",
         "required": true
+      }
+    },
+    "relation": {
+      "EXPOSED_TO": {
+        "sentiment": {
+          "kind": "enum",
+          "required": true
+        }
+      },
+      "WORKS_AT": {
+        "role": {
+          "kind": "text",
+          "required": false
+        }
+      },
+      "BUY": {
+        "confidence": {
+          "kind": "enum",
+          "required": false
+        },
+        "product_type": {
+          "kind": "text",
+          "required": false
+        }
+      },
+      "COMPETE": {
+        "area": {
+          "kind": "text",
+          "required": false
+        }
+      },
+      "OWNS": {
+        "transaction_value": {
+          "kind": "money",
+          "required": false
+        }
       }
     }
   },

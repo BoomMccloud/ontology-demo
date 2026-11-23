@@ -59,6 +59,9 @@ Repair rewrites stored `money` facets as amount plus currency. When a value
 names no currency, it reads the one currency the source note writes next to
 that amount (`$` and `US$` are USD, `NT$` is TWD, `HK$` is HKD). A value it
 cannot resolve stays as stored and is counted in `money_facets_unresolved`.
+This covers node facets and relation facets such as `OWNS.transaction_value`.
+Pending edges are promoted only when their relation is mapped and their
+endpoints are allowed.
 
 `repair` is the second writer to `ontology.db` besides ingestion. It issues
 no SQL itself. Its writes go through `OntologyDB` methods made for it:

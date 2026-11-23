@@ -28,7 +28,7 @@ from stock_ontology.registry import (
     normalize_ticker,
     theme_suggestion_sort_key,
 )
-from stock_ontology.vocab import EDGE_FACET_VOCABS, out_of_vocabulary_node_facets
+from stock_ontology.vocab import out_of_vocabulary_node_facets
 
 ALIAS_STOP_WORDS = {
     "inc",
@@ -59,6 +59,8 @@ class AuditSummary(BaseModel):
     unmapped_edges: int = 0
     # Rows in `pending_edges` whose relation the registry still does not map (not in `total_edges`).
     pending_edges: int = 0
+    # Pending rows with a mapped relation between endpoints the registry does not allow.
+    pending_endpoint_edges: int = 0
     distinct_unmapped_relations: int = 0
     direction_issue_edges: int = 0
     reciprocal_contradiction_pairs: int = 0
@@ -191,6 +193,16 @@ class ReciprocalContradiction(BaseModel):
     reverse_count: int
 
 
+class PendingEndpointIssue(BaseModel):
+    """Pending edges of one relation and signature, waiting for the registry to allow those endpoints."""
+
+    relation: str
+    from_type: str
+    to_type: str
+    count: int
+    sample: SampleEdge
+
+
 class AuditReport(BaseModel):
     """Full structured output of a read-only ontology audit."""
 
@@ -201,6 +213,7 @@ class AuditReport(BaseModel):
     mapped_companies: list[MappedCompanyRecord] = Field(default_factory=list)
     mapped_themes: list[MappedThemeRecord] = Field(default_factory=list)
     unmapped_relations: list[RelationSuggestion] = Field(default_factory=list)
+    pending_endpoint_issues: list[PendingEndpointIssue] = Field(default_factory=list)
     unmapped_companies: list[CompanySuggestion] = Field(default_factory=list)
     unmapped_themes: list[ThemeSuggestion] = Field(default_factory=list)
     near_duplicate_themes: list[NearDuplicatePair] = Field(default_factory=list)
@@ -579,8 +592,30 @@ def run_ontology_audit(
     # Pending edges were never written to `edges` because their relation is unmapped. They feed the
     # same relation suggestions; a pending row the registry now maps waits for `repair` to promote it.
     pending_unmapped = 0
+    endpoint_counts: Counter[tuple[str, str, str]] = Counter()
+    endpoint_samples: dict[tuple[str, str, str], SampleEdge] = {}
     for edge in db.list_pending_edges_with_endpoints():
         if registry.resolve_relation(edge["relation"]) is not None:
+            canon = registry.canonicalize_edge(
+                edge["relation"],
+                from_id=edge["from_id"],
+                from_type=edge["from_type"],
+                from_entity_type=edge["from_entity_type"],
+                to_id=edge["to_id"],
+                to_type=edge["to_type"],
+                to_entity_type=edge["to_entity_type"],
+                facets=edge["facets"],
+            )
+            if not canon.endpoints_ok:
+                key = (
+                    canon.relation,
+                    node_type_label(canon.from_type, canon.from_entity_type),
+                    node_type_label(canon.to_type, canon.to_entity_type),
+                )
+                endpoint_counts[key] += 1
+                endpoint_samples.setdefault(
+                    key, SampleEdge(from_name=edge["from_name"], relation=edge["relation"], to_name=edge["to_name"])
+                )
             continue
         pending_unmapped += 1
         norm_rel = normalize_relation_name(edge["relation"])
@@ -907,7 +942,7 @@ def run_ontology_audit(
     edge_key_counts: dict[str, int] = defaultdict(int)
     for edge in edges:
         for key in edge["facets"]:
-            if key not in EDGE_FACET_VOCABS:
+            if key not in registry.edge_facet_keys(edge["relation"]):
                 edge_key_counts[key] += 1
     non_official_edge_facet_keys = [
         NonOfficialEdgeFacetKey(key=key, count=cnt)
@@ -921,6 +956,7 @@ def run_ontology_audit(
         mapped_inverse_edges=mapped_inverse_edges,
         unmapped_edges=unmapped_edges,
         pending_edges=pending_unmapped,
+        pending_endpoint_edges=sum(endpoint_counts.values()),
         distinct_unmapped_relations=len(unmapped_relations),
         direction_issue_edges=direction_issue_edges,
         reciprocal_contradiction_pairs=len(reciprocal_contradictions),
@@ -944,6 +980,10 @@ def run_ontology_audit(
     )
 
     return AuditReport(
+        pending_endpoint_issues=[
+            PendingEndpointIssue(relation=k[0], from_type=k[1], to_type=k[2], count=n, sample=endpoint_samples[k])
+            for k, n in sorted(endpoint_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        ],
         summary=summary,
         relation_normalization_hits=relation_normalization_hits,
         direction_issues=direction_issues,
