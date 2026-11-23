@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import tempfile
@@ -10,11 +12,13 @@ from pathlib import Path
 from collections.abc import Iterable
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from stock_ontology.vocab import (
+    ENTITY_TYPE,
+    METADATA_MAX_LENGTH,
     coerce_facet_value,
-    facet_schema_differences,
+    facet_schema_problems,
     facet_schema_spec,
     facet_vocabularies_spec,
     facet_vocabulary_differences,
@@ -24,7 +28,8 @@ SuggestionStatus = Literal["pending", "approved", "aliased", "rejected"]
 
 
 class FacetSchemaError(ValueError):
-    """A node or edge breaks the registry's facet schema: a required facet is missing or a kind is wrong."""
+    """A node or edge breaks the registry: a required facet is missing, a facet breaks its kind or
+    vocabulary, `name` or `summary` is longer than declared, or an edge's relation is not mapped."""
 
 
 def _utc_now_iso() -> str:
@@ -242,6 +247,13 @@ class CanonicalEdgeResult(BaseModel):
     flipped: bool = False
 
 
+def _entity_type(node_type: str | None, facets: dict[str, Any]) -> str | None:
+    """The stored `entity_type` of an entity's facets, which selects its `entity:<type>` layer."""
+    if node_type != "entity":
+        return None
+    return ENTITY_TYPE.coerce(facets.get("entity_type"))
+
+
 def matches_type_spec(
     node_type: str, entity_type: str | None, allowed: list[str]
 ) -> bool:
@@ -301,9 +313,12 @@ class OntologyRegistry(BaseModel):
     # The official facet vocabularies. The registry is the source and must declare them; `vocab.py`
     # holds code's typed copy, and loading a registry that differs from it fails, naming each difference.
     facet_vocabularies: dict[str, Any]
-    # Each official facet's kind and required flag, per node type and for edges. A registry
-    # without it declares no schema and enforces nothing; the built-in default declares it.
-    facet_schema: dict[str, Any] = Field(default_factory=dict)
+    # Each official facet's kind and required flag: `node.<node_type>`, `node.entity:<entity_type>`
+    # (layered on `node.entity`), and `edge`. Required, and the only copy of the per-type specs; code
+    # checks only that it declares the subtype facets code depends on (`facet_schema_problems`).
+    facet_schema: dict[str, Any]
+    # Max length of node `name` and `summary`; longer text is refused on write.
+    metadata_max_length: dict[str, int]
     suggestions: RegistrySuggestions = Field(default_factory=RegistrySuggestions)
 
     @field_validator("facet_vocabularies")
@@ -318,21 +333,81 @@ class OntologyRegistry(BaseModel):
 
     @field_validator("facet_schema")
     @classmethod
-    def _facet_schema_matches_code(cls, value: dict[str, Any]) -> dict[str, Any]:
-        diffs = facet_schema_differences(value) if value else []
-        if diffs:
-            raise ValueError(  # noqa: TRY003
-                "Code (src/stock_ontology/vocab.py) differs from the registry facet schema: " + "; ".join(diffs)
-            )
+    def _facet_schema_declares_code_minimum(cls, value: dict[str, Any]) -> dict[str, Any]:
+        problems = facet_schema_problems(value)
+        if problems:
+            raise ValueError("Registry facet_schema is invalid: " + "; ".join(problems))  # noqa: TRY003
         return value
 
-    def _facet_specs(self, node_type: str | None) -> dict[str, Any]:
-        """The declared `{facet: {kind, required}}` for a node type, or for edges when None."""
-        if not self.facet_schema:
-            return {}
+    @field_validator("metadata_max_length")
+    @classmethod
+    def _metadata_max_length_declares_name_and_summary(cls, value: dict[str, int]) -> dict[str, int]:
+        missing = sorted(set(METADATA_MAX_LENGTH) - set(value))
+        unknown = sorted(set(value) - set(METADATA_MAX_LENGTH))
+        bad = sorted(k for k, v in value.items() if v <= 0)
+        problems = [f"missing {k!r}" for k in missing] + [f"unknown field {k!r}" for k in unknown]
+        problems += [f"{k!r} must be positive" for k in bad]
+        if problems:
+            raise ValueError("Registry metadata_max_length: " + "; ".join(problems))  # noqa: TRY003
+        return value
+
+    @model_validator(mode="after")
+    def _enum_facets_have_vocabularies(self) -> OntologyRegistry:
+        missing = []
+        for owner, specs in self._declared_spec_groups():
+            vocab_owner = None if owner is None else owner.split(":", 1)[0]
+            for key, spec in specs.items():
+                if spec.get("kind") == "enum" and not self._vocabulary(vocab_owner, key).get("members"):
+                    missing.append(f"{owner or 'edge'}.{key}")
+        if missing:
+            raise ValueError(  # noqa: TRY003
+                "Registry facet_schema declares enum facets with no facet_vocabularies entry: " + ", ".join(missing)
+            )
+        return self
+
+    def _declared_spec_groups(self) -> list[tuple[str | None, dict[str, Any]]]:
+        groups: list[tuple[str | None, dict[str, Any]]] = [
+            (owner, dict(specs)) for owner, specs in self.facet_schema.get("node", {}).items()
+        ]
+        groups.append((None, dict(self.facet_schema.get("edge", {}))))
+        return groups
+
+    def _facet_specs(self, node_type: str | None, entity_type: str | None = None) -> dict[str, Any]:
+        """The declared `{facet: {kind, required}}` for a node type, or for edges when None.
+
+        An entity also gets `node.entity:<entity_type>` layered on `node.entity`; a subtype key overrides.
+        """
         if node_type is None:
             return dict(self.facet_schema.get("edge", {}))
-        return dict(self.facet_schema.get("node", {}).get(node_type, {}))
+        node_specs = self.facet_schema.get("node", {})
+        specs = dict(node_specs.get(node_type, {}))
+        if node_type == "entity" and isinstance(entity_type, str) and entity_type:
+            specs.update(node_specs.get(f"entity:{entity_type}", {}))
+        return specs
+
+    def schema_stamp(self) -> str:
+        """Hash of everything stored facets are checked against; the DB records it after migrating."""
+        payload = {
+            "facet_vocabularies": self.facet_vocabularies,
+            "facet_schema": self.facet_schema,
+            "metadata_max_length": self.metadata_max_length,
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def check_metadata(self, name: str, summary: str) -> None:
+        """Raise `FacetSchemaError` when `name` or `summary` is longer than the registry allows."""
+        for field_name, text in (("name", name), ("summary", summary)):
+            limit = self.metadata_max_length.get(field_name)
+            if limit is not None and len(text) > limit:
+                raise FacetSchemaError(  # noqa: TRY003
+                    f"node {field_name} is {len(text)} characters, over the registry max of {limit}"
+                )
+
+    def check_relation(self, relation: str) -> None:
+        """Raise `FacetSchemaError` when the registry does not map `relation`."""
+        if self.resolve_relation(relation) is None:
+            raise FacetSchemaError(f"edge relation {relation!r} is not mapped by the registry")  # noqa: TRY003
 
     def _vocabulary(self, node_type: str | None, key: str) -> dict[str, Any]:
         group = (
@@ -342,9 +417,9 @@ class OntologyRegistry(BaseModel):
         )
         return dict(group.get(key, {}))
 
-    def required_facets(self, node_type: str | None) -> set[str]:
+    def required_facets(self, node_type: str | None, entity_type: str | None = None) -> set[str]:
         """Facets every node of `node_type` (or every edge, when None) must carry."""
-        return {k for k, spec in self._facet_specs(node_type).items() if spec.get("required")}
+        return {k for k, spec in self._facet_specs(node_type, entity_type).items() if spec.get("required")}
 
     def _coerce_facet(self, node_type: str | None, key: str, spec: dict[str, Any], value: Any) -> Any:
         vocab = self._vocabulary(node_type, key)
@@ -353,7 +428,6 @@ class OntologyRegistry(BaseModel):
             value,
             members=tuple(vocab.get("members", {})),
             aliases=vocab.get("aliases") or {},
-            required=bool(spec.get("required")),
         )
 
     def check_facets(self, node_type: str | None, facets: dict[str, Any]) -> dict[str, Any]:
@@ -361,9 +435,7 @@ class OntologyRegistry(BaseModel):
 
         `node_type` None means an edge. Facets the registry does not declare pass through unchanged.
         """
-        specs = self._facet_specs(node_type)
-        if not specs:
-            return facets
+        specs = self._facet_specs(node_type, _entity_type(node_type, facets))
         owner = f"{node_type} node" if node_type is not None else "edge"
         out = dict(facets)
         for key, spec in specs.items():
@@ -378,15 +450,22 @@ class OntologyRegistry(BaseModel):
                 raise FacetSchemaError(f"{owner} facet {key!r}: {exc}") from exc  # noqa: TRY003
         return out
 
-    def drop_uncoercible_optional(self, node_type: str | None, facets: dict[str, Any]) -> dict[str, Any]:
+    def drop_uncoercible_optional(
+        self, node_type: str | None, facets: dict[str, Any], *, kinds: Iterable[str] | None = None
+    ) -> dict[str, Any]:
         """Ingest rule: remove each optional official facet whose value cannot be coerced to its kind.
 
-        Required facets are left for `check_facets` to refuse, so the pipeline regenerates.
+        An optional enum outside its vocabulary is uncoercible. `kinds` limits the rule to those kinds
+        (repair drops only enums). Required facets are left for `check_facets` to refuse, so the
+        pipeline regenerates.
         """
+        only = set(kinds) if kinds is not None else None
         out = dict(facets)
-        for key, spec in self._facet_specs(node_type).items():
+        for key, spec in self._facet_specs(node_type, _entity_type(node_type, facets)).items():
             value = out.get(key)
             if value is None or spec.get("required"):
+                continue
+            if only is not None and spec.get("kind") not in only:
                 continue
             try:
                 self._coerce_facet(node_type, key, spec, value)
@@ -397,7 +476,7 @@ class OntologyRegistry(BaseModel):
     def migrate_facets(self, node_type: str | None, facets: dict[str, Any]) -> dict[str, Any]:
         """Coerce each official facet to its kind where that is lossless; leave the rest unchanged."""
         out = dict(facets)
-        for key, spec in self._facet_specs(node_type).items():
+        for key, spec in self._facet_specs(node_type, _entity_type(node_type, facets)).items():
             value = out.get(key)
             if value is None:
                 continue
@@ -836,6 +915,7 @@ def create_minimal_registry() -> OntologyRegistry:
         version=1,
         facet_vocabularies=facet_vocabularies_spec(),
         facet_schema=facet_schema_spec(),
+        metadata_max_length=dict(METADATA_MAX_LENGTH),
         relations=[
             RelationSpec(
                 name="ABOUT",

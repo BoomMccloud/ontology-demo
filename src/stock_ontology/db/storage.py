@@ -53,7 +53,8 @@ from stock_ontology.vocab import (
 
 
 REGISTRY_VERSION_KEY = "registry_version"
-"""`db_metadata` key holding the registry version the stored facets were migrated to."""
+"""`db_metadata` key holding the registry schema stamp (`OntologyRegistry.schema_stamp`) the stored
+facets were migrated to."""
 
 
 def _edge_rank(relation: Any, edge_facets: dict[str, Any]) -> tuple[int, int]:
@@ -150,37 +151,31 @@ class OntologyDB:
         init_schema(self.conn, self.embedding_dim)
         self._migrate_schema(backfill_lookup=not lookup_existed)
         if self._explicit_registry:
-            self._migrate_facets_if_older()
+            self._migrate_facets_if_stale()
 
     def use_registry(self, registry: OntologyRegistry) -> None:
-        """Write under `registry` from now on; a writable DB stamped older is migrated to it."""
+        """Write under `registry` from now on; a writable DB stamped under another schema is migrated to it."""
         self.registry = registry
         self._explicit_registry = True
         if not self.read_only:
-            self._migrate_facets_if_older()
+            self._migrate_facets_if_stale()
 
-    def _migrate_facets_if_older(self) -> None:
-        """Migrate stored facets when the DB's `registry_version` stamp is missing or older.
+    def _migrate_facets_if_stale(self) -> None:
+        """Migrate stored facets when the DB's stamp is missing or differs from the registry's schema stamp.
 
-        Only an explicit registry that declares a `facet_schema` migrates or stamps. Read-only opens never call this.
+        Only an explicit registry migrates or stamps. Read-only opens never call this.
         """
-        if not self.registry.facet_schema:
-            return
-        stamp = self.get_metadata(REGISTRY_VERSION_KEY)
-        if stamp is not None and stamp.isdigit() and int(stamp) >= self.registry.version:
+        if self.get_metadata(REGISTRY_VERSION_KEY) == self.registry.schema_stamp():
             return
         self.migrate_facets()
 
     def migrate_facets(self, registry: OntologyRegistry | None = None) -> int:
-        """Coerce every stored official facet to its registry kind where lossless, then stamp the version.
+        """Coerce every stored official facet to its registry kind where lossless, then stamp the schema.
 
         Uses `registry` (default: this DB's) without changing what writes are checked against.
-        Values that cannot be coerced stay as stored. A registry with no `facet_schema` does
-        nothing. Returns how many nodes and edges changed.
+        Values that cannot be coerced stay as stored. Returns how many nodes and edges changed.
         """
         reg = registry if registry is not None else self.registry
-        if not reg.facet_schema:
-            return 0
         changed = 0
         with self.transaction():
             for r in self.conn.execute("SELECT id, node_type, facets_json FROM nodes").fetchall():
@@ -199,7 +194,7 @@ class OntologyDB:
                         "UPDATE edges SET facets_json = ? WHERE id = ?", (json.dumps(migrated), r["id"])
                     )
                     changed += 1
-            self.set_metadata(REGISTRY_VERSION_KEY, str(reg.version))
+            self.set_metadata(REGISTRY_VERSION_KEY, reg.schema_stamp())
         return changed
 
     def _migrate_schema(self, *, backfill_lookup: bool) -> None:
@@ -254,6 +249,7 @@ class OntologyDB:
             raise ValueError(  # noqa: TRY003
                 f"Embedding dimension mismatch: expected {self.embedding_dim}, got {len(embedding)}"
             )
+        self.registry.check_metadata(node.name, node.summary)
         facets = self.registry.check_facets(node.node_type, node.facets)
         with self.transaction():
             self.conn.execute(
@@ -293,7 +289,11 @@ class OntologyDB:
                 )
 
     def upsert_edge(self, edge: Edge) -> str:
-        """Insert an edge or update facets if an identical (from, to, relation, doc) exists."""
+        """Insert an edge or update facets if an identical (from, to, relation, doc) exists.
+
+        A relation the registry does not map is refused.
+        """
+        self.registry.check_relation(edge.relation)
         norm_rel = normalize_relation_name(edge.relation)
         with self.transaction():
             existing = self.conn.execute(
@@ -332,6 +332,35 @@ class OntologyDB:
             )
             return edge.id
 
+    def insert_pending_edge(self, edge: Edge) -> str:
+        """Hold an edge whose relation the registry does not map, with its raw relation, out of `edges`."""
+        with self.transaction():
+            self.conn.execute(
+                """
+                INSERT INTO pending_edges (id, from_id, to_id, relation, facets_json, source_doc_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    edge.id,
+                    edge.from_id,
+                    edge.to_id,
+                    edge.relation,
+                    json.dumps(edge.facets),
+                    edge.source_doc_id,
+                    edge.created_at.isoformat(),
+                ),
+            )
+        return edge.id
+
+    def delete_pending_edges(self, edge_ids: list[str]) -> int:
+        """Delete pending edges by id and return how many rows were removed."""
+        if not edge_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in edge_ids)
+        with self.transaction():
+            cur = self.conn.execute(f"DELETE FROM pending_edges WHERE id IN ({placeholders})", edge_ids)  # noqa: S608
+        return cur.rowcount
+
     def get_doc_affected_company_ids(self, doc_id: str) -> set[str]:
         """Return company entity IDs touched by nodes or edges from `doc_id`."""
         rows = self.conn.execute(
@@ -360,7 +389,7 @@ class OntologyDB:
         return {str(r["id"]) for r in rows}
 
     def delete_document_artifacts(self, doc_id: str) -> None:
-        """Remove doc-scoped nodes, edges, and vectors while keeping canonical entities/themes."""
+        """Remove doc-scoped nodes, edges, pending edges, and vectors while keeping canonical entities/themes."""
         with self.transaction():
             doc_node_rows = self.conn.execute(
                 "SELECT id FROM nodes WHERE source_doc_id = ?", (doc_id,)
@@ -369,22 +398,24 @@ class OntologyDB:
             for node_id in doc_node_ids:
                 self.conn.execute("DELETE FROM node_vectors WHERE node_id = ?", (node_id,))
 
-            self.conn.execute(
-                """
-                DELETE FROM edges
-                WHERE source_doc_id = ?
-                   OR from_id IN (SELECT id FROM nodes WHERE source_doc_id = ?)
-                   OR to_id IN (SELECT id FROM nodes WHERE source_doc_id = ?)
-                """,
-                (doc_id, doc_id, doc_id),
-            )
+            for table in ("edges", "pending_edges"):
+                self.conn.execute(
+                    f"""
+                    DELETE FROM {table}
+                    WHERE source_doc_id = ?
+                       OR from_id IN (SELECT id FROM nodes WHERE source_doc_id = ?)
+                       OR to_id IN (SELECT id FROM nodes WHERE source_doc_id = ?)
+                    """,  # noqa: S608
+                    (doc_id, doc_id, doc_id),
+                )
             self.conn.execute("DELETE FROM nodes WHERE source_doc_id = ?", (doc_id,))
 
     def list_artifact_doc_ids(self) -> set[str]:
-        """Return every `source_doc_id` referenced by a node or an edge."""
+        """Return every `source_doc_id` referenced by a node, an edge, or a pending edge."""
         rows = self.conn.execute(
             "SELECT source_doc_id FROM nodes WHERE source_doc_id IS NOT NULL "
-            "UNION SELECT source_doc_id FROM edges WHERE source_doc_id IS NOT NULL"
+            "UNION SELECT source_doc_id FROM edges WHERE source_doc_id IS NOT NULL "
+            "UNION SELECT source_doc_id FROM pending_edges WHERE source_doc_id IS NOT NULL"
         ).fetchall()
         return {str(r["source_doc_id"]) for r in rows}
 
@@ -413,7 +444,8 @@ class OntologyDB:
         to_id: str,
         facets: dict[str, Any],
     ) -> None:
-        """Overwrite an edge's relation, endpoints, and facets in place."""
+        """Overwrite an edge's relation, endpoints, and facets in place; an unmapped relation is refused."""
+        self.registry.check_relation(relation)
         facets = self.registry.check_facets(None, facets)
         with self.transaction():
             self.conn.execute(
@@ -874,8 +906,21 @@ class OntologyDB:
 
     def list_edges_with_endpoints(self) -> list[dict[str, Any]]:
         """Return all edges joined with endpoint node types, names, and entity subtypes."""
+        return self._list_with_endpoints("edges")
+
+    def list_pending_edges_with_endpoints(self) -> list[dict[str, Any]]:
+        """Return pending (unmapped-relation) edges in the `list_edges_with_endpoints` shape.
+
+        A read-only DB created before `pending_edges` existed has none.
+        """
+        exists = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_edges'"
+        ).fetchone()
+        return self._list_with_endpoints("pending_edges") if exists is not None else []
+
+    def _list_with_endpoints(self, table: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            """
+            f"""
             SELECT
                 e.id AS edge_id,
                 e.from_id,
@@ -883,17 +928,18 @@ class OntologyDB:
                 e.relation,
                 e.facets_json AS edge_facets_json,
                 e.source_doc_id,
+                e.created_at,
                 n1.node_type AS from_type,
                 n1.name AS from_name,
                 n1.facets_json AS from_facets_json,
                 n2.node_type AS to_type,
                 n2.name AS to_name,
                 n2.facets_json AS to_facets_json
-            FROM edges e
+            FROM {table} e
             JOIN nodes n1 ON n1.id = e.from_id
             JOIN nodes n2 ON n2.id = e.to_id
             ORDER BY e.created_at DESC
-            """
+            """  # noqa: S608
         ).fetchall()
 
         edges: list[dict[str, Any]] = []
@@ -910,6 +956,7 @@ class OntologyDB:
                     "relation": str(r["relation"]),
                     "facets": json.loads(r["edge_facets_json"]),
                     "source_doc_id": r["source_doc_id"],
+                    "created_at": str(r["created_at"]),
                     "from_type": str(r["from_type"]),
                     "from_name": str(r["from_name"]),
                     "from_entity_type": from_et,

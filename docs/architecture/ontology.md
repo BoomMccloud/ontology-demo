@@ -9,12 +9,15 @@ layer.
 
 - `src/stock_ontology/models.py`: the shapes.
 - `src/stock_ontology/vocab.py`: code's typed copy of the closed enum
-  vocabularies and the facet schema, and the shared signal filter rules.
+  vocabularies, the built-in registry's base facet schema, the facets code
+  depends on, and the shared signal filter rules.
 - `src/stock_ontology/registry.py` and `ontology_registry.json`: the official
   ontology (relations, companies, themes, aliases, official facet
-  vocabularies, the facet schema, suggestions). The registry is the source and
-  code is checked against it: `load_registry` fails when `facet_vocabularies`
-  or `facet_schema` differs from `vocab.py`.
+  vocabularies, the facet schema, metadata limits, suggestions). The registry
+  is the source. `load_registry` fails when `facet_vocabularies` differs from
+  `vocab.py`, when `facet_schema` or `metadata_max_length` is missing, or when
+  `facet_schema` lacks a facet code depends on. The per-type specs live only
+  in the registry.
 
 ## Models (`models.py`)
 
@@ -72,30 +75,51 @@ type.
 
 `ontology_registry.json` declares, per node type and for edges, each official
 facet's `kind` (`enum`, `number`, `date`, `text`, `list`) and `required` flag.
-`NODE_FACET_SCHEMA` and `EDGE_FACET_SCHEMA` in `vocab.py` are code's copy, and
-every `enum` facet has a vocabulary. Required today: entity `entity_type`,
-event `event_type`, view `view_type`, theme `stage`, edge `basis`. Event
-`event_date` and view `as_of` are dates, view `target_price` is a number; the
-other vocabulary facets are optional enums.
+It is a required registry field and the only copy of the per-type specs. An
+entity type can add facets under `node["entity:<entity_type>"]`, layered on
+`node["entity"]` (a layer key overrides the base); only entity subtypes are
+layered, and a layer cannot redeclare `entity_type`. Adding such a
+declaration is a registry edit with no code change. The shipped registry
+declares `entity:person` requiring `role` and `organization`, and
+`entity:company` requiring `sector`, all `text`; ingest regenerates an
+extraction that omits them, as for any required facet.
+
+Code checks only a minimum (`facet_schema_problems`): each spec is
+`{kind, required}` with a known kind, node keys are a node type or
+`entity:<member>`, and entity `entity_type`, event `event_type`, view
+`view_type`, theme `stage` and edge `basis` are required enums. Every `enum`
+facet must have a vocabulary in `facet_vocabularies`. `NODE_FACET_SCHEMA` and
+`EDGE_FACET_SCHEMA` in `vocab.py` are only the built-in registry's base schema.
+In the shipped registry, event `event_date` and view `as_of` are dates, view
+`target_price` is a number; the other vocabulary facets are optional enums.
+
+`metadata_max_length` declares the max length of node `name` (200) and
+`summary` (1,000); `check_metadata` refuses longer text on write.
 
 - `OntologyRegistry.check_facets(node_type, facets)` (node_type None for an
   edge) returns the facets coerced to their kind, or raises
   `FacetSchemaError` (a `ValueError`). Coercion is lossless only
   (`coerce_facet_value`): a numeric string becomes a number, a date stays the
-  ISO string it was, a required enum is stored as its member. An optional
-  enum only has to be a string; audit still reports values outside the
-  vocabulary.
+  ISO string it was, and an enum, required or optional, is stored as its
+  vocabulary member or refused.
 - Facets the registry does not declare pass through unchanged.
 - `drop_uncoercible_optional(node_type, facets)` is the ingest rule: it removes
-  optional official facets that cannot be coerced and leaves required ones
-  for `check_facets` to refuse.
-- `create_minimal_registry()`, the built-in default, declares the shipped
-  `facet_schema` and `facet_vocabularies`, so an `OntologyDB` opened without a
-  registry enforces the same schema. A registry that declares no
-  `facet_schema` enforces nothing. A registry without `facet_vocabularies` is
-  refused; code's copy is never filled in.
-- The registry `version` (now 2) is stamped into the DB; see
-  [storage.md](storage.md).
+  optional official facets that cannot be coerced, including optional enums
+  outside their vocabulary, and leaves required ones for `check_facets` to
+  refuse.
+- `check_relation(relation)` refuses a relation the registry does not map;
+  `upsert_edge` and `update_edge` call it. The pipeline holds such an
+  extracted edge in `pending_edges` instead (see [storage.md](storage.md)),
+  where `audit` suggests the relation and `repair` promotes the edge once the
+  registry maps it.
+- `create_minimal_registry()`, the built-in default, declares a base
+  `facet_schema`, the shipped `facet_vocabularies` and the same metadata
+  limits, so an `OntologyDB` opened without a registry still enforces a
+  schema. A registry without `facet_vocabularies`, `facet_schema` or
+  `metadata_max_length` is refused; code's copy is never filled in.
+- `schema_stamp()` hashes `facet_vocabularies`, `facet_schema` and
+  `metadata_max_length`; the DB records it. The registry `version` (now 2) is
+  the human-facing label only; see [storage.md](storage.md).
 
 ## Registry (`registry.py`)
 

@@ -2,10 +2,12 @@
 
 `ontology_registry.json` is the official ontology and the source of truth: it
 declares the vocabularies under `facet_vocabularies` and each official facet's
-kind and required flag under `facet_schema`. This module is code's typed copy,
-which the extraction models, the LLM prompt, the agent tool schema, `repair` and
-`audit` read. `load_registry` checks code against the registry and fails when
-they differ (`facet_vocabulary_differences`, `facet_schema_differences`).
+kind and required flag under `facet_schema`. This module holds code's typed copy
+of the vocabularies, which the extraction models, the LLM prompt, the agent tool
+schema, `repair` and `audit` read; `load_registry` fails when they differ
+(`facet_vocabulary_differences`). Code keeps no copy of the per-type facet specs:
+it checks only that `facet_schema` declares the subtype facets code depends on
+(`facet_schema_problems`), and keeps a base schema for the built-in registry.
 
 Each vocabulary has one rule: strip, lowercase, map spaces and hyphens to `_`,
 then apply its alias map. A result outside the members is not canon.
@@ -432,7 +434,8 @@ class FacetSpec:
 _ENUM = FacetSpec("enum")
 _REQUIRED_ENUM = FacetSpec("enum", required=True)
 
-# Code's copy of the registry's `facet_schema`. Every `enum` facet has a vocabulary above.
+# Base schema of the built-in registry (`create_minimal_registry`), used when a DB is opened
+# without one. It is a minimum, not a copy of the shipped `facet_schema`, and is never compared with it.
 NODE_FACET_SCHEMA: dict[str, dict[str, FacetSpec]] = {
     "entity": {"entity_type": _REQUIRED_ENUM},
     "event": {
@@ -455,13 +458,21 @@ NODE_FACET_SCHEMA: dict[str, dict[str, FacetSpec]] = {
 }
 EDGE_FACET_SCHEMA: dict[str, FacetSpec] = {"sentiment": _ENUM, "basis": _REQUIRED_ENUM}
 
+# The facets code depends on: every registry `facet_schema` must declare each as a required enum.
+REQUIRED_NODE_SUBTYPE_FACETS: dict[str, str] = dict(SUBTYPE_FACET)
+REQUIRED_EDGE_FACETS: tuple[str, ...] = ("basis",)
+
+# Node metadata whose max length the registry declares (`metadata_max_length`), with the
+# built-in registry's values.
+METADATA_MAX_LENGTH: dict[str, int] = {"name": 200, "summary": 1000}
+
 
 def _facet_spec_json(spec: FacetSpec) -> dict[str, Any]:
     return {"kind": spec.kind, "required": spec.required}
 
 
 def facet_schema_spec() -> dict[str, Any]:
-    """The official facet schema as the registry declares it (`facet_schema`)."""
+    """The built-in registry's base facet schema, in the registry's `facet_schema` shape."""
     return {
         "node": {
             node_type: {key: _facet_spec_json(spec) for key, spec in group.items()}
@@ -471,31 +482,59 @@ def facet_schema_spec() -> dict[str, Any]:
     }
 
 
-def facet_schema_differences(declared: Mapping[str, Any]) -> list[str]:
-    """Each way `declared` (a registry `facet_schema` section) differs from code."""
-    want = facet_schema_spec()
-    diffs: list[str] = []
+def facet_schema_problems(declared: Any) -> list[str]:
+    """Each way a registry `facet_schema` is malformed or misses a facet code depends on.
+
+    Node keys are a node type or `entity:<entity_type>`; each facet is `{kind, required}`.
+    The subtype facets and edge `basis` must be required enums. Anything else is the registry's call.
+    """
     root = "facet_schema"
+    if not isinstance(declared, Mapping):
+        return [f"{root}: not an object"]
+    problems = [f"{root}.{k}: unknown section" for k in sorted(set(declared) - {"node", "edge"})]
 
-    def compare_group(where: str, got: Any, want_group: Mapping[str, Any]) -> None:
-        if not isinstance(got, Mapping):
-            diffs.append(f"{where}: not an object")
-            return
-        for key in _compare_keys(where, got, want_group, diffs):
-            if got[key] != want_group[key]:
-                diffs.append(f"{where}.{key}: registry has {got[key]!r}, code has {want_group[key]!r}")
+    def check_group(where: str, group: Any) -> Mapping[str, Any]:
+        if not isinstance(group, Mapping):
+            problems.append(f"{where}: not an object")
+            return {}
+        for key, spec in group.items():
+            if not isinstance(spec, Mapping) or set(spec) != {"kind", "required"}:
+                problems.append(f"{where}.{key}: expected exactly {{kind, required}}")
+            elif spec["kind"] not in FACET_KINDS:
+                problems.append(f"{where}.{key}: unknown kind {spec['kind']!r}")
+            elif not isinstance(spec["required"], bool):
+                problems.append(f"{where}.{key}: required must be true or false")
+        return group
 
-    for group in _compare_keys(root, declared, want, diffs):
-        if group == "edge":
-            compare_group(f"{root}.edge", declared[group], want[group])
+    def require_enum(where: str, group: Mapping[str, Any], key: str) -> None:
+        if group.get(key) != {"kind": "enum", "required": True}:
+            problems.append(f"{where}.{key}: code requires it declared as a required enum")
+
+    node = declared.get("node")
+    if not isinstance(node, Mapping):
+        problems.append(f"{root}.node: missing or not an object")
+        node = {}
+    for owner in node:
+        where = f"{root}.node.{owner}"
+        base, _, subtype = str(owner).partition(":")
+        if base not in REQUIRED_NODE_SUBTYPE_FACETS or (subtype and (base != "entity" or subtype not in ENTITY_TYPE.members)):
+            problems.append(f"{where}: unknown node type")
             continue
-        got_node = declared[group]
-        if not isinstance(got_node, Mapping):
-            diffs.append(f"{root}.node: not an object")
-            continue
-        for node_type in _compare_keys(f"{root}.node", got_node, want["node"], diffs):
-            compare_group(f"{root}.node.{node_type}", got_node[node_type], want["node"][node_type])
-    return diffs
+        group = check_group(where, node[owner])
+        if subtype and REQUIRED_NODE_SUBTYPE_FACETS[base] in group:
+            problems.append(f"{where}.{REQUIRED_NODE_SUBTYPE_FACETS[base]}: a subtype cannot redeclare it")
+    for node_type, key in REQUIRED_NODE_SUBTYPE_FACETS.items():
+        group = node.get(node_type)
+        require_enum(f"{root}.node.{node_type}", group if isinstance(group, Mapping) else {}, key)
+
+    edge = declared.get("edge")
+    if not isinstance(edge, Mapping):
+        problems.append(f"{root}.edge: missing or not an object")
+        edge = {}
+    check_group(f"{root}.edge", edge)
+    for key in REQUIRED_EDGE_FACETS:
+        require_enum(f"{root}.edge", edge, key)
+    return problems
 
 
 _INT_RE = re.compile(r"-?(0|[1-9][0-9]*)")
@@ -508,21 +547,17 @@ def coerce_facet_value(
     *,
     members: Iterable[str] = (),
     aliases: Mapping[str, str] | None = None,
-    required: bool = False,
 ) -> Any:
     """Return `value` as `kind`, converting only where nothing is lost; raise ValueError otherwise.
 
     A number may arrive as a numeric string (`"630"` becomes `630`). A date is an ISO
     date or datetime string, kept as written. Text accepts a number as its string. An
-    enum value is a string; a required enum must also be a vocabulary member and is
-    stored as that member, while an optional one keeps today's rule (audit reports
-    values outside the vocabulary, repair lowercases them).
+    enum value, required or optional, must be a vocabulary member and is stored as
+    that member.
     """
     if kind == "enum":
         if not isinstance(value, str):
             raise ValueError(f"expected an enum string, got {value!r}")  # noqa: TRY003
-        if not required:
-            return value
         member = coerce_member(value, tuple(members), aliases or {})
         if member is None:
             raise ValueError(f"{value!r} is not in the vocabulary")  # noqa: TRY003

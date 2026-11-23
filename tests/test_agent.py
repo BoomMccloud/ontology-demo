@@ -232,7 +232,7 @@ def test_agent_ux1_meeting_note_consensus_check(tmp_path: Path) -> None:
             "and only small colos face transformer delays. Does this change our NVDA consensus?"
         )
 
-        assert "Keep (BUY)" in reply
+        assert "Keep (BULLISH)" in reply
         assert "NVDA/2026-10-15_q3_preview.md" in reply
         assert "read-only" in reply.lower()
         assert agent.tool_trace[0]["tool"] == "get_entity_overview"
@@ -609,7 +609,7 @@ def test_agent_chat_returns_immutable_turn_contract(tmp_path: Path) -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
         first.reply = "changed"  # type: ignore[misc]
 
-    assert "Keep (BUY)" in first.reply
+    assert "Keep (BULLISH)" in first.reply
     assert "Affected companies" in second.reply
 
     # History is an opaque tuple handed back unchanged; it grows across turns.

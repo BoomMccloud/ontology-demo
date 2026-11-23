@@ -1093,6 +1093,7 @@ class _MidNoteFailureFakeLLM(FakePipelineLLM):
                     summary="Optical interconnect supplier.",
                     aliases=["ZOPT"],
                     entity_type="company",
+                    facets=[FacetKV(key="sector", value="Optics")],
                 )
             ],
             events=[
@@ -1826,7 +1827,15 @@ class _SchemaBreakingFakeLLM(FakePipelineLLM):
             event = {**event, **self.bad_events[n - 1]}
         return ExtractionResult.model_validate(
             {
-                "entities": [{"temp_id": "e1", "name": "Kappa Inc", "summary": "Kappa.", "entity_type": "company"}],
+                "entities": [
+                    {
+                        "temp_id": "e1",
+                        "name": "Kappa Inc",
+                        "summary": "Kappa.",
+                        "entity_type": "company",
+                        "facets": [{"key": "sector", "value": "Hardware"}],
+                    }
+                ],
                 "events": [event],
                 "edges": [{"from_ref": "ev1", "to_ref": "e1", "relation": "ABOUT"}],
             }
@@ -1856,7 +1865,7 @@ def test_pipeline_regenerates_out_of_vocabulary_subtype_but_drops_wrong_kind_dat
         events = [n for n in db.list_all_nodes() if n.node_type == "event"]
         assert [e.facets["event_type"] for e in events] == ["news"]
         assert "event_date" not in events[0].facets
-        assert db.get_metadata("registry_version") == str(reg.version)
+        assert db.get_metadata("registry_version") == reg.schema_stamp()
 
 
 def test_pipeline_does_not_regenerate_for_non_schema_failures(tmp_path: Path) -> None:
@@ -1908,3 +1917,114 @@ def test_consensus_synthesis_drops_uncoercible_optional_facet(tmp_path: Path) ->
         cons = db.get_entity_consensus(kappa.id)
         assert cons is not None
         assert "target_price" not in cons.facets and cons.facets["view_type"] == "consensus"
+
+
+# ---------------------------------------------------------------------------
+# registry-schema-v2: unmapped relations are skipped and counted; metadata limits regenerate
+# ---------------------------------------------------------------------------
+
+
+def _registry_with_name_limit(tmp_path: Path, limit: int):
+    import json
+
+    from stock_ontology.registry import load_registry
+
+    raw = json.loads(SHIPPED_REGISTRY.read_text(encoding="utf-8"))
+    raw["metadata_max_length"]["name"] = limit
+    path = tmp_path / "limited_registry.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    return load_registry(path)
+
+
+class _UnmappedEdgesFakeLLM(_SchemaBreakingFakeLLM):
+    """Adds two FROBNICATES edges and one PARTNERS_WITH edge to every extraction."""
+
+    def extract_document(self, *, text, source_meta, existing_catalog, known_facets) -> ExtractionResult:
+        result = super().extract_document(
+            text=text, source_meta=source_meta, existing_catalog=existing_catalog, known_facets=known_facets
+        )
+        extra = [
+            ExtractedEdge(from_ref="ev1", to_ref="e1", relation="frobnicates"),
+            ExtractedEdge(from_ref="e1", to_ref="ev1", relation="FROBNICATES"),
+            ExtractedEdge(from_ref="ev1", to_ref="e1", relation="PARTNERS_WITH"),
+        ]
+        return result.model_copy(update={"edges": [*result.edges, *extra]})
+
+
+def test_ingest_report_counts_pending_relations_once_per_kept_extraction(tmp_path: Path) -> None:
+    import json
+
+    data_dir, rel = _kappa_note(tmp_path)
+    # The first extraction breaks the name limit and is regenerated; only the kept one is counted.
+    llm = _UnmappedEdgesFakeLLM([{"name": "K" * 61}])
+    reg = _registry_with_name_limit(tmp_path, 60)
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM) as db:
+        report = IngestionPipeline(db, llm, data_dir, registry=reg).run()
+        assert llm.extract_calls == [rel, rel]
+        assert report.errors == []
+        assert report.unmapped_relations_pending == {"FROBNICATES": 2, "PARTNERS_WITH": 1}
+        relations = {r[0] for r in db.conn.execute("SELECT relation FROM edges")}
+        assert relations.isdisjoint({"FROBNICATES", "PARTNERS_WITH"}) and "ABOUT" in relations
+        # The count matches the rows held, each with its raw relation and the note's doc id.
+        pending = db.conn.execute("SELECT relation, source_doc_id, facets_json FROM pending_edges").fetchall()
+        assert sorted(r[0] for r in pending) == ["FROBNICATES", "PARTNERS_WITH", "frobnicates"]
+        doc_id = db.get_ingestion_log()[rel]["doc_id"]
+        assert {r[1] for r in pending} == {doc_id}
+        assert all(json.loads(r[2])["basis"] == "extracted" for r in pending)
+        assert rel in db.get_ingestion_log()
+
+
+def test_over_length_name_regenerates_under_the_registry_declared_limit(tmp_path: Path) -> None:
+    long_name = "K" * 61
+    data_dir, rel = _kappa_note(tmp_path)
+    llm = _SchemaBreakingFakeLLM([{"name": long_name}])
+    with OntologyDB(tmp_path / "limited.db", embedding_dim=DIM) as db:
+        report = IngestionPipeline(db, llm, data_dir, registry=_registry_with_name_limit(tmp_path, 60)).run()
+        assert report.errors == [] and llm.extract_calls == [rel, rel]
+        assert [n.name for n in db.list_all_nodes() if n.node_type == "event"] == ["Kappa Ships"]
+
+    # The same extraction is within the shipped registry's limit, so the limit is the registry's, not code's.
+    from stock_ontology.registry import load_registry
+
+    llm = _SchemaBreakingFakeLLM([{"name": long_name}])
+    with OntologyDB(tmp_path / "shipped.db", embedding_dim=DIM) as db:
+        report = IngestionPipeline(db, llm, data_dir, registry=load_registry(SHIPPED_REGISTRY)).run()
+        assert report.errors == [] and llm.extract_calls == [rel]
+        assert [n.name for n in db.list_all_nodes() if n.node_type == "event"] == [long_name]
+
+
+def test_over_length_summary_fails_the_note_after_the_regeneration_cap(tmp_path: Path) -> None:
+    from stock_ontology.registry import load_registry
+
+    data_dir, rel = _kappa_note(tmp_path)
+    llm = _SchemaBreakingFakeLLM([{"summary": "s" * 1001}] * 3)
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM) as db:
+        report = IngestionPipeline(db, llm, data_dir, registry=load_registry(SHIPPED_REGISTRY)).run()
+        assert llm.extract_calls == [rel, rel, rel]
+        assert [path for path, _ in report.errors] == [rel]
+        assert rel not in db.get_ingestion_log()
+        assert db.conn.execute("SELECT COUNT(*) FROM nodes WHERE node_type = 'event'").fetchone()[0] == 0
+
+
+def test_reingesting_one_note_clears_only_its_own_pending_edges(tmp_path: Path) -> None:
+    from stock_ontology.registry import load_registry
+
+    data_dir = tmp_path / "data"
+    (data_dir / "KAPA").mkdir(parents=True)
+    notes = ["KAPA/a.md", "KAPA/b.md"]
+    for rel in notes:
+        (data_dir / rel).write_text(f"Kappa shipped ({rel}).", encoding="utf-8")
+    reg = load_registry(SHIPPED_REGISTRY)
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM) as db:
+        IngestionPipeline(db, _UnmappedEdgesFakeLLM([]), data_dir, registry=reg).run()
+        log = db.get_ingestion_log()
+
+        def pending_by_doc() -> dict[str, int]:
+            rows = db.conn.execute("SELECT source_doc_id, COUNT(*) FROM pending_edges GROUP BY source_doc_id")
+            return {str(r[0]): int(r[1]) for r in rows}
+
+        assert pending_by_doc() == {log[notes[0]]["doc_id"]: 3, log[notes[1]]["doc_id"]: 3}
+        (data_dir / notes[0]).write_text("Kappa shipped again.", encoding="utf-8")
+        IngestionPipeline(db, _UnmappedEdgesFakeLLM([]), data_dir, registry=reg).run()
+        log = db.get_ingestion_log()
+        assert pending_by_doc() == {log[notes[0]]["doc_id"]: 3, log[notes[1]]["doc_id"]: 3}

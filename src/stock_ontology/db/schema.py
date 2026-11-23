@@ -46,6 +46,18 @@ def init_schema(conn: sqlite3.Connection, embedding_dim: int) -> None:
                 created_at TEXT NOT NULL
             );
 
+            -- Extracted edges whose relation the registry does not map: held out of `edges`
+            -- until `repair` promotes them, and read by `audit` for relation suggestions.
+            CREATE TABLE IF NOT EXISTS pending_edges (
+                id TEXT PRIMARY KEY,
+                from_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                to_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                relation TEXT NOT NULL,
+                facets_json TEXT NOT NULL DEFAULT '{{}}',
+                source_doc_id TEXT,
+                created_at TEXT NOT NULL
+            );
+
             CREATE VIRTUAL TABLE IF NOT EXISTS node_vectors USING vec0(
                 node_id TEXT PRIMARY KEY,
                 embedding float[{embedding_dim}] distance_metric=cosine
@@ -69,6 +81,9 @@ def init_schema(conn: sqlite3.Connection, embedding_dim: int) -> None:
             CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
             CREATE INDEX IF NOT EXISTS idx_edges_relation ON edges(relation);
             CREATE INDEX IF NOT EXISTS idx_edges_doc ON edges(source_doc_id);
+            CREATE INDEX IF NOT EXISTS idx_pending_edges_from ON pending_edges(from_id);
+            CREATE INDEX IF NOT EXISTS idx_pending_edges_to ON pending_edges(to_id);
+            CREATE INDEX IF NOT EXISTS idx_pending_edges_doc ON pending_edges(source_doc_id);
 
             CREATE TABLE IF NOT EXISTS node_lookup (
                 key TEXT NOT NULL,

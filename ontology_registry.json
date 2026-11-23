@@ -523,6 +523,22 @@
           "kind": "enum",
           "required": true
         }
+      },
+      "entity:person": {
+        "role": {
+          "kind": "text",
+          "required": true
+        },
+        "organization": {
+          "kind": "text",
+          "required": true
+        }
+      },
+      "entity:company": {
+        "sector": {
+          "kind": "text",
+          "required": true
+        }
       }
     },
     "edge": {
@@ -535,6 +551,10 @@
         "required": true
       }
     }
+  },
+  "metadata_max_length": {
+    "name": 200,
+    "summary": 1000
   },
   "suggestions": {
     "relations": [],

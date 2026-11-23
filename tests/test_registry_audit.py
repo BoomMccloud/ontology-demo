@@ -24,6 +24,8 @@ from stock_ontology.registry import (
     save_registry,
 )
 
+from test_db import insert_legacy_edge
+
 DIM = 16
 
 
@@ -288,7 +290,10 @@ def _seed_audit_db(db_path: Path) -> None:
             ),
         ]
         for edge in edges:
-            db.upsert_edge(edge)
+            if db.registry.resolve_relation(edge.relation) is None:
+                insert_legacy_edge(db, edge)  # PRODUCES, written before unmapped relations were refused
+            else:
+                db.upsert_edge(edge)
 
 
 def test_minimal_registry_save_load_and_resolution(tmp_path: Path) -> None:
@@ -826,3 +831,59 @@ def test_cli_audit_sync_keeps_facet_vocabulary_section_unchanged(tmp_path: Path)
     assert after["suggestions"] != before["suggestions"], "audit sync wrote no suggestions"
     for key in section_keys:
         assert json.dumps(after.get(key), indent=2) == json.dumps(before[key], indent=2), key
+
+
+# ---------------------------------------------------------------------------
+# registry-schema-v2 R1: audit reads `pending_edges` for relation suggestions
+# ---------------------------------------------------------------------------
+
+
+def _seed_pending_db(db_path: Path) -> None:
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        nodes = [
+            Node(id="ent_nvda", node_type="entity", name="NVIDIA", summary="GPU.", facets={"entity_type": "company"}),
+            Node(id="ent_bw", node_type="entity", name="Blackwell", summary="GPU.", facets={"entity_type": "product"}),
+            Node(id="vw_1", node_type="view", name="Desk View", summary="View.", facets={"view_type": "pm_view"}),
+        ]
+        for idx, node in enumerate(nodes):
+            db.upsert_node(node, embedding=_unit_vec(idx))
+        insert_legacy_edge(db, Edge(id="e_legacy", from_id="ent_nvda", to_id="ent_bw", relation="PRODUCES", facets={"basis": "extracted"}))
+        db.insert_pending_edge(Edge(id="p1", from_id="ent_nvda", to_id="ent_bw", relation="produces", facets={"basis": "extracted"}))
+        db.insert_pending_edge(Edge(id="p2", from_id="vw_1", to_id="ent_nvda", relation="PRODUCES", facets={"basis": "extracted"}))
+        db.insert_pending_edge(Edge(id="p3", from_id="vw_1", to_id="ent_nvda", relation="FROBNICATES", facets={"basis": "extracted"}))
+        # A pending row the registry already maps waits for repair; it is not a suggestion.
+        db.insert_pending_edge(Edge(id="p4", from_id="vw_1", to_id="ent_nvda", relation="ABOUT", facets={"basis": "extracted"}))
+
+
+def test_audit_merges_pending_edges_into_unmapped_relation_suggestions(tmp_path: Path) -> None:
+    db_path = tmp_path / "pending_audit.db"
+    _seed_pending_db(db_path)
+    before = db_path.read_bytes()
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro:
+        report = run_ontology_audit(ro, create_minimal_registry())
+    assert db_path.read_bytes() == before
+
+    by_name = {s.name: s for s in report.unmapped_relations}
+    assert set(by_name) == {"PRODUCES", "FROBNICATES"}
+    produces = by_name["PRODUCES"]
+    assert produces.edge_count == 3  # one stored legacy edge plus two pending rows
+    assert {(s.from_type, s.to_type): s.count for s in produces.observed_signatures} == {
+        ("entity:company", "entity:product"): 2,
+        ("view", "entity:company"): 1,
+    }
+    assert {(s.from_name, s.to_name) for s in produces.sample_edges} == {("NVIDIA", "Blackwell"), ("Desk View", "NVIDIA")}
+    assert by_name["FROBNICATES"].edge_count == 1
+    assert report.summary.unmapped_edges == 1 and report.summary.pending_edges == 3
+    assert report.summary.total_edges == 1
+
+
+def test_cli_audit_sync_queues_relations_held_only_in_pending_edges(tmp_path: Path) -> None:
+    db_path = tmp_path / "pending_cli.db"
+    reg_path = tmp_path / "ontology_registry.json"
+    _seed_pending_db(db_path)
+    save_registry(create_minimal_registry(), reg_path)
+    res = CliRunner().invoke(app, ["audit", "--db", str(db_path), "--registry", str(reg_path)])
+    assert res.exit_code == 0, res.output
+    queued = {s.name: s for s in load_registry(reg_path).suggestions.relations}
+    assert queued["FROBNICATES"].status == "pending" and queued["FROBNICATES"].edge_count == 1
+    assert queued["PRODUCES"].edge_count == 3

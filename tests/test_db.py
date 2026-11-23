@@ -15,6 +15,17 @@ from stock_ontology.pipeline import IngestionPipeline
 from stock_ontology.registry import create_minimal_registry, save_registry
 
 
+def insert_legacy_edge(db: OntologyDB, edge: Edge) -> None:
+    """Store `edge` by raw SQL, as rows with an unmapped relation were written before `upsert_edge` refused them."""
+    import json
+
+    db.conn.execute(
+        "INSERT INTO edges (id, from_id, to_id, relation, facets_json, source_doc_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (edge.id, edge.from_id, edge.to_id, edge.relation, json.dumps(edge.facets), edge.source_doc_id, edge.created_at.isoformat()),
+    )
+    db.conn.commit()
+
+
 def _unit_vec(index: int, dim: int = 8) -> list[float]:
     vec = [0.0] * dim
     vec[index % dim] = 1.0
@@ -1082,7 +1093,7 @@ def _typed_db(tmp_path: Path) -> OntologyDB:
     db = OntologyDB(tmp_path / "typed.db", embedding_dim=8, registry=load_registry(_SHIPPED_REGISTRY))
     for i, nid in enumerate(("ent_a", "ent_b")):
         db.upsert_node(
-            Node(id=nid, node_type="entity", name=nid, summary=nid, facets={"entity_type": "company"}),
+            Node(id=nid, node_type="entity", name=nid, summary=nid, facets={"entity_type": "company", "sector": "Tech"}),
             embedding=_unit_vec(i),
         )
     return db
@@ -1147,32 +1158,42 @@ def test_merge_node_into_writes_no_facets_and_survivor_upsert_is_checked(tmp_pat
             db.upsert_node(survivor.model_copy(update={"facets": {"ticker": "A"}}))
         db.merge_node_into("ent_b", "ent_a")
         assert db.get_node("ent_b") is None
-        assert db.get_node("ent_a").facets == {"entity_type": "company"}
+        assert db.get_node("ent_a").facets == {"entity_type": "company", "sector": "Tech"}
 
 
-def test_writable_open_stamps_fresh_db_and_leaves_newer_stamp_and_unfixable_values(tmp_path: Path) -> None:
+def test_writable_open_stamps_fresh_db_skips_matching_stamp_and_migrates_any_other(tmp_path: Path) -> None:
     import json
 
     from stock_ontology.registry import load_registry
 
     reg = load_registry(_SHIPPED_REGISTRY)
     path = tmp_path / "stamp.db"
-    with OntologyDB(path, embedding_dim=8, registry=reg) as db:
-        assert db.get_metadata("registry_version") == str(reg.version)
+
+    def insert_view(db: OntologyDB, node_id: str, target_price: str) -> None:
         db.conn.execute(
             "INSERT INTO nodes (id, node_type, name, summary, facets_json, created_at, updated_at) "
-            "VALUES ('vw', 'view', 'v', 'v', ?, '2026-01-01', '2026-01-01')",
-            (json.dumps({"view_type": "rumor", "target_price": "lots", "as_of": "2026-10-15"}),),
+            "VALUES (?, 'view', 'v', 'v', ?, '2026-01-01', '2026-01-01')",
+            (node_id, json.dumps({"view_type": "rumor", "target_price": target_price})),
         )
         db.conn.commit()
+
+    def target_price(db: OntologyDB, node_id: str) -> object:
+        row = db.conn.execute("SELECT facets_json FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        return json.loads(row[0])["target_price"]
+
+    with OntologyDB(path, embedding_dim=8, registry=reg) as db:
+        assert db.get_metadata("registry_version") == reg.schema_stamp()
+        insert_view(db, "vw_lots", "lots")
+        insert_view(db, "vw_num", "630")
+    # A matching stamp skips the migration: the coercible row stays as stored.
+    with OntologyDB(path, embedding_dim=8, registry=reg) as db:
+        assert target_price(db, "vw_num") == "630"
+        # Any other stamp migrates, an old integer version or a "newer" one alike.
         db.set_metadata("registry_version", str(reg.version + 5))
     with OntologyDB(path, embedding_dim=8, registry=reg) as db:
-        assert db.get_metadata("registry_version") == str(reg.version + 5)
-        db.set_metadata("registry_version", "1")
-    with OntologyDB(path, embedding_dim=8, registry=reg) as db:
-        assert db.get_metadata("registry_version") == str(reg.version)
-        row = db.conn.execute("SELECT facets_json FROM nodes WHERE id = 'vw'").fetchone()
-        assert json.loads(row[0])["target_price"] == "lots"
+        assert db.get_metadata("registry_version") == reg.schema_stamp()
+        assert target_price(db, "vw_num") == 630
+        assert target_price(db, "vw_lots") == "lots"
 
 
 def test_db_without_registry_enforces_the_default_schema_but_never_stamps(tmp_path: Path) -> None:
@@ -1194,3 +1215,122 @@ def test_db_without_registry_enforces_the_default_schema_but_never_stamps(tmp_pa
         db.merge_node_into("ent_b", "ent_a")
         assert db.get_node("ent_a").facets == {"entity_type": "company"}
         assert db.get_metadata("registry_version") is None
+
+
+# ---------------------------------------------------------------------------
+# registry-schema-v2: unmapped relations on update, the schema stamp
+# ---------------------------------------------------------------------------
+
+
+def test_update_edge_refuses_relation_the_registry_does_not_map(tmp_path: Path) -> None:
+    import json
+
+    from stock_ontology.registry import FacetSchemaError
+
+    with _typed_db(tmp_path) as db:
+        db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation="COMPETE", facets={"basis": "extracted"}))
+        with pytest.raises(FacetSchemaError, match="FROBNICATES"):
+            db.update_edge("e1", relation="FROBNICATES", from_id="ent_a", to_id="ent_b", facets={"basis": "extracted"})
+        row = db.conn.execute("SELECT relation, facets_json FROM edges WHERE id = 'e1'").fetchone()
+        assert (row["relation"], json.loads(row["facets_json"])) == ("COMPETE", {"basis": "extracted"})
+        # A mapped alias is accepted and stored by its normalized name, as before.
+        db.update_edge("e1", relation="competes-with", from_id="ent_a", to_id="ent_b", facets={"basis": "extracted"})
+
+
+def test_schema_stamp_is_stable_for_identical_content_and_key_order() -> None:
+    import json
+
+    from stock_ontology.registry import OntologyRegistry, load_registry
+
+    reg = load_registry(_SHIPPED_REGISTRY)
+    raw = json.loads(_SHIPPED_REGISTRY.read_text(encoding="utf-8"))
+
+    def reverse_keys(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: reverse_keys(value[k]) for k in reversed(list(value))}
+        return value
+
+    reordered = {**raw, **{k: reverse_keys(raw[k]) for k in ("facet_vocabularies", "facet_schema", "metadata_max_length")}}
+    assert OntologyRegistry.model_validate(reordered).schema_stamp() == reg.schema_stamp()
+    # The human-facing version label is not an input.
+    assert OntologyRegistry.model_validate({**raw, "version": raw["version"] + 1}).schema_stamp() == reg.schema_stamp()
+    assert reg.schema_stamp().startswith("sha256:")
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda raw: raw["facet_vocabularies"]["node"]["view"]["stance"]["members"].update({"bullish": "Changed."}),
+        lambda raw: raw["facet_schema"]["node"]["view"].update({"horizon": {"kind": "text", "required": False}}),
+        lambda raw: raw["metadata_max_length"].update({"summary": 999}),
+    ],
+    ids=["facet_vocabularies", "facet_schema", "metadata_max_length"],
+)
+def test_schema_stamp_changes_with_each_input(mutate) -> None:
+    import json
+
+    from stock_ontology.registry import OntologyRegistry, load_registry
+
+    raw = json.loads(_SHIPPED_REGISTRY.read_text(encoding="utf-8"))
+    mutate(raw)
+    # Built without load validation, so a vocabulary edit code does not share still hashes.
+    changed = OntologyRegistry.model_construct(**raw)
+    assert changed.schema_stamp() != load_registry(_SHIPPED_REGISTRY).schema_stamp()
+
+
+# ---------------------------------------------------------------------------
+# registry-schema-v2 R1: the `pending_edges` table
+# ---------------------------------------------------------------------------
+
+
+def _pending_rows(db: OntologyDB) -> list[tuple[str, str, str, str | None]]:
+    return [
+        tuple(r)
+        for r in db.conn.execute("SELECT id, from_id, to_id, source_doc_id FROM pending_edges ORDER BY id").fetchall()
+    ]
+
+
+def test_pending_edges_table_holds_raw_relation_and_cascades_with_endpoints(tmp_path: Path) -> None:
+    import json
+
+    with _typed_db(tmp_path) as db:
+        cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(pending_edges)")}
+        assert {"id", "from_id", "to_id", "relation", "facets_json", "source_doc_id", "created_at"} <= cols
+        db.upsert_node(
+            Node(id="ent_c", node_type="entity", name="ent_c", summary="c", facets={"entity_type": "company", "sector": "Tech"})
+        )
+        db.insert_pending_edge(Edge(id="p1", from_id="ent_a", to_id="ent_b", relation="partners-with", facets={"basis": "extracted", "x": [1]}))
+        db.insert_pending_edge(Edge(id="p2", from_id="ent_b", to_id="ent_c", relation="FROBNICATES", facets={"basis": "extracted"}))
+        row = db.conn.execute("SELECT relation, facets_json FROM pending_edges WHERE id = 'p1'").fetchone()
+        assert (row["relation"], json.loads(row["facets_json"])) == ("partners-with", {"basis": "extracted", "x": [1]})
+        assert db.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 0
+
+        # Merging away an endpoint deletes the node, so its pending rows cascade.
+        db.merge_node_into("ent_a", "ent_b")
+        assert [r[0] for r in _pending_rows(db)] == ["p2"]
+        db.conn.execute("DELETE FROM nodes WHERE id = 'ent_c'")
+        db.conn.commit()
+        assert _pending_rows(db) == []
+
+
+def test_delete_document_artifacts_clears_only_that_docs_pending_edges(tmp_path: Path) -> None:
+    with _typed_db(tmp_path) as db:
+        for doc in ("doc_1", "doc_2"):
+            db.upsert_node(
+                Node(id=f"vw_{doc}", node_type="view", name=doc, summary=doc, source_doc_id=doc, facets={"view_type": "rumor"})
+            )
+            db.insert_pending_edge(Edge(id=f"p_{doc}", from_id=f"vw_{doc}", to_id="ent_a", relation="X", source_doc_id=doc))
+            # Entity-to-entity pending rows survive only through `source_doc_id`.
+            db.insert_pending_edge(Edge(id=f"pe_{doc}", from_id="ent_a", to_id="ent_b", relation="X", source_doc_id=doc))
+        assert db.list_artifact_doc_ids() == {"doc_1", "doc_2"}
+        db.delete_document_artifacts("doc_1")
+        assert [r[0] for r in _pending_rows(db)] == ["p_doc_2", "pe_doc_2"]
+
+
+def test_read_only_db_without_pending_table_lists_no_pending_edges(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    with OntologyDB(path, embedding_dim=8) as db:
+        db.conn.execute("DROP TABLE pending_edges")
+        db.conn.commit()
+    with OntologyDB(path, embedding_dim=8, read_only=True) as ro:
+        assert ro.list_pending_edges_with_endpoints() == []

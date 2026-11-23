@@ -36,6 +36,7 @@ from stock_ontology.pipeline import IngestionPipeline
 from stock_ontology.registry import create_minimal_registry, load_registry, save_registry
 from stock_ontology.repair import repair_ontology
 from stock_ontology.web import create_app
+from test_db import insert_legacy_edge
 
 DIM = 32
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -528,7 +529,11 @@ def test_write_side_normalization_oov_queueing_and_catalog_signatures(tmp_path: 
         assert (by_name["Alice Chen"], "WORKS_AT", by_name["Zeta Labs"]) in triples
         assert (by_name["Bob Kim"], "WORKS_AT", by_name["Zeta Labs"]) in triples
         assert (by_name["Acme AI"], "EXPOSED_TO", by_name["Edge Inference"]) in triples
-        assert (by_name["Acme AI"], "PARTNERS_WITH", by_name["Beta Fab"]) in triples
+        # An unmapped extracted relation is held in `pending_edges`, not `edges`, and counted.
+        assert (by_name["Acme AI"], "PARTNERS_WITH", by_name["Beta Fab"]) not in triples
+        assert report.unmapped_relations_pending == {"PARTNERS_WITH": 1}
+        pending = db.conn.execute("SELECT from_id, relation, to_id FROM pending_edges").fetchall()
+        assert [tuple(r) for r in pending] == [(by_name["Acme AI"], "PARTNERS_WITH", by_name["Beta Fab"])]
 
         compete_rows = [
             r for r in rows
@@ -563,7 +568,9 @@ def test_write_side_normalization_oov_queueing_and_catalog_signatures(tmp_path: 
         audit_rep = run_ontology_audit(ro, reg)
 
     assert audit_rep.summary.direction_issue_edges == 0
+    # Audit queues the pending relation, so the registry can still grow from it.
     assert [r.name for r in audit_rep.unmapped_relations] == ["PARTNERS_WITH"]
+    assert audit_rep.summary.pending_edges == 1
     sync_sum = reg.sync_suggestions(
         audit_rep.unmapped_relations,
         audit_rep.unmapped_companies,
@@ -641,7 +648,10 @@ def test_registry_driven_repair_and_reciprocal_contradiction_audit(tmp_path: Pat
             Edge(id="e_rcp_2", from_id="ent_d", to_id="ent_c", relation="SUPPLIES_TO", source_doc_id="doc_2", facets={"basis": "extracted"}),
         ]
         for edge in legacy_edges:
-            db.upsert_edge(edge)
+            if db.registry.resolve_relation(edge.relation) is None:
+                insert_legacy_edge(db, edge)  # PARTNERS_WITH, written before unmapped relations were refused
+            else:
+                db.upsert_edge(edge)
 
         rep1 = repair_ontology(db, reg)
         assert rep1.total_changes > 0
@@ -840,7 +850,7 @@ def test_guardrail_event_view_dedup_and_single_note_deletion_retention(tmp_path:
         for idx, node in enumerate([nvda, evt, vw]):
             db.upsert_node(node, embedding=_unit_vec(idx))
         # Secondary non-ABOUT edge inserted first, ABOUT edge with entity-level sentiment override second.
-        db.upsert_edge(Edge(id="e_m1", from_id="evt_multi", to_id="ent_nvda", relation="MENTIONS", source_doc_id="doc_1", facets={"basis": "extracted"}))
+        insert_legacy_edge(db, Edge(id="e_m1", from_id="evt_multi", to_id="ent_nvda", relation="MENTIONS", source_doc_id="doc_1", facets={"basis": "extracted"}))
         db.upsert_edge(
             Edge(
                 id="e_a1",
@@ -851,7 +861,7 @@ def test_guardrail_event_view_dedup_and_single_note_deletion_retention(tmp_path:
                 source_doc_id="doc_1",
             )
         )
-        db.upsert_edge(Edge(id="e_m2", from_id="vw_multi", to_id="ent_nvda", relation="MENTIONS", source_doc_id="doc_1", facets={"basis": "extracted"}))
+        insert_legacy_edge(db, Edge(id="e_m2", from_id="vw_multi", to_id="ent_nvda", relation="MENTIONS", source_doc_id="doc_1", facets={"basis": "extracted"}))
         db.upsert_edge(
             Edge(
                 id="e_a2",

@@ -30,8 +30,8 @@ from stock_ontology.vocab import ENTITY_TYPE, NODE_FACET_VOCABS, STAGE
 # in addition to every entity/theme the note names.
 CATALOG_RECENT_BUDGET = 500
 
-# Extraction calls per note: the first plus 2 regenerations when the result breaks the registry's
-# facet schema (a missing required facet or a wrong kind). After that the note fails.
+# Extraction calls per note: the first plus 2 regenerations when the result breaks the registry
+# (a missing required facet, a wrong kind, or an over-length name or summary). After that the note fails.
 MAX_EXTRACTION_ATTEMPTS = 3
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,8 @@ class IngestReport:
     files_moved: int = 0
     nodes_created_or_updated: int = 0
     edges_created_or_updated: int = 0
+    # Extracted edges held in `pending_edges` because the registry does not map their relation: name -> count.
+    unmapped_relations_pending: dict[str, int] = field(default_factory=dict)
     consensus_updated_for: list[str] = field(default_factory=list)
     errors: list[tuple[str, str]] = field(default_factory=list)
 
@@ -355,6 +357,7 @@ class IngestionPipeline:
                 known_facets=self.db.get_known_facet_keys(),
             )
             note_companies.clear()
+            pending: dict[str, int] = {}
             try:
                 # All writes for this note commit together or not at all, so a failure partway
                 # leaves no partial rows behind and no ingestion log entry.
@@ -367,6 +370,7 @@ class IngestionPipeline:
                         source_meta=source_meta,
                         now=now,
                         affected_company_ids=note_companies,
+                        pending_relations=pending,
                     )
                     note_companies.update(self.db.get_doc_affected_company_ids(doc_id))
                     self.db.upsert_ingestion_log(
@@ -381,6 +385,8 @@ class IngestionPipeline:
         affected_company_ids.update(note_companies)
         report.nodes_created_or_updated += nodes_written
         report.edges_created_or_updated += edges_written
+        for relation, count in pending.items():
+            report.unmapped_relations_pending[relation] = report.unmapped_relations_pending.get(relation, 0) + count
         report.files_processed += 1
 
     def _clear_prior_artifacts(
@@ -399,8 +405,13 @@ class IngestionPipeline:
         source_meta: dict[str, Any],
         now: datetime,
         affected_company_ids: set[str],
+        pending_relations: dict[str, int],
     ) -> tuple[int, int]:
-        """Write resolved entities/themes, doc-scoped events/views, and edges; return counts."""
+        """Write resolved entities/themes, doc-scoped events/views, and edges; return counts.
+
+        An edge whose relation the registry does not map is held in `pending_edges` with its raw
+        relation, not written to `edges`; its name is counted in `pending_relations`.
+        """
         nodes_written = 0
         edges_written = 0
         ref_map: dict[str, str] = {}
@@ -523,6 +534,20 @@ class IngestionPipeline:
             # `basis` is set by code, never taken from the LLM.
             canon_facets["basis"] = "extracted"
             canon_facets = self.registry.drop_uncoercible_optional(None, canon_facets)
+            if not canon.matched:
+                self.db.insert_pending_edge(
+                    Edge(
+                        id=f"pedge_{uuid.uuid4().hex[:12]}",
+                        from_id=from_id,
+                        to_id=to_id,
+                        relation=ex_edge.relation,
+                        facets=canon_facets,
+                        source_doc_id=doc_id,
+                        created_at=now,
+                    )
+                )
+                pending_relations[canon.relation] = pending_relations.get(canon.relation, 0) + 1
+                continue
             self.db.upsert_edge(
                 Edge(
                     id=f"edge_{uuid.uuid4().hex[:12]}",

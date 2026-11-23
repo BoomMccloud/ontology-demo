@@ -297,7 +297,17 @@ def test_code_facet_schema_declares_every_vocabulary_as_an_enum() -> None:
 
 def test_shipped_registry_declares_the_initial_required_sets_and_kinds() -> None:
     reg = _shipped()
-    assert reg.facet_schema == vocab.facet_schema_spec()
+    # Entity-type layers: people need a role and an organization, companies a sector.
+    assert {k for k in reg.facet_schema["node"] if k.startswith("entity:")} == {"entity:person", "entity:company"}
+    assert reg.required_facets("entity", "person") == {"entity_type", "role", "organization"}
+    assert reg.required_facets("entity", "company") == {"entity_type", "sector"}
+    assert reg.required_facets("entity", "product") == {"entity_type"}
+    assert all(
+        spec == {"kind": "text", "required": True}
+        for layer in ("entity:person", "entity:company")
+        for spec in reg.facet_schema["node"][layer].values()
+    )
+    assert reg.metadata_max_length == {"name": 200, "summary": 1000}
     assert {nt: reg.required_facets(nt) for nt in ("entity", "event", "view", "theme")} == {
         "entity": {"entity_type"},
         "event": {"event_type"},
@@ -312,18 +322,7 @@ def test_shipped_registry_declares_the_initial_required_sets_and_kinds() -> None
     assert reg.version >= 2
 
 
-@pytest.mark.parametrize(
-    ("mutate", "named"),
-    [
-        (lambda fs: fs["node"]["view"]["target_price"].update({"kind": "text"}), "target_price"),
-        (lambda fs: fs["node"]["view"]["stance"].update({"required": True}), "stance"),
-        (lambda fs: fs["edge"].pop("basis"), "edge.basis"),
-        (lambda fs: fs["node"]["event"].update({"headline": {"kind": "text", "required": False}}), "headline"),
-        (lambda fs: fs["node"].pop("theme"), "node.theme"),
-    ],
-    ids=["kind-drift", "required-drift", "missing-facet", "extra-facet", "missing-node-type"],
-)
-def test_load_registry_rejects_facet_schema_drift(tmp_path, mutate, named) -> None:
+def _load_with_schema(tmp_path, mutate):
     import json
 
     from stock_ontology.registry import load_registry
@@ -332,9 +331,99 @@ def test_load_registry_rejects_facet_schema_drift(tmp_path, mutate, named) -> No
     mutate(raw["facet_schema"])
     path = tmp_path / "ontology_registry.json"
     path.write_text(json.dumps(raw), encoding="utf-8")
+    return load_registry(path)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "named"),
+    [
+        (lambda fs: fs["edge"].pop("basis"), "edge.basis"),
+        (lambda fs: fs["node"].pop("theme"), "node.theme.stage"),
+        (lambda fs: fs["node"]["entity"]["entity_type"].update({"required": False}), "entity.entity_type"),
+        (lambda fs: fs["node"]["event"]["event_type"].update({"kind": "text"}), "event.event_type"),
+        (lambda fs: fs["node"]["view"].pop("view_type"), "view.view_type"),
+        (lambda fs: fs["node"]["view"]["as_of"].update({"kind": "money"}), "as_of"),
+        (lambda fs: fs["node"]["view"]["as_of"].pop("required"), "as_of"),
+        (lambda fs: fs["node"].update({"widget": {}}), "node.widget"),
+        (lambda fs: fs["node"].update({"entity:spaceship": {}}), "entity:spaceship"),
+        (lambda fs: fs["node"].update({"view:rumor": {}}), "view:rumor"),
+        (
+            lambda fs: fs["node"].update({"entity:person": {"entity_type": {"kind": "enum", "required": True}}}),
+            "entity:person.entity_type",
+        ),
+    ],
+    ids=[
+        "missing-edge-basis",
+        "missing-theme",
+        "optional-subtype",
+        "subtype-kind",
+        "missing-subtype",
+        "unknown-kind",
+        "malformed-spec",
+        "unknown-node-type",
+        "unknown-entity-type",
+        "non-entity-subtype-layer",
+        "layer-redeclares-subtype",
+    ],
+)
+def test_load_registry_refuses_schema_missing_code_minimum_or_malformed(tmp_path, mutate, named) -> None:
     with pytest.raises(ValueError) as excinfo:
-        load_registry(path)
+        _load_with_schema(tmp_path, mutate)
     assert "facet_schema" in str(excinfo.value) and named in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda fs: fs["node"]["view"]["target_price"].update({"kind": "text"}),
+        lambda fs: fs["node"]["view"]["stance"].update({"required": True}),
+        lambda fs: fs["node"]["event"].update({"headline": {"kind": "text", "required": False}}),
+        lambda fs: fs["node"].update({"entity:company": {"ticker": {"kind": "text", "required": True}}}),
+    ],
+    ids=["kind-change", "required-change", "extra-facet", "entity-type-layer"],
+)
+def test_per_type_specs_beyond_the_code_minimum_are_the_registrys_call(tmp_path, mutate) -> None:
+    reg = _load_with_schema(tmp_path, mutate)
+    assert reg.facet_schema != vocab.facet_schema_spec()
+
+
+def test_load_registry_refuses_enum_facet_without_a_vocabulary(tmp_path) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        _load_with_schema(tmp_path, lambda fs: fs["node"]["view"].update({"horizon": {"kind": "enum", "required": False}}))
+    assert "view.horizon" in str(excinfo.value)
+
+
+def _layered_registry(tmp_path):
+    def mutate(fs):
+        fs["node"]["entity"]["region"] = {"kind": "text", "required": False}
+        fs["node"]["entity:person"] = {
+            "organization": {"kind": "text", "required": True},
+            "region": {"kind": "text", "required": True},
+        }
+
+    return _load_with_schema(tmp_path, mutate)
+
+
+def test_entity_subtype_layer_merges_over_entity_and_overrides_a_base_key(tmp_path) -> None:
+    from stock_ontology.registry import FacetSchemaError
+
+    reg = _layered_registry(tmp_path)
+    assert reg.required_facets("entity", "person") == {"entity_type", "organization", "region"}
+    # Without the person layer, `region` keeps the base spec: optional.
+    assert reg.required_facets("entity", "product") == {"entity_type"}
+    assert reg.required_facets("entity") == {"entity_type"}
+    # The layer is chosen by the stored subtype, after the vocabulary rule (`Person` is `person`).
+    with pytest.raises(FacetSchemaError, match="region"):
+        reg.check_facets("entity", {"entity_type": "Person", "organization": "Omega"})
+    assert reg.check_facets("entity", {"entity_type": "product"}) == {"entity_type": "product"}
+
+
+def test_entity_subtype_layer_does_not_leak_to_other_node_types(tmp_path) -> None:
+    reg = _layered_registry(tmp_path)
+    facets = {"view_type": "rumor", "entity_type": "person"}
+    assert reg.required_facets("view", "person") == {"view_type"}
+    assert reg.check_facets("view", facets) == facets
+    assert reg.drop_uncoercible_optional("view", facets) == facets
 
 
 @pytest.mark.parametrize(
@@ -349,7 +438,6 @@ def test_load_registry_rejects_facet_schema_drift(tmp_path, mutate, named) -> No
         ("text", "Morgan", "Morgan"),
         ("text", 42, "42"),
         ("list", ["a", 1], ["a", 1]),
-        ("enum", "Moonshot", "Moonshot"),
     ],
 )
 def test_coerce_facet_value_accepts_or_converts_losslessly(kind, raw, expected) -> None:
@@ -372,6 +460,7 @@ def test_coerce_facet_value_accepts_or_converts_losslessly(kind, raw, expected) 
         ("text", {"a": 1}),
         ("list", "a, b"),
         ("enum", 3),
+        ("enum", "Moonshot"),
         ("widget", "x"),
     ],
 )
@@ -380,11 +469,23 @@ def test_coerce_facet_value_refuses_lossy_or_wrong_kind(kind, raw) -> None:
         vocab.coerce_facet_value(kind, raw)
 
 
-def test_required_enum_must_be_a_member_and_is_stored_canonical() -> None:
+def test_enum_must_be_a_member_and_is_stored_canonical() -> None:
     members, aliases = vocab.VIEW_TYPE.members, dict(vocab.VIEW_TYPE.aliases)
-    assert vocab.coerce_facet_value("enum", "Rumour", members=members, aliases=aliases, required=True) == "rumor"
+    assert vocab.coerce_facet_value("enum", "Rumour", members=members, aliases=aliases) == "rumor"
     with pytest.raises(ValueError):
-        vocab.coerce_facet_value("enum", "hunch", members=members, aliases=aliases, required=True)
+        vocab.coerce_facet_value("enum", "hunch", members=members, aliases=aliases)
+
+
+def test_optional_enum_is_stored_as_its_member_or_refused() -> None:
+    from stock_ontology.registry import FacetSchemaError
+
+    reg = _shipped()
+    assert reg.check_facets("view", {"view_type": "rumor", "stance": "Buy"})["stance"] == "bullish"
+    with pytest.raises(FacetSchemaError, match="stance"):
+        reg.check_facets("view", {"view_type": "rumor", "stance": "maybe"})
+    with pytest.raises(FacetSchemaError, match="sentiment"):
+        reg.check_facets(None, {"basis": "extracted", "sentiment": "giddy"})
+    assert reg.drop_uncoercible_optional("view", {"view_type": "rumor", "stance": "maybe"}) == {"view_type": "rumor"}
 
 
 @pytest.mark.parametrize(
@@ -417,22 +518,57 @@ def test_check_facets_coerces_official_and_passes_undeclared_facets() -> None:
     assert facets["target_price"] == "630"  # the input is not mutated
 
 
-def test_default_registry_declares_the_shipped_facet_schema() -> None:
+def test_default_registry_enforces_its_built_in_base_schema() -> None:
     from stock_ontology.registry import FacetSchemaError, create_minimal_registry
 
     minimal = create_minimal_registry()
-    assert minimal.facet_schema == _shipped().facet_schema == vocab.facet_schema_spec()
+    assert minimal.facet_schema == vocab.facet_schema_spec()
     assert minimal.facet_vocabularies == _shipped().facet_vocabularies
+    assert minimal.metadata_max_length == vocab.METADATA_MAX_LENGTH
+    assert {nt: minimal.required_facets(nt) for nt in ("entity", "event", "view", "theme")} == {
+        "entity": {"entity_type"},
+        "event": {"event_type"},
+        "view": {"view_type"},
+        "theme": {"stage"},
+    }
     with pytest.raises(FacetSchemaError):
         minimal.check_facets("view", {"view_type": "rumor", "target_price": "lots"})
+    with pytest.raises(FacetSchemaError):
+        minimal.check_facets("view", {"target_price": 1})
 
 
-def test_registry_declaring_no_facet_schema_enforces_nothing() -> None:
-    from stock_ontology.registry import create_minimal_registry
+@pytest.mark.parametrize("field", ["facet_schema", "metadata_max_length"])
+def test_registry_without_facet_schema_or_metadata_limits_fails_to_load(tmp_path, field) -> None:
+    import json
 
-    bare = create_minimal_registry().model_copy(update={"facet_schema": {}})
-    assert bare.check_facets("view", {"target_price": "lots"}) == {"target_price": "lots"}
-    assert bare.required_facets("view") == set()
+    from stock_ontology.registry import load_registry
+
+    raw = json.loads(SHIPPED_REGISTRY_PATH.read_text(encoding="utf-8"))
+    raw.pop(field)
+    path = tmp_path / "ontology_registry.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError) as excinfo:
+        load_registry(path)
+    assert field in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("value", "named"),
+    [({"name": 200}, "summary"), ({"name": 200, "summary": 0}, "summary"), ({"name": 200, "summary": 1000, "aliases": 5}, "aliases")],
+    ids=["missing", "non-positive", "unknown-field"],
+)
+def test_registry_refuses_malformed_metadata_limits(tmp_path, value, named) -> None:
+    import json
+
+    from stock_ontology.registry import load_registry
+
+    raw = json.loads(SHIPPED_REGISTRY_PATH.read_text(encoding="utf-8"))
+    raw["metadata_max_length"] = value
+    path = tmp_path / "ontology_registry.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError) as excinfo:
+        load_registry(path)
+    assert "metadata_max_length" in str(excinfo.value) and named in str(excinfo.value)
 
 
 def test_drop_uncoercible_optional_keeps_required_and_undeclared_facets() -> None:

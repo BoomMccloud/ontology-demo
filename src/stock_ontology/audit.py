@@ -57,6 +57,8 @@ class AuditSummary(BaseModel):
     mapped_alias_edges: int = 0
     mapped_inverse_edges: int = 0
     unmapped_edges: int = 0
+    # Rows in `pending_edges` whose relation the registry still does not map (not in `total_edges`).
+    pending_edges: int = 0
     distinct_unmapped_relations: int = 0
     direction_issue_edges: int = 0
     reciprocal_contradiction_pairs: int = 0
@@ -574,6 +576,26 @@ def run_ontology_audit(
         )
     ]
 
+    # Pending edges were never written to `edges` because their relation is unmapped. They feed the
+    # same relation suggestions; a pending row the registry now maps waits for `repair` to promote it.
+    pending_unmapped = 0
+    for edge in db.list_pending_edges_with_endpoints():
+        if registry.resolve_relation(edge["relation"]) is not None:
+            continue
+        pending_unmapped += 1
+        norm_rel = normalize_relation_name(edge["relation"])
+        unmapped_rel_counts[norm_rel] += 1
+        unmapped_rel_sigs[norm_rel][
+            (
+                node_type_label(edge["from_type"], edge["from_entity_type"]),
+                node_type_label(edge["to_type"], edge["to_entity_type"]),
+            )
+        ] += 1
+        if len(unmapped_rel_samples[norm_rel]) < 3:
+            unmapped_rel_samples[norm_rel].append(
+                SampleEdge(from_name=edge["from_name"], relation=edge["relation"], to_name=edge["to_name"])
+            )
+
     unmapped_relations = [
         RelationSuggestion(
             id=make_suggestion_id("sug_rel", rel_name),
@@ -898,6 +920,7 @@ def run_ontology_audit(
         mapped_alias_edges=mapped_alias_edges,
         mapped_inverse_edges=mapped_inverse_edges,
         unmapped_edges=unmapped_edges,
+        pending_edges=pending_unmapped,
         distinct_unmapped_relations=len(unmapped_relations),
         direction_issue_edges=direction_issue_edges,
         reciprocal_contradiction_pairs=len(reciprocal_contradictions),

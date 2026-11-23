@@ -23,6 +23,7 @@ from stock_ontology.vocab import (
 )
 from stock_ontology.web import create_app
 
+from test_db import insert_legacy_edge
 from test_web import DIM, FakeWebLLM, _unit_vec
 
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "ontology_registry.json"
@@ -108,7 +109,6 @@ def _seed(db_path: Path) -> None:
         Edge(id="e_occ_q", from_id="evt_occ", to_id="ent_qcom", relation="ABOUT", facets={"basis": "extracted"}),
         Edge(id="e_occ_a", from_id="evt_occ", to_id="ent_aapl", relation="RELATES_TO", facets={"basis": "extracted"}),
         Edge(id="e_strong", from_id="vw_strong", to_id="ent_aapl", relation="SUPPORTS", facets={"basis": "extracted"}),
-        Edge(id="e_off", from_id="vw_cons", to_id="ent_qcom", relation="FROBNICATES", facets={"basis": "extracted"}),
         Edge(id="e_thm", from_id="ent_aapl", to_id="thm_acc", relation="EXPOSED_TO", facets={"basis": "extracted"}),
     ]
     # `evt_off` is a legacy row whose `event_type` is outside the vocabulary, so it is written
@@ -119,6 +119,9 @@ def _seed(db_path: Path) -> None:
             db.upsert_node(node, embedding=_unit_vec(idx))
         for edge in edges:
             db.upsert_edge(edge)
+        insert_legacy_edge(
+            db, Edge(id="e_off", from_id="vw_cons", to_id="ent_qcom", relation="FROBNICATES", facets={"basis": "extracted"})
+        )
 
 
 @pytest.fixture

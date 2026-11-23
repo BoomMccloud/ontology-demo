@@ -1,4 +1,5 @@
-"""Deterministic repair of stored ontology data: orphans, enum facets, relation names, exact duplicates.
+"""Deterministic repair of stored ontology data: orphans, enum facets, relation names, pending edges,
+exact duplicates.
 
 Only fixes with a single right answer live here. Judgment calls (unknown relations,
 near-duplicate entities) are queued as pending registry suggestions by `audit`.
@@ -7,12 +8,14 @@ All reads and writes go through `OntologyDB`; this module issues no SQL.
 
 from __future__ import annotations
 
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from stock_ontology.db import OntologyDB, merge_edge_facets
-from stock_ontology.models import Node
+from stock_ontology.models import Edge, Node
 from stock_ontology.registry import OntologyRegistry, normalize_name_key
 from stock_ontology.vocab import VIEW_TYPE, canonicalize_edge_facets, canonicalize_node_facets
 
@@ -23,7 +26,8 @@ class RepairReport:
 
     orphan_nodes_deleted: int = 0
     orphan_edges_deleted: int = 0
-    # Nodes and edges whose enum facets were lowercased or mapped to their vocabulary member.
+    # Nodes and edges whose enum facets were mapped to their vocabulary member, or whose optional
+    # enum facet outside its vocabulary was dropped (the ingest rule).
     facets_canonicalized: int = 0
     edges_canonicalized: int = 0
     duplicate_edges_deleted: int = 0
@@ -33,6 +37,8 @@ class RepairReport:
     facets_migrated: int = 0
     nodes_merged: int = 0
     self_loops_deleted: int = 0
+    # Pending edges whose relation the registry now maps, written to `edges` and removed from pending.
+    pending_edges_promoted: int = 0
     # Registry merge suggestions a human approved and repair applied (`suggestions.merges`).
     approved_merges_applied: int = 0
     # Survivors of merges keep a stale embedding until `reembed_nodes` recomputes it.
@@ -50,6 +56,7 @@ class RepairReport:
             + self.facets_migrated
             + self.nodes_merged
             + self.self_loops_deleted
+            + self.pending_edges_promoted
         )
 
 
@@ -63,10 +70,11 @@ def repair_ontology(db: OntologyDB, registry: OntologyRegistry) -> RepairReport:
         _delete_orphan_artifacts(db, report)
         # Before canonicalizing: an edge rewrite has to carry the required `basis`.
         _backfill_edge_basis(db, report)
-        _canonicalize_facets(db, report)
+        _canonicalize_facets(db, registry, report)
         _apply_approved_merges(db, registry, report)
         _merge_exact_duplicates(db, report)
         _canonicalize_relations(db, registry, report)
+        _promote_pending_edges(db, registry, report)
         _delete_duplicate_edges(db, report)
         # The same migration a writable open runs when the DB is stamped older; it also stamps.
         report.facets_migrated = db.migrate_facets(registry)
@@ -83,16 +91,21 @@ def _delete_orphan_artifacts(db: OntologyDB, report: RepairReport) -> None:
         report.orphan_edges_deleted += edges
 
 
-def _canonicalize_facets(db: OntologyDB, report: RepairReport) -> None:
-    """Map stored enum facets to their vocabulary member; lowercase, but keep, unknown values."""
+def _canonicalize_facets(db: OntologyDB, registry: OntologyRegistry, report: RepairReport) -> None:
+    """Map stored enum facets to their vocabulary member; drop an optional enum outside its vocabulary.
+
+    An unknown required subtype is lowercased and kept, for `audit` to report.
+    """
     for node in db.list_all_nodes():
-        facets = canonicalize_node_facets(node.node_type, node.facets)
+        facets = registry.drop_uncoercible_optional(
+            node.node_type, canonicalize_node_facets(node.node_type, node.facets), kinds=("enum",)
+        )
         if facets != node.facets:
             node.facets = facets
             db.upsert_node(node)
             report.facets_canonicalized += 1
     for edge in db.list_edges_with_endpoints():
-        facets = canonicalize_edge_facets(edge["facets"])
+        facets = registry.drop_uncoercible_optional(None, canonicalize_edge_facets(edge["facets"]), kinds=("enum",))
         if facets != edge["facets"]:
             db.update_edge(
                 edge["edge_id"],
@@ -155,6 +168,41 @@ def _canonicalize_relations(
             facets=canon.facets,
         )
         report.edges_canonicalized += 1
+
+
+def _promote_pending_edges(db: OntologyDB, registry: OntologyRegistry, report: RepairReport) -> None:
+    """Write each pending edge whose relation `registry` now maps to `edges`, then drop it from pending.
+
+    The relation, direction and alias facets come from `canonicalize_edge`, as at ingest. A pending
+    edge whose relation is still unmapped stays pending.
+    """
+    promoted: list[str] = []
+    for edge in db.list_pending_edges_with_endpoints():
+        canon = registry.canonicalize_edge(
+            edge["relation"],
+            from_id=edge["from_id"],
+            from_type=edge["from_type"],
+            from_entity_type=edge["from_entity_type"],
+            to_id=edge["to_id"],
+            to_type=edge["to_type"],
+            to_entity_type=edge["to_entity_type"],
+            facets=edge["facets"],
+        )
+        if not canon.matched:
+            continue
+        db.upsert_edge(
+            Edge(
+                id=f"edge_{uuid.uuid4().hex[:12]}",
+                from_id=canon.from_id,
+                to_id=canon.to_id,
+                relation=canon.relation,
+                facets=registry.drop_uncoercible_optional(None, canon.facets),
+                source_doc_id=edge["source_doc_id"],
+                created_at=datetime.fromisoformat(edge["created_at"]),
+            )
+        )
+        promoted.append(edge["edge_id"])
+    report.pending_edges_promoted += db.delete_pending_edges(promoted)
 
 
 def _merge_key(node: Node) -> tuple[str, str]:

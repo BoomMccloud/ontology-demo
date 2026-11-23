@@ -13,6 +13,7 @@ import pytest
 from stock_ontology.db import OntologyDB
 from stock_ontology.models import Edge, Node
 from stock_ontology.registry import create_minimal_registry
+from test_db import insert_legacy_edge
 
 DIM = 8
 
@@ -134,7 +135,7 @@ def test_repair_merges_exact_duplicates_within_same_type_only(tmp_path: Path) ->
         db.upsert_node(_event("evt_g", "Gamma Event", "doc_g"), embedding=_vec(3))
         db.upsert_ingestion_log("notes/g.md", "doc_g", "hash_g", datetime.now(UTC).isoformat())
         db.upsert_edge(_edge("e_g_a", "evt_g", "ABOUT", "ent_gamma_a", "doc_g"))
-        db.upsert_edge(_edge("e_g_b", "evt_g", "MENTIONS", "ent_gamma_b", "doc_g"))
+        insert_legacy_edge(db, _edge("e_g_b", "evt_g", "MENTIONS", "ent_gamma_b", "doc_g"))
 
         repair_ontology = _load_repair_ontology()
         repair_ontology(db, create_minimal_registry())
@@ -292,7 +293,7 @@ def test_repair_applies_only_approved_merge_suggestions(tmp_path: Path) -> None:
         db.upsert_node(_event("evt_omega", "Omega Contract", "doc_omega"), embedding=_vec(6))
         db.upsert_ingestion_log("notes/omega.md", "doc_omega", "hash_omega", datetime.now(UTC).isoformat())
         db.upsert_edge(_edge("e_omega_a", "evt_omega", "ABOUT", "ent_omega_a", "doc_omega"))
-        db.upsert_edge(_edge("e_omega_b", "evt_omega", "MENTIONS", "ent_omega_b", "doc_omega"))
+        insert_legacy_edge(db, _edge("e_omega_b", "evt_omega", "MENTIONS", "ent_omega_b", "doc_omega"))
 
         report = _load_repair_ontology()(db, registry)
 
@@ -427,7 +428,99 @@ def test_repair_migrates_facet_kinds_and_stamps_registry_version(tmp_path: Path)
         assert report.total_changes == 1
         row = db.conn.execute("SELECT facets_json FROM nodes WHERE id = 'vw'").fetchone()
         assert json.loads(row[0])["target_price"] == 630
-        assert db.get_metadata("registry_version") == str(reg.version)
+        assert db.get_metadata("registry_version") == reg.schema_stamp()
 
         again = repair_ontology(db, reg)
         assert again.facets_migrated == 0 and again.total_changes == 0
+
+
+# ---------------------------------------------------------------------------
+# registry-schema-v2: repair drops an optional enum outside its vocabulary, as ingest does
+# ---------------------------------------------------------------------------
+
+
+def test_repair_drops_unknown_optional_enums_on_nodes_and_edges(tmp_path: Path) -> None:
+    import json
+
+    repair_ontology = _load_repair_ontology()
+    with OntologyDB(tmp_path / "repair.db", embedding_dim=DIM) as db:
+        db.upsert_node(_entity("ent_acme", "Acme", "company"), embedding=_vec(0))
+        db.upsert_node(_event("evt_a", "Acme News", "doc_a"), embedding=_vec(1))
+        db.upsert_ingestion_log("notes/a.md", "doc_a", "hash_a", datetime.now(UTC).isoformat())
+        db.upsert_edge(_edge("e_a", "evt_a", "ABOUT", "ent_acme", "doc_a"))
+        # Legacy rows written before optional enums were checked against their vocabulary.
+        db.conn.execute(
+            "UPDATE nodes SET facets_json = ? WHERE id = 'evt_a'",
+            (json.dumps({"event_type": "news", "status": "Maybe", "sentiment": "Positive", "event_date": "2026-11-01"}),),
+        )
+        db.conn.execute(
+            "UPDATE edges SET facets_json = ? WHERE id = 'e_a'",
+            (json.dumps({"basis": "extracted", "sentiment": "giddy", "role": "subject"}),),
+        )
+        db.conn.commit()
+
+        report = repair_ontology(db, create_minimal_registry())
+        assert report.facets_canonicalized == 2
+        event = db.get_node("evt_a")
+        assert event is not None
+        # The unknown optional enum is dropped, a known one canonicalized, and other kinds kept.
+        assert event.facets == {"event_type": "news", "sentiment": "positive", "event_date": "2026-11-01"}
+        row = db.conn.execute("SELECT facets_json FROM edges WHERE id = 'e_a'").fetchone()
+        assert json.loads(row[0]) == {"basis": "extracted", "role": "subject"}
+
+
+# ---------------------------------------------------------------------------
+# registry-schema-v2 R1: repair promotes pending edges the registry now maps
+# ---------------------------------------------------------------------------
+
+
+def _registry_mapping_sells_to_as_inverse_of_buy():
+    reg = create_minimal_registry()
+    buy = next(r for r in reg.relations if r.name == "BUY")
+    buy.inverse_aliases = [*buy.inverse_aliases, "SELLS_TO"]
+    return reg
+
+
+def _company(node_id: str) -> Node:
+    return Node(id=node_id, node_type="entity", name=node_id, summary=node_id, facets={"entity_type": "company"})
+
+
+def test_repair_promotes_pending_edge_through_inverse_alias_and_keeps_unmapped_ones(tmp_path: Path) -> None:
+    import json
+
+    repair_ontology = _load_repair_ontology()
+    with OntologyDB(tmp_path / "pending.db", embedding_dim=DIM) as db:
+        for i, nid in enumerate(("ent_seller", "ent_buyer")):
+            db.upsert_node(_company(nid), embedding=_vec(i))
+        db.insert_pending_edge(
+            Edge(id="p_sell", from_id="ent_seller", to_id="ent_buyer", relation="sells-to", facets={"basis": "extracted", "note": "x"})
+        )
+        db.insert_pending_edge(Edge(id="p_frob", from_id="ent_seller", to_id="ent_buyer", relation="FROBNICATES", facets={"basis": "extracted"}))
+
+        # Under a registry that maps neither, nothing moves.
+        assert repair_ontology(db, create_minimal_registry()).pending_edges_promoted == 0
+        assert db.conn.execute("SELECT COUNT(*) FROM pending_edges").fetchone()[0] == 2
+
+        report = repair_ontology(db, _registry_mapping_sells_to_as_inverse_of_buy())
+        assert report.pending_edges_promoted == 1 and report.total_changes >= 1
+        rows = db.conn.execute("SELECT from_id, relation, to_id, facets_json FROM edges").fetchall()
+        # The inverse alias flips direction: the buyer BUYs from the seller.
+        assert [(r[0], r[1], r[2]) for r in rows] == [("ent_buyer", "BUY", "ent_seller")]
+        assert json.loads(rows[0][3]) == {"basis": "extracted", "note": "x"}
+        assert [r[0] for r in db.conn.execute("SELECT relation FROM pending_edges")] == ["FROBNICATES"]
+
+
+def test_repair_stays_strict_on_a_legacy_unmapped_edge_it_must_rewrite(tmp_path: Path) -> None:
+    from stock_ontology.registry import FacetSchemaError
+
+    repair_ontology = _load_repair_ontology()
+    with OntologyDB(tmp_path / "legacy.db", embedding_dim=DIM) as db:
+        for i, nid in enumerate(("ent_a", "ent_b")):
+            db.upsert_node(_company(nid), embedding=_vec(i))
+        # A legacy row in `edges` with an unmapped relation and no `basis`: backfilling it is a rewrite.
+        insert_legacy_edge(db, Edge(id="e_old", from_id="ent_a", to_id="ent_b", relation="PARTNERS_WITH", facets={}))
+        with pytest.raises(FacetSchemaError, match="PARTNERS_WITH"):
+            repair_ontology(db, create_minimal_registry())
+        # The run rolled back: the row is untouched and was not moved to pending.
+        assert db.conn.execute("SELECT relation, facets_json FROM edges").fetchall()[0][1] == "{}"
+        assert db.conn.execute("SELECT COUNT(*) FROM pending_edges").fetchone()[0] == 0

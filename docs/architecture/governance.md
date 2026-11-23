@@ -14,7 +14,11 @@ cases with one right answer.
 `run_ontology_audit(db, registry, ...)` reads a read-only DB and returns an
 `AuditReport`: unmapped relations, direction problems, ticker issues,
 near-duplicate entities, suspicious aliases, facet alias hits, and
-contradictory reciprocal edges. The `audit` command also adds unmapped items
+contradictory reciprocal edges. Unmapped relations combine stored `edges`
+with `pending_edges` rows whose relation is still unmapped (counts, endpoint
+signatures and samples; `AuditSummary.pending_edges` counts the pending ones),
+so an extracted relation the registry does not know still becomes a
+suggestion. The `audit` command also adds unmapped items
 to the registry file as `pending` suggestions for a human to review (on by
 default, off with `--no-sync-suggestions`). Near-duplicate company and theme
 pairs become `suggestions.merges` entries; a reviewer sets each to `approved`
@@ -26,16 +30,24 @@ longer reports is dropped.
 `repair_ontology(db, registry)` writes to the DB. It deletes rows from notes
 no longer in the ingestion log, canonicalizes stored enum facets on nodes and
 edges through `vocab.py` (case and aliases, so legacy `stale` becomes
-`superseded`; an unknown value is lowercased and kept, never replaced, and
-counted in `RepairReport.facets_canonicalized`), renames registered alias and
-inverse relations,
+`superseded`; an unknown optional enum is dropped, the ingest rule
+(`drop_uncoercible_optional` limited to enums), and an unknown required
+subtype is lowercased and kept, never replaced; both are counted in
+`RepairReport.facets_canonicalized`), renames registered alias and
+inverse relations, promotes each pending edge whose relation the registry
+now maps into `edges` through `canonicalize_edge` and `upsert_edge` (alias,
+inverse direction and alias facets as at ingest), deletes it from
+`pending_edges`, and counts it in `RepairReport.pending_edges_promoted`;
+still-unmapped pending rows stay. Repair never moves a legacy unmapped edge
+out of `edges`, and since `update_edge` refuses unmapped relations, a run that
+must rewrite one stops with `FacetSchemaError` and rolls back. It then
 merges the pairs of `approved` merge suggestions (never pending or rejected
 ones), and merges exact name or alias duplicates. It backfills edge `basis`
 first, because every edge rewrite must carry that required facet. Last, it
 runs the same facet migration a writable open runs
 (`OntologyDB.migrate_facets(registry)`): official facets are coerced to their
 registry kind where lossless, counted in `RepairReport.facets_migrated`, and
-the DB is stamped with the registry version. Repair's own writes go through the
+the DB is stamped with the registry's schema stamp. Repair's own writes go through the
 DB's checks, so a legacy node whose required facet is missing or outside the
 vocabulary stops the run with `FacetSchemaError`. Judgment calls are left to
 `audit`.

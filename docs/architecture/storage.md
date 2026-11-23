@@ -16,8 +16,11 @@ Pure definitions. Nothing here opens a connection.
 
 - `init_schema(conn, embedding_dim)` creates the tables and indexes:
   `nodes`, `edges`, `node_vectors` (a `vec0` virtual table, cosine distance),
-  `ingestion_log`, `db_metadata`, and `node_lookup` (casefolded names and
-  aliases, for exact-match resolution). It then adds columns that shipped
+  `ingestion_log`, `db_metadata`, `node_lookup` (casefolded names and
+  aliases, for exact-match resolution), and `pending_edges` (extracted edges
+  whose relation the registry does not map: from_id, to_id, the raw relation,
+  facets, source_doc_id, created_at; rows cascade when an endpoint node is
+  deleted, including the loser of a merge). It then adds columns that shipped
   later, listed in `_ADDED_COLUMNS` (`ingestion_log.size` and `mtime_ns`). It
   is idempotent, so old databases upgrade on open.
 - `row_to_node`, `row_to_edge`, `node_to_dict` map between SQLite rows and the
@@ -41,30 +44,39 @@ table, a new facet merge rule. A column added to an existing table goes in
   `node_lookup` if any node lacks rows there.
 - Facet schema: `upsert_node`, `upsert_edge` (both the insert and the merge
   path), and `update_edge` pass facets through `registry.check_facets` and
-  refuse a missing required facet or a wrong kind with `FacetSchemaError`;
+  refuse a missing required facet, a wrong kind or an enum outside its
+  vocabulary with `FacetSchemaError`. `upsert_node` also refuses a `name` or
+  `summary` over the registry's `metadata_max_length`, and `upsert_edge` and
+  `update_edge` refuse a relation the registry does not map;
   `upsert_consensus_view` writes through `upsert_node` and `upsert_edge`.
   `merge_node_into` writes no facets.
   Enforcement is on with the default registry too, so a DB opened without a
   registry enforces the shipped schema.
-- Registry version: `db_metadata` key `registry_version` records the registry
-  version the stored facets were migrated to. A writable open with an explicit
-  registry that declares a `facet_schema`, or `use_registry(registry)` on a
-  writable DB, runs `migrate_facets` when the stamp is missing or older: it coerces
-  stored official facets to their kind where lossless (`"630"` to `630`),
-  leaves values it cannot coerce as stored, and writes the stamp. A newer
-  stamp is left alone. Read-only opens never migrate or stamp. Opening
-  without an explicit registry enforces but never migrates or stamps.
+- Schema stamp: `db_metadata` key `registry_version` records the registry's
+  `schema_stamp()`, a hash of `facet_vocabularies`, `facet_schema` and
+  `metadata_max_length`, that the stored facets were migrated to. A writable
+  open with an explicit registry, or `use_registry(registry)` on a writable DB,
+  runs `migrate_facets` when the stamp is missing or differs (an older integer
+  stamp included): it coerces stored official facets to their kind where
+  lossless (`"630"` to `630`), leaves values it cannot coerce as stored, and
+  writes the stamp. A matching stamp skips the migration, so a schema edit
+  migrates without a `version` bump. Read-only opens never migrate or stamp.
+  Opening without an explicit registry enforces but never migrates or stamps.
 - Transactions: `transaction()` nests; only the outermost scope commits.
-- Writes: `upsert_node`, `upsert_edge` (relation through
-  `normalize_relation_name`), `upsert_consensus_view`,
-  `delete_document_artifacts`, `relink_document`, `replace_node_embeddings`,
+- Writes: `upsert_node`, `upsert_edge` (mapped relation stored through
+  `normalize_relation_name`), `insert_pending_edge` (an unmapped relation,
+  stored raw in `pending_edges`), `upsert_consensus_view`,
+  `delete_document_artifacts` (also clears that note's pending edges),
+  `relink_document`, `replace_node_embeddings`,
   `rebuild_node_lookup`, the `ingestion_log` methods, and `set_metadata`.
 - Repair writes: `update_edge` (also normalizes the relation), `merge_node_into` (returns the self-loops it
-  dropped), `delete_edges`, plus the
-  `list_artifact_doc_ids` and `count_document_artifacts` lookups.
+  dropped), `delete_edges`, `delete_pending_edges`, plus the
+  `list_artifact_doc_ids` (pending edges included) and `count_document_artifacts` lookups.
 - Lookups: `get_node`, `get_nodes`, `find_by_name_or_alias`,
   `find_nodes_mentioned_in`, `list_nodes`, `list_all_nodes`,
-  `get_incident_edges`, `list_edges_with_endpoints`, `get_entity_consensus`.
+  `get_incident_edges`, `list_edges_with_endpoints`,
+  `list_pending_edges_with_endpoints` (empty on an older read-only DB without
+  the table), `get_entity_consensus`.
 - Search: `vector_search` (sqlite-vec) and `keyword_search`. The web search
   page and the agent's `search_nodes` tool reach them through the shared
   search in [search.md](search.md).

@@ -20,6 +20,7 @@ from stock_ontology.llm import AgentTurn, ToolCall
 from stock_ontology.models import ConsensusSynthesis, Edge, ExtractionResult, Node
 from stock_ontology.registry import create_minimal_registry, save_registry
 from stock_ontology.web import create_app
+from test_db import insert_legacy_edge
 
 DIM = 16
 
@@ -290,7 +291,7 @@ def test_web_home_entity_theme_search_and_clippy_chat(tmp_path: Path) -> None:
     assert r_chat1.status_code == 200
     body1 = r_chat1.json()
     sid = body1["session_id"]
-    assert "buy" in body1["reply"].lower()
+    assert "bullish" in body1["reply"].lower()
     assert "user turns=1" in body1["reply"]
     assert body1["tools_used"] == ["get_entity_overview"]
 
@@ -561,7 +562,8 @@ def test_web_nav_and_advanced_search_filters(tmp_path: Path) -> None:
     assert "Modem Loss Rumor" in r_neg.text
     assert "Legacy Product Fact" not in r_neg.text
 
-    r_rumor = client.get("/search", params={"node_type": "view", "subtype": "rumor", "stance": "cautious"})
+    # The write boundary stored the `cautious` alias as its member, `bearish`.
+    r_rumor = client.get("/search", params={"node_type": "view", "subtype": "rumor", "stance": "bearish"})
     assert r_rumor.status_code == 200
     assert "Modem Loss Rumor" in r_rumor.text
     assert "In-House Modem Launch" not in r_rumor.text
@@ -849,7 +851,7 @@ def test_web_multilingual_pages_preserve_original_notes(tmp_path: Path, lang: st
     assert translate("home.product_desc", lang=lang) in home_text
     assert translate("rail.companies", lang=lang) in home_text
     assert translate("rail.themes", lang=lang) in home_text
-    assert "badge-buy" in r_home.text
+    assert "badge-bullish" in r_home.text
     assert "badge-accelerating" in r_home.text
     assert "NVIDIA" in r_home.text
 
@@ -1106,9 +1108,11 @@ def test_web_ontology_view_connected_to_registry_and_audit(tmp_path: Path) -> No
             Edge(id="ed5", from_id="ent_nvda", to_id="ent_kenji", relation="HAS_EMPLOYEE", facets={"basis": "extracted"}),
             Edge(id="ed6", from_id="ent_nvda", to_id="ent_kenji", relation="WORKS_AT", facets={"basis": "extracted"}),
             Edge(id="ed7", from_id="thm_power", to_id="ent_vrt", relation="BENEFITS_FROM", facets={"basis": "extracted"}),
-            Edge(id="ed8", from_id="ent_nvda", to_id="ent_blackwell", relation="PRODUCES", facets={"basis": "extracted"}),
         ):
             db.upsert_edge(edge)
+        insert_legacy_edge(
+            db, Edge(id="ed8", from_id="ent_nvda", to_id="ent_blackwell", relation="PRODUCES", facets={"basis": "extracted"})
+        )
 
     reg_path = tmp_path / "ontology_registry.json"
     reg = create_minimal_registry()
@@ -1654,13 +1658,13 @@ def test_entity_page_templates_only_see_presentation_models(tmp_path: Path) -> N
     fab = events.split('id="node-evt_old"', 1)[1].split("</tr>", 1)[0]
     assert "entity impact" not in fab
     views = text.split('id="sec-views"', 1)[1].split("</section>", 1)[0]
-    assert '<span class="badge badge-cautious">cautious</span>' in views
+    assert '<span class="badge badge-bearish">bearish</span>' in views
     assert '<span class="badge badge-negative">negative</span>' in views
     assert '<span class="badge badge-strong">strong</span>' in views
     assert "rumor" in views and "2026-11-12" in views
     assert "Conviction: medium" in views and "Author: Bo Kim" in views
     assert "Prior Superseded Consensus History (1)" in text
-    assert '<span class="badge">hold</span>' in text and "2026-09-01" in text
+    assert '<span class="badge">neutral</span>' in text and "2026-09-01" in text
     themes = text.split('id="sec-themes"', 1)[1].split("</section>", 1)[0]
     assert '<span class="badge badge-accelerating">accelerating</span>' in themes
     assert '<span class="badge badge-positive">positive</span>' in themes
@@ -1674,7 +1678,7 @@ def test_entity_page_templates_only_see_presentation_models(tmp_path: Path) -> N
     assert "Capex Raise" in t_events and '<span class="badge badge-positive">positive</span>' in t_events
     assert "Author: Ana Lee" in t_events
     t_views = theme_page.text.split('id="sec-views"', 1)[1].split("</section>", 1)[0]
-    assert "Pricing Rumor" in t_views and '<span class="badge badge-cautious">cautious</span>' in t_views
+    assert "Pricing Rumor" in t_views and '<span class="badge badge-bearish">bearish</span>' in t_views
 
     # 2. The view model hands templates presentation models only.
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
@@ -1944,7 +1948,7 @@ def test_theme_page_templates_only_see_presentation_models(tmp_path: Path) -> No
     first = text.split('aria-label="Affected Companies"', 1)[1].split("</section>", 1)[0]
     assert '<a href="/entity/ent_tsmc"><strong>TSMC</strong></a>' in first
     assert '<span class="mono">(TSM)</span>' in first
-    assert '<span class="badge badge-buy">buy</span>' in first
+    assert '<span class="badge badge-bullish">bullish</span>' in first
     direct = first.split("exposed to", 1)[1].split("</li>", 1)[0]
     assert '<span class="badge badge-positive">positive</span>' in direct
     assert '<span class="source-cite">(direct)</span>' in direct

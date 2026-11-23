@@ -306,7 +306,7 @@ def test_upsert_edge_and_update_edge_store_normalize_relation_name_output(tmp_pa
         db.upsert_node(_plain_entity("ent_j", "Jane", "person"), embedding=_embed("j"))
 
         db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation=" supplies--to ", source_doc_id=None, facets={"basis": "extracted"}))
-        db.upsert_edge(Edge(id="e2", from_id="ent_j", to_id="ent_a", relation="placeholder", source_doc_id=None, facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="e2", from_id="ent_j", to_id="ent_a", relation="compete", source_doc_id=None, facets={"basis": "extracted"}))
         db.update_edge("e2", relation="works-at", from_id="ent_j", to_id="ent_a", facets={"basis": "extracted"})
 
         stored = {
@@ -405,16 +405,19 @@ def test_repair_canonicalizes_legacy_enum_facets_and_is_idempotent(tmp_path: Pat
         assert second.total_changes == 0
 
 
-def test_repair_lowercases_but_keeps_out_of_vocabulary_value_and_audit_reports_it(tmp_path: Path) -> None:
+def test_repair_drops_out_of_vocabulary_optional_enum_that_audit_reported(tmp_path: Path) -> None:
     with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
         _seed_legacy(db)
+        before = run_ontology_audit(db, create_minimal_registry()).model_dump_json()
+        assert "moonshot" in before.casefold()
         repair_ontology(db, create_minimal_registry())
         odd = db.get_node("vw_odd")
         assert odd is not None
-        # Repair never maps an unknown legacy value to the ingest fallback.
-        assert odd.facets["stance"] == "moonshot"
+        # The ingest rule: an optional enum outside its vocabulary is dropped, never mapped to a fallback.
+        assert "stance" not in odd.facets
+        assert odd.facets["view_type"] == "pm_view" and odd.facets["sentiment"] == "neutral"
         audit_dump = run_ontology_audit(db, create_minimal_registry()).model_dump_json()
-        assert "moonshot" in audit_dump.casefold()
+        assert "moonshot" not in audit_dump.casefold()
 
 
 # ---------------------------------------------------------------------------

@@ -225,7 +225,7 @@ def test_clippy_dock_chat_round_trip_uses_existing_backend(client: TestClient) -
     r1 = client.post("/api/chat", json={"message": "Check NVDA", "page_context": "Entity NVIDIA"})
     assert r1.status_code == 200
     sid = r1.json()["session_id"]
-    assert "buy" in r1.json()["reply"].lower()
+    assert "bullish" in r1.json()["reply"].lower()
     assert client.post("/api/chat/reset", json={"session_id": sid}).status_code == 200
     r2 = client.post("/api/chat", json={"session_id": sid, "message": "Again"})
     assert "user turns=1" in r2.json()["reply"]
