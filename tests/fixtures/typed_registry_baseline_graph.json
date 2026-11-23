@@ -1,0 +1,475 @@
+{
+ "nodes": [
+  [
+   "entity:Eaton",
+   {
+    "entity_type": "company",
+    "ticker": "ETN"
+   }
+  ],
+  [
+   "entity:Kenji Sato",
+   {
+    "credibility": "high",
+    "entity_type": "person",
+    "role": "supply_chain_engineer"
+   }
+  ],
+  [
+   "entity:Legacy AirCool Corp",
+   {
+    "entity_type": "company",
+    "ticker": "AIRC"
+   }
+  ],
+  [
+   "entity:NVIDIA",
+   {
+    "entity_type": "company",
+    "sector": "Semis",
+    "ticker": "NVDA"
+   }
+  ],
+  [
+   "entity:TSMC",
+   {
+    "entity_type": "company",
+    "ticker": "TSM"
+   }
+  ],
+  [
+   "entity:Vertiv",
+   {
+    "entity_type": "company",
+    "ticker": "VRT"
+   }
+  ],
+  [
+   "event:AI Cluster Shift to Power-Bound",
+   {
+    "event_date": "2026-11-14",
+    "event_type": "news",
+    "sentiment": "neutral",
+    "source": {
+     "file_path": "_general/2026-11-14_ai_power_bottleneck.md",
+     "folder": "_general"
+    },
+    "status": "occurred"
+   }
+  ],
+  [
+   "event:Blackwell NVL72 Q4 Ramp",
+   {
+    "event_date": "2026-10-15",
+    "event_type": "fact",
+    "sentiment": "neutral",
+    "source": {
+     "file_path": "NVDA/2026-10-15_q3_preview.md",
+     "folder": "NVDA",
+     "kind": "analyst_report"
+    },
+    "source_kind": "analyst_report",
+    "status": "occurred"
+   }
+  ],
+  [
+   "event:GB200 Rack Thermal Call",
+   {
+    "event_date": "2026-11-10",
+    "event_type": "meeting",
+    "sentiment": "neutral",
+    "source": {
+     "file_path": "NVDA/2026-11-10_supply_chain_call.md",
+     "folder": "NVDA",
+     "kind": "meeting_note"
+    },
+    "source_kind": "meeting_note",
+    "status": "occurred"
+   }
+  ],
+  [
+   "event:TSMC Doubling CoWoS Capacity",
+   {
+    "event_date": "2026-11-05",
+    "event_type": "fact",
+    "sentiment": "neutral",
+    "source": {
+     "file_path": "TSMC/2026-11-05_cowos_capacity_note.md",
+     "folder": "TSMC"
+    },
+    "status": "occurred"
+   }
+  ],
+  [
+   "event:Vertiv Orders +37% YoY",
+   {
+    "event_date": "2026-11-12",
+    "event_type": "fact",
+    "sentiment": "neutral",
+    "source": {
+     "file_path": "VRT/2026-11-12_liquid_cooling_brief.md",
+     "folder": "VRT"
+    },
+    "status": "occurred"
+   }
+  ],
+  [
+   "theme:AI Data Center Power Bottleneck",
+   {
+    "stage": "accelerating"
+   }
+  ],
+  [
+   "view:Colo Substation Delay Rumor",
+   {
+    "as_of": "2026-11-10",
+    "conviction": "low",
+    "sentiment": "negative",
+    "source": {
+     "file_path": "NVDA/2026-11-10_supply_chain_call.md",
+     "folder": "NVDA"
+    },
+    "stance": "bearish",
+    "support_strength": "weak",
+    "view_type": "rumor"
+   }
+  ],
+  [
+   "view:Consensus: Bullish NVIDIA",
+   {
+    "as_of": "2026-11-23",
+    "conviction": "high",
+    "pillars": [
+     "NVIDIA core demand remains durable",
+     "Execution & supply/power pacing stays on track"
+    ],
+    "sentiment": "positive",
+    "stance": "bullish",
+    "status": "active",
+    "support_strength": "strong",
+    "synthesized_from_count": 4,
+    "view_type": "consensus"
+   }
+  ],
+  [
+   "view:Consensus: Bullish TSMC",
+   {
+    "as_of": "2026-11-23",
+    "conviction": "high",
+    "pillars": [
+     "TSMC core demand remains durable",
+     "Execution & supply/power pacing stays on track"
+    ],
+    "sentiment": "positive",
+    "stance": "bullish",
+    "status": "active",
+    "support_strength": "strong",
+    "synthesized_from_count": 2,
+    "view_type": "consensus"
+   }
+  ],
+  [
+   "view:Consensus: Bullish Vertiv",
+   {
+    "as_of": "2026-11-23",
+    "conviction": "high",
+    "pillars": [
+     "Vertiv core demand remains durable",
+     "Execution & supply/power pacing stays on track"
+    ],
+    "sentiment": "positive",
+    "stance": "bullish",
+    "status": "active",
+    "support_strength": "strong",
+    "synthesized_from_count": 2,
+    "view_type": "consensus"
+   }
+  ],
+  [
+   "view:Industrial Desk: Buy Vertiv",
+   {
+    "as_of": "2026-11-12",
+    "conviction": "high",
+    "sentiment": "positive",
+    "source": {
+     "file_path": "VRT/2026-11-12_liquid_cooling_brief.md",
+     "folder": "VRT"
+    },
+    "stance": "bullish",
+    "support_strength": "strong",
+    "view_type": "analyst_report"
+   }
+  ],
+  [
+   "view:Internal Desk: Bullish TSMC",
+   {
+    "as_of": "2026-11-05",
+    "conviction": "high",
+    "sentiment": "positive",
+    "source": {
+     "file_path": "TSMC/2026-11-05_cowos_capacity_note.md",
+     "folder": "TSMC"
+    },
+    "stance": "bullish",
+    "support_strength": "strong",
+    "view_type": "pm_view"
+   }
+  ],
+  [
+   "view:Morgan Tech: Buy NVDA",
+   {
+    "as_of": "2026-10-15",
+    "author": "Morgan Tech Research",
+    "conviction": "high",
+    "sentiment": "positive",
+    "source": {
+     "author": "Morgan Tech Research",
+     "file_path": "NVDA/2026-10-15_q3_preview.md",
+     "folder": "NVDA"
+    },
+    "stance": "bullish",
+    "support_strength": "strong",
+    "view_type": "analyst_report"
+   }
+  ]
+ ],
+ "edges": [
+  [
+   "entity:Eaton",
+   "theme:AI Data Center Power Bottleneck",
+   "EXPOSED_TO",
+   {
+    "basis": "extracted",
+    "sentiment": "positive"
+   }
+  ],
+  [
+   "entity:Legacy AirCool Corp",
+   "theme:AI Data Center Power Bottleneck",
+   "EXPOSED_TO",
+   {
+    "basis": "extracted",
+    "sentiment": "negative"
+   }
+  ],
+  [
+   "entity:NVIDIA",
+   "entity:TSMC",
+   "BUY",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "entity:NVIDIA",
+   "entity:TSMC",
+   "BUY",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "entity:NVIDIA",
+   "theme:AI Data Center Power Bottleneck",
+   "EXPOSED_TO",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "entity:Vertiv",
+   "theme:AI Data Center Power Bottleneck",
+   "EXPOSED_TO",
+   {
+    "basis": "extracted",
+    "sentiment": "positive"
+   }
+  ],
+  [
+   "entity:Vertiv",
+   "theme:AI Data Center Power Bottleneck",
+   "EXPOSED_TO",
+   {
+    "basis": "extracted",
+    "sentiment": "positive"
+   }
+  ],
+  [
+   "entity:Vertiv",
+   "theme:AI Data Center Power Bottleneck",
+   "EXPOSED_TO",
+   {
+    "basis": "extracted",
+    "sentiment": "positive"
+   }
+  ],
+  [
+   "event:AI Cluster Shift to Power-Bound",
+   "theme:AI Data Center Power Bottleneck",
+   "RELATES_TO",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "event:Blackwell NVL72 Q4 Ramp",
+   "entity:NVIDIA",
+   "ABOUT",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "event:Blackwell NVL72 Q4 Ramp",
+   "view:Consensus: Bullish NVIDIA",
+   "SUPPORTS",
+   {
+    "basis": "synthesized",
+    "consensus_evidence": true
+   }
+  ],
+  [
+   "event:Blackwell NVL72 Q4 Ramp",
+   "view:Morgan Tech: Buy NVDA",
+   "SUPPORTS",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "event:GB200 Rack Thermal Call",
+   "entity:Kenji Sato",
+   "AUTHORED_BY",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "event:GB200 Rack Thermal Call",
+   "entity:NVIDIA",
+   "ABOUT",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "event:GB200 Rack Thermal Call",
+   "theme:AI Data Center Power Bottleneck",
+   "RELATES_TO",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "event:GB200 Rack Thermal Call",
+   "view:Consensus: Bullish NVIDIA",
+   "SUPPORTS",
+   {
+    "basis": "synthesized",
+    "consensus_evidence": true
+   }
+  ],
+  [
+   "event:TSMC Doubling CoWoS Capacity",
+   "entity:TSMC",
+   "ABOUT",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "event:TSMC Doubling CoWoS Capacity",
+   "view:Consensus: Bullish TSMC",
+   "SUPPORTS",
+   {
+    "basis": "synthesized",
+    "consensus_evidence": true
+   }
+  ],
+  [
+   "event:Vertiv Orders +37% YoY",
+   "entity:Vertiv",
+   "ABOUT",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "event:Vertiv Orders +37% YoY",
+   "view:Consensus: Bullish Vertiv",
+   "SUPPORTS",
+   {
+    "basis": "synthesized",
+    "consensus_evidence": true
+   }
+  ],
+  [
+   "view:Colo Substation Delay Rumor",
+   "entity:NVIDIA",
+   "ABOUT",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "view:Colo Substation Delay Rumor",
+   "view:Consensus: Bullish NVIDIA",
+   "CONTRADICTS",
+   {
+    "basis": "synthesized",
+    "consensus_evidence": true
+   }
+  ],
+  [
+   "view:Consensus: Bullish NVIDIA",
+   "entity:NVIDIA",
+   "ABOUT",
+   {
+    "basis": "synthesized",
+    "consensus_link": true
+   }
+  ],
+  [
+   "view:Consensus: Bullish TSMC",
+   "entity:TSMC",
+   "ABOUT",
+   {
+    "basis": "synthesized",
+    "consensus_link": true
+   }
+  ],
+  [
+   "view:Consensus: Bullish Vertiv",
+   "entity:Vertiv",
+   "ABOUT",
+   {
+    "basis": "synthesized",
+    "consensus_link": true
+   }
+  ],
+  [
+   "view:Industrial Desk: Buy Vertiv",
+   "entity:Vertiv",
+   "ABOUT",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "view:Internal Desk: Bullish TSMC",
+   "entity:TSMC",
+   "ABOUT",
+   {
+    "basis": "extracted"
+   }
+  ],
+  [
+   "view:Morgan Tech: Buy NVDA",
+   "entity:NVIDIA",
+   "ABOUT",
+   {
+    "basis": "extracted"
+   }
+  ]
+ ]
+}

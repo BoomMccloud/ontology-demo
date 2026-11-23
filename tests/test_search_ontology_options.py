@@ -11,7 +11,7 @@ import pytest
 from stock_ontology.config import Settings
 from stock_ontology.db import OntologyDB
 from stock_ontology.models import Edge, Node
-from stock_ontology.registry import load_registry
+from stock_ontology.registry import create_minimal_registry, load_registry
 from stock_ontology.search import NODE_TYPES, SearchFilters, search_ontology
 from stock_ontology.vocab import (
     CONVICTION,
@@ -103,15 +103,18 @@ def _seed(db_path: Path) -> None:
         Node(id="thm_acc", node_type="theme", name="Accelerating Stage Theme", summary="", facets={"stage": "accelerating"}),
     ]
     edges = [
-        Edge(id="e_up", from_id="evt_up", to_id="ent_aapl", relation="ABOUT"),
-        Edge(id="e_weak", from_id="vw_weak", to_id="ent_aapl", relation="ABOUT"),
-        Edge(id="e_occ_q", from_id="evt_occ", to_id="ent_qcom", relation="ABOUT"),
-        Edge(id="e_occ_a", from_id="evt_occ", to_id="ent_aapl", relation="RELATES_TO"),
-        Edge(id="e_strong", from_id="vw_strong", to_id="ent_aapl", relation="SUPPORTS"),
-        Edge(id="e_off", from_id="vw_cons", to_id="ent_qcom", relation="FROBNICATES"),
-        Edge(id="e_thm", from_id="ent_aapl", to_id="thm_acc", relation="EXPOSED_TO"),
+        Edge(id="e_up", from_id="evt_up", to_id="ent_aapl", relation="ABOUT", facets={"basis": "extracted"}),
+        Edge(id="e_weak", from_id="vw_weak", to_id="ent_aapl", relation="ABOUT", facets={"basis": "extracted"}),
+        Edge(id="e_occ_q", from_id="evt_occ", to_id="ent_qcom", relation="ABOUT", facets={"basis": "extracted"}),
+        Edge(id="e_occ_a", from_id="evt_occ", to_id="ent_aapl", relation="RELATES_TO", facets={"basis": "extracted"}),
+        Edge(id="e_strong", from_id="vw_strong", to_id="ent_aapl", relation="SUPPORTS", facets={"basis": "extracted"}),
+        Edge(id="e_off", from_id="vw_cons", to_id="ent_qcom", relation="FROBNICATES", facets={"basis": "extracted"}),
+        Edge(id="e_thm", from_id="ent_aapl", to_id="thm_acc", relation="EXPOSED_TO", facets={"basis": "extracted"}),
     ]
-    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+    # `evt_off` is a legacy row whose `event_type` is outside the vocabulary, so it is written
+    # under a registry that declares no facet schema, as rows were before it existed.
+    legacy = create_minimal_registry().model_copy(update={"facet_schema": {}})
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False, registry=legacy) as db:
         for idx, node in enumerate(nodes):
             db.upsert_node(node, embedding=_unit_vec(idx))
         for edge in edges:

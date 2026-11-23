@@ -194,14 +194,16 @@ def test_ingest_stores_mixed_case_and_alias_enum_values_canonically(tmp_path: Pa
 def test_ingest_stores_field_fallback_for_out_of_vocabulary_values(tmp_path: Path) -> None:
     extraction = ExtractionResult(
         entities=[
-            ExtractedEntity(temp_id="e_acme", name="Acme Robotics", summary="Robots.", entity_type="Spaceship"),
+            # Required subtypes must be members (an unknown one regenerates the extraction);
+            # the fallback rule below applies to the optional enums.
+            ExtractedEntity(temp_id="e_acme", name="Acme Robotics", summary="Robots.", entity_type="company"),
         ],
         events=[
             ExtractedEvent(
                 temp_id="ev1",
                 name="Acme Gossip",
                 summary="Hallway gossip.",
-                event_type="Gossip",
+                event_type="fact",
                 event_date="2026-11-21",
                 status="Maybe",
                 sentiment="Ecstatic",
@@ -212,7 +214,7 @@ def test_ingest_stores_field_fallback_for_out_of_vocabulary_values(tmp_path: Pat
                 temp_id="vw1",
                 name="Acme Hunch",
                 summary="A hunch.",
-                view_type="Hunch",
+                view_type="analyst_report",
                 stance="Moonshot",
                 sentiment="Ecstatic",
                 support_strength="Huge",
@@ -229,7 +231,7 @@ def test_ingest_stores_field_fallback_for_out_of_vocabulary_values(tmp_path: Pat
                 as_of="2026-11-21",
             ),
         ],
-        themes=[ExtractedTheme(temp_id="t1", name="Warehouse Automation", summary="Robots.", stage="Zombie")],
+        themes=[ExtractedTheme(temp_id="t1", name="Warehouse Automation", summary="Robots.", stage="accelerating")],
         edges=[
             ExtractedEdge(from_ref="ev1", to_ref="e_acme", relation="ABOUT"),
             ExtractedEdge(from_ref="vw1", to_ref="e_acme", relation="ABOUT"),
@@ -303,9 +305,9 @@ def test_upsert_edge_and_update_edge_store_normalize_relation_name_output(tmp_pa
         db.upsert_node(_plain_entity("ent_b", "Beta"), embedding=_embed("b"))
         db.upsert_node(_plain_entity("ent_j", "Jane", "person"), embedding=_embed("j"))
 
-        db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation=" supplies--to ", source_doc_id=None))
-        db.upsert_edge(Edge(id="e2", from_id="ent_j", to_id="ent_a", relation="placeholder", source_doc_id=None))
-        db.update_edge("e2", relation="works-at", from_id="ent_j", to_id="ent_a", facets={})
+        db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation=" supplies--to ", source_doc_id=None, facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="e2", from_id="ent_j", to_id="ent_a", relation="placeholder", source_doc_id=None, facets={"basis": "extracted"}))
+        db.update_edge("e2", relation="works-at", from_id="ent_j", to_id="ent_a", facets={"basis": "extracted"})
 
         stored = {
             str(r["id"]): str(r["relation"])
@@ -334,16 +336,17 @@ def _force_edge_facets(db: OntologyDB, edge_id: str, facets: dict[str, Any]) -> 
 def _seed_legacy(db: OntologyDB) -> None:
     db.upsert_ingestion_log("notes/legacy.md", "doc_legacy", "hash_legacy", datetime.now(UTC).isoformat())
     nodes = [
-        Node(id="ent_acme", node_type="entity", name="Acme Robotics", summary="Robots."),
-        Node(id="evt_1", node_type="event", name="Acme Rumor", summary="Rumor.", source_doc_id="doc_legacy"),
-        Node(id="vw_1", node_type="view", name="Acme Desk View", summary="Desk.", source_doc_id="doc_legacy"),
-        Node(id="vw_cons_acme", node_type="view", name="Consensus: Buy Acme", summary="Consensus."),
-        Node(id="thm_1", node_type="theme", name="Warehouse Automation", summary="Robots."),
-        Node(id="vw_odd", node_type="view", name="Acme Odd View", summary="Odd.", source_doc_id="doc_legacy"),
+        # Written conforming, then overwritten below with legacy facets by raw SQL.
+        Node(id="ent_acme", node_type="entity", name="Acme Robotics", summary="Robots.", facets={"entity_type": "company"}),
+        Node(id="evt_1", node_type="event", name="Acme Rumor", summary="Rumor.", source_doc_id="doc_legacy", facets={"event_type": "news"}),
+        Node(id="vw_1", node_type="view", name="Acme Desk View", summary="Desk.", source_doc_id="doc_legacy", facets={"view_type": "pm_view"}),
+        Node(id="vw_cons_acme", node_type="view", name="Consensus: Buy Acme", summary="Consensus.", facets={"view_type": "consensus"}),
+        Node(id="thm_1", node_type="theme", name="Warehouse Automation", summary="Robots.", facets={"stage": "emerging"}),
+        Node(id="vw_odd", node_type="view", name="Acme Odd View", summary="Odd.", source_doc_id="doc_legacy", facets={"view_type": "pm_view"}),
     ]
     for i, node in enumerate(nodes):
         db.upsert_node(node, embedding=_embed(str(i)))
-    db.upsert_edge(Edge(id="e_about", from_id="evt_1", to_id="ent_acme", relation="ABOUT", source_doc_id="doc_legacy"))
+    db.upsert_edge(Edge(id="e_about", from_id="evt_1", to_id="ent_acme", relation="ABOUT", source_doc_id="doc_legacy", facets={"basis": "extracted"}))
     _force_facets(db, "ent_acme", {"entity_type": "Company", "ticker": "ACME"})
     _force_facets(db, "evt_1", {"event_type": "News", "status": "Rumored", "sentiment": "Negative"})
     _force_facets(
@@ -444,7 +447,9 @@ def _seed_signals(db: OntologyDB) -> None:
         ("vw_cc", {}),
     ]
     for nid, facets in edges:
-        db.upsert_edge(Edge(id=f"e_{nid}", from_id=nid, to_id="ent_acme", relation="ABOUT", facets=facets))
+        db.upsert_edge(
+            Edge(id=f"e_{nid}", from_id=nid, to_id="ent_acme", relation="ABOUT", facets={**facets, "basis": "extracted"})
+        )
 
 
 def test_agent_and_web_signal_filters_return_identical_items(tmp_path: Path) -> None:

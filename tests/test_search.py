@@ -115,11 +115,11 @@ def _seed(db_path: Path) -> None:
         db.upsert_node(q3, embedding=_unit_vec(4))
         db.upsert_node(q1, embedding=_unit_vec(5))
         db.upsert_node(far, embedding=_unit_vec(0))
-        db.upsert_edge(Edge(id="e1", from_id="ent_nvda", to_id="thm_power", relation="EXPOSED_TO"))
+        db.upsert_edge(Edge(id="e1", from_id="ent_nvda", to_id="thm_power", relation="EXPOSED_TO", facets={"basis": "extracted"}))
         # Raw alias of a registry relation, stored the way older ingests left it.
-        db.upsert_edge(Edge(id="e2", from_id="ent_tsmc", to_id="ent_nvda", relation="supplies to"))
-        db.upsert_edge(Edge(id="e3", from_id="evt_q3", to_id="ent_nvda", relation="ABOUT"))
-        db.upsert_edge(Edge(id="e4", from_id="evt_q1", to_id="ent_nvda", relation="ABOUT"))
+        db.upsert_edge(Edge(id="e2", from_id="ent_tsmc", to_id="ent_nvda", relation="supplies to", facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="e3", from_id="evt_q3", to_id="ent_nvda", relation="ABOUT", facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="e4", from_id="evt_q1", to_id="ent_nvda", relation="ABOUT", facets={"basis": "extracted"}))
 
 
 def _run(tmp_path: Path, query: str, **kwargs: Any) -> Any:
@@ -323,12 +323,13 @@ def test_get_relation_node_ids_keeps_every_relation_per_neighbor(tmp_path: Path)
         for idx, (nid, nt) in enumerate(
             [("ent_a", "entity"), ("ent_b", "entity"), ("evt_1", "event"), ("evt_2", "event")]
         ):
-            db.upsert_node(Node(id=nid, node_type=nt, name=nid, summary=""), embedding=_unit_vec(idx))
+            subtype = {"entity_type": "company"} if nt == "entity" else {"event_type": "news"}
+            db.upsert_node(Node(id=nid, node_type=nt, name=nid, summary="", facets=subtype), embedding=_unit_vec(idx))
         # evt_1 has two edges to ent_a; the best-edge collapse in get_entity_connected_nodes keeps one.
-        db.upsert_edge(Edge(id="e1", from_id="evt_1", to_id="ent_a", relation="ABOUT"))
-        db.upsert_edge(Edge(id="e2", from_id="evt_1", to_id="ent_a", relation="RELATES_TO"))
-        db.upsert_edge(Edge(id="e3", from_id="evt_2", to_id="ent_b", relation="ABOUT"))
-        db.upsert_edge(Edge(id="e4", from_id="ent_a", to_id="evt_2", relation="RELATES_TO"))
+        db.upsert_edge(Edge(id="e1", from_id="evt_1", to_id="ent_a", relation="ABOUT", facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="e2", from_id="evt_1", to_id="ent_a", relation="RELATES_TO", facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="e3", from_id="evt_2", to_id="ent_b", relation="ABOUT", facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="e4", from_id="ent_a", to_id="evt_2", relation="RELATES_TO", facets={"basis": "extracted"}))
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
         assert db.get_relation_node_ids("ABOUT") == {"evt_1", "evt_2", "ent_a", "ent_b"}

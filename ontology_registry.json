@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "relations": [
     {
       "name": "ABOUT",
@@ -455,6 +455,84 @@
         },
         "aliases": {},
         "fallback": null
+      }
+    }
+  },
+  "facet_schema": {
+    "node": {
+      "entity": {
+        "entity_type": {
+          "kind": "enum",
+          "required": true
+        }
+      },
+      "event": {
+        "event_type": {
+          "kind": "enum",
+          "required": true
+        },
+        "status": {
+          "kind": "enum",
+          "required": false
+        },
+        "sentiment": {
+          "kind": "enum",
+          "required": false
+        },
+        "event_date": {
+          "kind": "date",
+          "required": false
+        }
+      },
+      "view": {
+        "view_type": {
+          "kind": "enum",
+          "required": true
+        },
+        "status": {
+          "kind": "enum",
+          "required": false
+        },
+        "stance": {
+          "kind": "enum",
+          "required": false
+        },
+        "sentiment": {
+          "kind": "enum",
+          "required": false
+        },
+        "support_strength": {
+          "kind": "enum",
+          "required": false
+        },
+        "conviction": {
+          "kind": "enum",
+          "required": false
+        },
+        "as_of": {
+          "kind": "date",
+          "required": false
+        },
+        "target_price": {
+          "kind": "number",
+          "required": false
+        }
+      },
+      "theme": {
+        "stage": {
+          "kind": "enum",
+          "required": true
+        }
+      }
+    },
+    "edge": {
+      "sentiment": {
+        "kind": "enum",
+        "required": false
+      },
+      "basis": {
+        "kind": "enum",
+        "required": true
       }
     }
   },

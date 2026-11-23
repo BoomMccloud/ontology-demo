@@ -45,11 +45,13 @@ def _entity(node_id: str, name: str, entity_type: str, aliases: list[str] | None
 
 
 def _event(node_id: str, name: str, doc_id: str) -> Node:
-    return Node(id=node_id, node_type="event", name=name, summary=f"{name}.", source_doc_id=doc_id)
+    return Node(
+        id=node_id, node_type="event", name=name, summary=f"{name}.", source_doc_id=doc_id, facets={"event_type": "news"}
+    )
 
 
 def _edge(edge_id: str, from_id: str, relation: str, to_id: str, doc_id: str | None) -> Edge:
-    return Edge(id=edge_id, from_id=from_id, to_id=to_id, relation=relation, source_doc_id=doc_id)
+    return Edge(id=edge_id, from_id=from_id, to_id=to_id, relation=relation, source_doc_id=doc_id, facets={"basis": "extracted"})
 
 
 def _seed(db: OntologyDB) -> None:
@@ -359,7 +361,7 @@ def test_repair_backfills_edge_basis_and_is_idempotent(tmp_path: Path) -> None:
                 from_id="vw_bear",
                 to_id="ent_acme",
                 relation="ABOUT",
-                facets={"role": "subject", "confidence": "high"},
+                facets={"role": "subject", "confidence": "high", "basis": "extracted"},
                 source_doc_id="doc_live",
             )
         )
@@ -396,3 +398,36 @@ def test_repair_backfills_edge_basis_and_is_idempotent(tmp_path: Path) -> None:
         second = repair_ontology(db, registry)
         assert second.total_changes == 0
         assert _snapshot(db) == before
+
+
+# ---------------------------------------------------------------------------
+# typed-registry-schema: repair runs the facet migration and stamps the version
+# ---------------------------------------------------------------------------
+
+
+def test_repair_migrates_facet_kinds_and_stamps_registry_version(tmp_path: Path) -> None:
+    import json
+
+    from stock_ontology.registry import load_registry
+
+    repair_ontology = _load_repair_ontology()
+    reg = load_registry(Path(__file__).resolve().parents[1] / "ontology_registry.json")
+    # Opened without a registry, as the CLI does: nothing is migrated or stamped on open.
+    with OntologyDB(tmp_path / "repair.db", embedding_dim=DIM) as db:
+        db.conn.execute(
+            "INSERT INTO nodes (id, node_type, name, summary, facets_json, created_at, updated_at) "
+            "VALUES ('vw', 'view', 'v', 'v', ?, '2026-01-01', '2026-01-01')",
+            (json.dumps({"view_type": "rumor", "target_price": " 630 "}),),
+        )
+        db.conn.commit()
+        assert db.get_metadata("registry_version") is None
+
+        report = repair_ontology(db, reg)
+        assert report.facets_migrated == 1
+        assert report.total_changes == 1
+        row = db.conn.execute("SELECT facets_json FROM nodes WHERE id = 'vw'").fetchone()
+        assert json.loads(row[0])["target_price"] == 630
+        assert db.get_metadata("registry_version") == str(reg.version)
+
+        again = repair_ontology(db, reg)
+        assert again.facets_migrated == 0 and again.total_changes == 0

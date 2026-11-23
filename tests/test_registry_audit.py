@@ -241,50 +241,50 @@ def _seed_audit_db(db_path: Path) -> None:
                 from_id="evt_legacy",
                 to_id="ent_nvda",
                 relation="ABOUT",
-                source_doc_id="doc_1",
+                source_doc_id="doc_1", facets={"basis": "extracted"},
             ),
             Edge(
                 id="ed_about_2",
                 from_id="evt_new",
                 to_id="ent_amd",
                 relation="ABOUT",
-                source_doc_id="doc_1",
+                source_doc_id="doc_1", facets={"basis": "extracted"},
             ),
             Edge(
                 id="ed_partner",
                 from_id="ent_vrt",
                 to_id="ent_nvda",
-                relation="COMPETES_WITH",
+                relation="COMPETES_WITH", facets={"basis": "extracted"},
             ),
             Edge(
                 id="ed_has_emp",
                 from_id="ent_nvda",
                 to_id="ent_kenji",
-                relation="HAS_EMPLOYEE",
+                relation="HAS_EMPLOYEE", facets={"basis": "extracted"},
             ),
             Edge(
                 id="ed_works_rev",
                 from_id="ent_nvda",
                 to_id="ent_kenji",
-                relation="WORKS_AT",
+                relation="WORKS_AT", facets={"basis": "extracted"},
             ),
             Edge(
                 id="ed_ben_rev",
                 from_id="thm_div",
                 to_id="ent_vrt",
-                relation="BENEFITS_FROM",
+                relation="BENEFITS_FROM", facets={"basis": "extracted"},
             ),
             Edge(
                 id="ed_produces",
                 from_id="ent_nvda",
                 to_id="ent_blackwell",
-                relation="PRODUCES",
+                relation="PRODUCES", facets={"basis": "extracted"},
             ),
             Edge(
                 id="ed_thm_co",
                 from_id="ent_aapl",
                 to_id="thm_hedge",
-                relation="EXPOSED_TO",
+                relation="EXPOSED_TO", facets={"basis": "extracted"},
             ),
         ]
         for edge in edges:
@@ -525,8 +525,8 @@ def test_audit_detects_owns_reciprocal_contradiction(tmp_path: Path) -> None:
             Node(id="ent_b", node_type="entity", name="Beta", summary="b", facets={"entity_type": "company"}),
             embedding=_unit_vec(1),
         )
-        db.upsert_edge(Edge(id="ed_1", from_id="ent_a", to_id="ent_b", relation="OWNS", source_doc_id="doc_1"))
-        db.upsert_edge(Edge(id="ed_2", from_id="ent_b", to_id="ent_a", relation="OWNS", source_doc_id="doc_2"))
+        db.upsert_edge(Edge(id="ed_1", from_id="ent_a", to_id="ent_b", relation="OWNS", source_doc_id="doc_1", facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="ed_2", from_id="ent_b", to_id="ent_a", relation="OWNS", source_doc_id="doc_2", facets={"basis": "extracted"}))
 
     reg = create_minimal_registry()
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True, registry=reg) as ro_db:

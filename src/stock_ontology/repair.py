@@ -14,7 +14,7 @@ from typing import Any
 from stock_ontology.db import OntologyDB, merge_edge_facets
 from stock_ontology.models import Node
 from stock_ontology.registry import OntologyRegistry, normalize_name_key
-from stock_ontology.vocab import canonicalize_edge_facets, canonicalize_node_facets
+from stock_ontology.vocab import VIEW_TYPE, canonicalize_edge_facets, canonicalize_node_facets
 
 
 @dataclass
@@ -29,6 +29,8 @@ class RepairReport:
     duplicate_edges_deleted: int = 0
     # Edges that had no `basis` and got one: `synthesized` if they touch a consensus view.
     edge_basis_backfilled: int = 0
+    # Nodes and edges whose official facets were coerced to their registry kind (`"630"` -> 630).
+    facets_migrated: int = 0
     nodes_merged: int = 0
     self_loops_deleted: int = 0
     # Registry merge suggestions a human approved and repair applied (`suggestions.merges`).
@@ -45,6 +47,7 @@ class RepairReport:
             + self.edges_canonicalized
             + self.duplicate_edges_deleted
             + self.edge_basis_backfilled
+            + self.facets_migrated
             + self.nodes_merged
             + self.self_loops_deleted
         )
@@ -58,12 +61,15 @@ def repair_ontology(db: OntologyDB, registry: OntologyRegistry) -> RepairReport:
     report = RepairReport()
     with db.transaction():
         _delete_orphan_artifacts(db, report)
+        # Before canonicalizing: an edge rewrite has to carry the required `basis`.
+        _backfill_edge_basis(db, report)
         _canonicalize_facets(db, report)
         _apply_approved_merges(db, registry, report)
         _merge_exact_duplicates(db, report)
         _canonicalize_relations(db, registry, report)
         _delete_duplicate_edges(db, report)
-        _backfill_edge_basis(db, report)
+        # The same migration a writable open runs when the DB is stamped older; it also stamps.
+        report.facets_migrated = db.migrate_facets(registry)
     return report
 
 
@@ -101,7 +107,9 @@ def _canonicalize_facets(db: OntologyDB, report: RepairReport) -> None:
 def _backfill_edge_basis(db: OntologyDB, report: RepairReport) -> None:
     """Give every edge without `basis` one: `synthesized` when either end is a consensus view."""
     consensus_ids = {
-        n.id for n in db.list_all_nodes() if n.node_type == "view" and n.facets.get("view_type") == "consensus"
+        n.id
+        for n in db.list_all_nodes()
+        if n.node_type == "view" and VIEW_TYPE.coerce(n.facets.get("view_type")) == "consensus"
     }
     for edge in db.list_edges_with_endpoints():
         if edge["facets"].get("basis") is not None:

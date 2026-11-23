@@ -1,10 +1,11 @@
 """Closed enum vocabularies for node and edge facets, and the shared signal filter rules.
 
-This is code's typed copy of every closed enum the ontology stores. The
-extraction models, the LLM prompt, the agent tool schema, `repair` and `audit`
-all read from here. `ontology_registry.json` is the official ontology and declares these same
-vocabularies under `facet_vocabularies`; code reflects the registry, and
-`load_registry` fails when the two differ (`facet_vocabulary_differences`).
+`ontology_registry.json` is the official ontology and the source of truth: it
+declares the vocabularies under `facet_vocabularies` and each official facet's
+kind and required flag under `facet_schema`. This module is code's typed copy,
+which the extraction models, the LLM prompt, the agent tool schema, `repair` and
+`audit` read. `load_registry` checks code against the registry and fails when
+they differ (`facet_vocabulary_differences`, `facet_schema_differences`).
 
 Each vocabulary has one rule: strip, lowercase, map spaces and hyphens to `_`,
 then apply its alias map. A result outside the members is not canon.
@@ -12,8 +13,10 @@ then apply its alias map. A result outside the members is not canon.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any, Literal, cast, get_args
 
 EntityType = Literal["company", "person", "product", "institution", "sector", "region"]
@@ -34,6 +37,15 @@ def _clean(raw: Any) -> str | None:
         return None
     cleaned = raw.strip().lower().replace(" ", "_").replace("-", "_")
     return cleaned or None
+
+
+def coerce_member(raw: Any, members: Iterable[str], aliases: Mapping[str, str]) -> str | None:
+    """The one vocabulary rule: clean, apply aliases, and keep the result only if it is a member."""
+    cleaned = _clean(raw)
+    if cleaned is None:
+        return None
+    cleaned = aliases.get(cleaned, cleaned)
+    return cleaned if cleaned in members else None
 
 
 @dataclass(frozen=True)
@@ -63,11 +75,7 @@ class Vocabulary:
 
     def coerce(self, raw: Any) -> str | None:
         """Return the canonical member for `raw`, or None when it is not in the vocabulary."""
-        cleaned = _clean(raw)
-        if cleaned is None:
-            return None
-        cleaned = self.aliases.get(cleaned, cleaned)
-        return cleaned if cleaned in self.members else None
+        return coerce_member(raw, self.members, self.aliases)
 
     def coerce_or_fallback(self, raw: Any) -> str | None:
         """Ingest rule: the canonical member, else this vocabulary's fallback."""
@@ -403,6 +411,157 @@ def out_of_vocabulary_node_facets(node_type: str, facets: dict[str, Any]) -> dic
         for k, v in facets.items()
         if k in vocabs and isinstance(v, str) and v not in vocabs[k].members
     }
+
+
+# ---------------------------------------------------------------------------
+# Facet schema: each official facet's value kind and whether it is required
+# ---------------------------------------------------------------------------
+
+FacetKind = Literal["enum", "number", "date", "text", "list"]
+FACET_KINDS: tuple[str, ...] = get_args(FacetKind)
+
+
+@dataclass(frozen=True)
+class FacetSpec:
+    """One official facet: its value kind, and whether every node or edge must carry it."""
+
+    kind: FacetKind
+    required: bool = False
+
+
+_ENUM = FacetSpec("enum")
+_REQUIRED_ENUM = FacetSpec("enum", required=True)
+
+# Code's copy of the registry's `facet_schema`. Every `enum` facet has a vocabulary above.
+NODE_FACET_SCHEMA: dict[str, dict[str, FacetSpec]] = {
+    "entity": {"entity_type": _REQUIRED_ENUM},
+    "event": {
+        "event_type": _REQUIRED_ENUM,
+        "status": _ENUM,
+        "sentiment": _ENUM,
+        "event_date": FacetSpec("date"),
+    },
+    "view": {
+        "view_type": _REQUIRED_ENUM,
+        "status": _ENUM,
+        "stance": _ENUM,
+        "sentiment": _ENUM,
+        "support_strength": _ENUM,
+        "conviction": _ENUM,
+        "as_of": FacetSpec("date"),
+        "target_price": FacetSpec("number"),
+    },
+    "theme": {"stage": _REQUIRED_ENUM},
+}
+EDGE_FACET_SCHEMA: dict[str, FacetSpec] = {"sentiment": _ENUM, "basis": _REQUIRED_ENUM}
+
+
+def _facet_spec_json(spec: FacetSpec) -> dict[str, Any]:
+    return {"kind": spec.kind, "required": spec.required}
+
+
+def facet_schema_spec() -> dict[str, Any]:
+    """The official facet schema as the registry declares it (`facet_schema`)."""
+    return {
+        "node": {
+            node_type: {key: _facet_spec_json(spec) for key, spec in group.items()}
+            for node_type, group in NODE_FACET_SCHEMA.items()
+        },
+        "edge": {key: _facet_spec_json(spec) for key, spec in EDGE_FACET_SCHEMA.items()},
+    }
+
+
+def facet_schema_differences(declared: Mapping[str, Any]) -> list[str]:
+    """Each way `declared` (a registry `facet_schema` section) differs from code."""
+    want = facet_schema_spec()
+    diffs: list[str] = []
+    root = "facet_schema"
+
+    def compare_group(where: str, got: Any, want_group: Mapping[str, Any]) -> None:
+        if not isinstance(got, Mapping):
+            diffs.append(f"{where}: not an object")
+            return
+        for key in _compare_keys(where, got, want_group, diffs):
+            if got[key] != want_group[key]:
+                diffs.append(f"{where}.{key}: registry has {got[key]!r}, code has {want_group[key]!r}")
+
+    for group in _compare_keys(root, declared, want, diffs):
+        if group == "edge":
+            compare_group(f"{root}.edge", declared[group], want[group])
+            continue
+        got_node = declared[group]
+        if not isinstance(got_node, Mapping):
+            diffs.append(f"{root}.node: not an object")
+            continue
+        for node_type in _compare_keys(f"{root}.node", got_node, want["node"], diffs):
+            compare_group(f"{root}.node.{node_type}", got_node[node_type], want["node"][node_type])
+    return diffs
+
+
+_INT_RE = re.compile(r"-?(0|[1-9][0-9]*)")
+_FLOAT_RE = re.compile(r"-?(0|[1-9][0-9]*)\.[0-9]+")
+
+
+def coerce_facet_value(
+    kind: str,
+    value: Any,
+    *,
+    members: Iterable[str] = (),
+    aliases: Mapping[str, str] | None = None,
+    required: bool = False,
+) -> Any:
+    """Return `value` as `kind`, converting only where nothing is lost; raise ValueError otherwise.
+
+    A number may arrive as a numeric string (`"630"` becomes `630`). A date is an ISO
+    date or datetime string, kept as written. Text accepts a number as its string. An
+    enum value is a string; a required enum must also be a vocabulary member and is
+    stored as that member, while an optional one keeps today's rule (audit reports
+    values outside the vocabulary, repair lowercases them).
+    """
+    if kind == "enum":
+        if not isinstance(value, str):
+            raise ValueError(f"expected an enum string, got {value!r}")  # noqa: TRY003
+        if not required:
+            return value
+        member = coerce_member(value, tuple(members), aliases or {})
+        if member is None:
+            raise ValueError(f"{value!r} is not in the vocabulary")  # noqa: TRY003
+        return member
+    if kind == "number":
+        if isinstance(value, bool):
+            raise ValueError(f"expected a number, got {value!r}")  # noqa: TRY003
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, str):
+            text = value.strip()
+            if _INT_RE.fullmatch(text):
+                return int(text)
+            if _FLOAT_RE.fullmatch(text):
+                return float(text)
+        raise ValueError(f"expected a number, got {value!r}")  # noqa: TRY003
+    if kind == "date":
+        if isinstance(value, str):
+            try:
+                if len(value) == 10:
+                    date.fromisoformat(value)
+                else:
+                    datetime.fromisoformat(value)
+            except ValueError:
+                pass
+            else:
+                return value
+        raise ValueError(f"expected an ISO date, got {value!r}")  # noqa: TRY003
+    if kind == "text":
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+        raise ValueError(f"expected text, got {value!r}")  # noqa: TRY003
+    if kind == "list":
+        if isinstance(value, list):
+            return value
+        raise ValueError(f"expected a list, got {value!r}")  # noqa: TRY003
+    raise ValueError(f"unknown facet kind {kind!r}")  # noqa: TRY003
 
 
 def format_choices(members: Iterable[str], sep: str = " | ") -> str:

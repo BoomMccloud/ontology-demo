@@ -30,7 +30,14 @@ edges through `vocab.py` (case and aliases, so legacy `stale` becomes
 counted in `RepairReport.facets_canonicalized`), renames registered alias and
 inverse relations,
 merges the pairs of `approved` merge suggestions (never pending or rejected
-ones), and merges exact name or alias duplicates. Judgment calls are left to
+ones), and merges exact name or alias duplicates. It backfills edge `basis`
+first, because every edge rewrite must carry that required facet. Last, it
+runs the same facet migration a writable open runs
+(`OntologyDB.migrate_facets(registry)`): official facets are coerced to their
+registry kind where lossless, counted in `RepairReport.facets_migrated`, and
+the DB is stamped with the registry version. Repair's own writes go through the
+DB's checks, so a legacy node whose required facet is missing or outside the
+vocabulary stops the run with `FacetSchemaError`. Judgment calls are left to
 `audit`.
 Merge survivors keep a stale embedding. `RepairReport.merged_survivor_ids`
 lists them, and the CLI `repair` command passes them to the pipeline's

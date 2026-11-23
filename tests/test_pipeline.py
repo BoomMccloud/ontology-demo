@@ -1096,8 +1096,12 @@ class _MidNoteFailureFakeLLM(FakePipelineLLM):
                 )
             ],
             events=[
-                ExtractedEvent(temp_id="ev1", name="Zeta Order Win", summary="Won a hyperscaler order."),
-                ExtractedEvent(temp_id="ev2", name="Zeta POISON Launch", summary="Launched a new module."),
+                ExtractedEvent(
+                    temp_id="ev1", name="Zeta Order Win", summary="Won a hyperscaler order.", event_type="fact"
+                ),
+                ExtractedEvent(
+                    temp_id="ev2", name="Zeta POISON Launch", summary="Launched a new module.", event_type="fact"
+                ),
             ],
             edges=[
                 ExtractedEdge(from_ref="ev1", to_ref="e_zeta", relation="ABOUT"),
@@ -1200,7 +1204,7 @@ class _LegacyRefFakeLLM(FakePipelineLLM):
             entities=[
                 ExtractedEntity(temp_id="e_lgc", name="LGC", summary="Legacy holdco.", entity_type="company")
             ],
-            events=[ExtractedEvent(temp_id="ev1", name="LGC Dividend", summary="Raised its dividend.")],
+            events=[ExtractedEvent(temp_id="ev1", name="LGC Dividend", summary="Raised its dividend.", event_type="fact")],
             edges=[ExtractedEdge(from_ref="ev1", to_ref="Legacy Corp", relation="ABOUT")],
         )
 
@@ -1455,7 +1459,7 @@ class _RolledBackNoteFakeLLM(_MidNoteFailureFakeLLM):
                     entity_type="company",
                 )
             ],
-            events=[ExtractedEvent(temp_id="ev1", name=event_name, summary="Zeta update.")],
+            events=[ExtractedEvent(temp_id="ev1", name=event_name, summary="Zeta update.", event_type="fact")],
             edges=[ExtractedEdge(from_ref="ev1", to_ref="e_zeta", relation="ABOUT")],
         )
 
@@ -1798,3 +1802,109 @@ def test_pipeline_sets_edge_basis_by_code_not_by_llm(tmp_path: Path) -> None:
         assert len(about) == 1
         assert about[0]["confidence"] == "high"
         assert about[0]["product_type"] == "gpu_rack"
+
+
+# ---------------------------------------------------------------------------
+# typed-registry-schema: regeneration on schema failures, and the pipeline's registry
+# ---------------------------------------------------------------------------
+
+SHIPPED_REGISTRY = Path(__file__).resolve().parents[1] / "ontology_registry.json"
+
+
+class _SchemaBreakingFakeLLM(FakePipelineLLM):
+    """Returns `bad_events` (one per call) before a conforming event."""
+
+    def __init__(self, bad_events: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self.bad_events = bad_events
+
+    def extract_document(self, *, text, source_meta, existing_catalog, known_facets) -> ExtractionResult:
+        self.extract_calls.append(source_meta["file_path"])
+        n = len(self.extract_calls)
+        event = {"temp_id": "ev1", "name": "Kappa Ships", "summary": "Kappa shipped.", "event_type": "news"}
+        if n <= len(self.bad_events):
+            event = {**event, **self.bad_events[n - 1]}
+        return ExtractionResult.model_validate(
+            {
+                "entities": [{"temp_id": "e1", "name": "Kappa Inc", "summary": "Kappa.", "entity_type": "company"}],
+                "events": [event],
+                "edges": [{"from_ref": "ev1", "to_ref": "e1", "relation": "ABOUT"}],
+            }
+        )
+
+
+def _kappa_note(tmp_path: Path) -> tuple[Path, str]:
+    data_dir = tmp_path / "data"
+    (data_dir / "KAPA").mkdir(parents=True)
+    rel = "KAPA/2026-11-20_ship.md"
+    (data_dir / rel).write_text("Kappa shipped.", encoding="utf-8")
+    return data_dir, rel
+
+
+def test_pipeline_regenerates_out_of_vocabulary_subtype_but_drops_wrong_kind_date(tmp_path: Path) -> None:
+    from stock_ontology.registry import load_registry
+
+    data_dir, rel = _kappa_note(tmp_path)
+    llm = _SchemaBreakingFakeLLM([{"event_type": "gossip"}, {"event_date": "sometime soon"}])
+    # The DB is opened without a registry, as the CLI does; the pipeline's registry is applied.
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM) as db:
+        reg = load_registry(SHIPPED_REGISTRY)
+        report = IngestionPipeline(db, llm, data_dir, registry=reg).run()
+        assert report.errors == []
+        # The unknown required subtype regenerates; the bad optional date is dropped, not regenerated.
+        assert llm.extract_calls == [rel, rel]
+        events = [n for n in db.list_all_nodes() if n.node_type == "event"]
+        assert [e.facets["event_type"] for e in events] == ["news"]
+        assert "event_date" not in events[0].facets
+        assert db.get_metadata("registry_version") == str(reg.version)
+
+
+def test_pipeline_does_not_regenerate_for_non_schema_failures(tmp_path: Path) -> None:
+    from stock_ontology.registry import load_registry
+
+    data_dir = tmp_path / "data"
+    (data_dir / "ZOPT").mkdir(parents=True)
+    rel = "ZOPT/2026-11-21_order_win.md"
+    (data_dir / rel).write_text("Zeta Optics won an order.", encoding="utf-8")
+    llm = _MidNoteFailureFakeLLM()
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM) as db:
+        report = IngestionPipeline(db, llm, data_dir, registry=load_registry(SHIPPED_REGISTRY)).run()
+    assert [path for path, _ in report.errors] == [rel]
+    assert llm.extract_calls == [rel]
+
+
+def test_pipeline_under_a_registry_without_schema_keeps_the_subtype_fallback(tmp_path: Path) -> None:
+    from stock_ontology.registry import create_minimal_registry
+
+    data_dir, _ = _kappa_note(tmp_path)
+    llm = _SchemaBreakingFakeLLM([{"event_type": "gossip"}])
+    bare = create_minimal_registry().model_copy(update={"facet_schema": {}})
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM) as db:
+        report = IngestionPipeline(db, llm, data_dir, registry=bare).run()
+        assert report.errors == [] and len(llm.extract_calls) == 1
+        events = [n for n in db.list_all_nodes() if n.node_type == "event"]
+        assert [e.facets["event_type"] for e in events] == ["fact"]
+
+
+class _BadTargetConsensusFakeLLM(_SchemaBreakingFakeLLM):
+    """Conforming extraction; the consensus synthesis carries a `target_price` that is not a number."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+
+    def synthesize_consensus(self, **kwargs: Any) -> ConsensusSynthesis:
+        syn = super().synthesize_consensus(**kwargs)
+        return syn.model_copy(update={"facets": [*syn.facets, FacetKV(key="target_price", value="$650")]})
+
+
+def test_consensus_synthesis_drops_uncoercible_optional_facet(tmp_path: Path) -> None:
+    data_dir, _ = _kappa_note(tmp_path)
+    llm = _BadTargetConsensusFakeLLM()
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM) as db:
+        report = IngestionPipeline(db, llm, data_dir).run()
+        assert report.errors == []
+        assert report.consensus_updated_for == ["Kappa Inc"]
+        kappa = next(n for n in db.list_all_nodes() if n.name == "Kappa Inc")
+        cons = db.get_entity_consensus(kappa.id)
+        assert cons is not None
+        assert "target_price" not in cons.facets and cons.facets["view_type"] == "consensus"

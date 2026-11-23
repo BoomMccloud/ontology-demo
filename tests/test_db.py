@@ -85,7 +85,7 @@ def test_read_only_enforces_pragma_query_only(tmp_path: Path) -> None:
                     id="ent_illegal",
                     node_type="entity",
                     name="Illegal",
-                    summary="Should fail",
+                    summary="Should fail", facets={"entity_type": "company"},
                 )
             )
         with pytest.raises(sqlite3.OperationalError, match="readonly"):
@@ -105,7 +105,7 @@ def test_delete_document_artifacts_preserves_canonical_nodes() -> None:
             id="thm_ai",
             node_type="theme",
             name="AI Capex",
-            summary="Hyperscaler AI spend",
+            summary="Hyperscaler AI spend", facets={"stage": "accelerating"},
         )
         ev_doc1 = Node(
             id="evt_1",
@@ -136,16 +136,16 @@ def test_delete_document_artifacts_preserves_canonical_nodes() -> None:
             db.upsert_node(n, embedding=_unit_vec(idx))
 
         db.upsert_edge(
-            Edge(id="e1", from_id="evt_1", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1")
+            Edge(id="e1", from_id="evt_1", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="e2", from_id="vw_1", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1")
+            Edge(id="e2", from_id="vw_1", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="e3", from_id="evt_1", to_id="thm_ai", relation="RELATES_TO", source_doc_id="doc_1")
+            Edge(id="e3", from_id="evt_1", to_id="thm_ai", relation="RELATES_TO", source_doc_id="doc_1", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="e4", from_id="evt_2", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_2")
+            Edge(id="e4", from_id="evt_2", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_2", facets={"basis": "extracted"})
         )
 
         assert db.get_doc_affected_company_ids("doc_1") == {"ent_nvda"}
@@ -212,16 +212,16 @@ def test_consensus_supersession_and_theme_and_bfs_traversal() -> None:
             db.upsert_node(n, embedding=_unit_vec(idx))
 
         db.upsert_edge(
-            Edge(id="ed1", from_id="ent_vrt", to_id="thm_power", relation="BENEFITS_FROM")
+            Edge(id="ed1", from_id="ent_vrt", to_id="thm_power", relation="BENEFITS_FROM", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed2", from_id="evt_call", to_id="thm_power", relation="RELATES_TO", source_doc_id="doc_call")
+            Edge(id="ed2", from_id="evt_call", to_id="thm_power", relation="RELATES_TO", source_doc_id="doc_call", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed3", from_id="evt_call", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_call")
+            Edge(id="ed3", from_id="evt_call", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_call", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed4", from_id="ent_tsmc", to_id="ent_nvda", relation="SUPPLIES_TO")
+            Edge(id="ed4", from_id="ent_tsmc", to_id="ent_nvda", relation="SUPPLIES_TO", facets={"basis": "extracted"})
         )
 
         c1 = Node(
@@ -229,7 +229,7 @@ def test_consensus_supersession_and_theme_and_bfs_traversal() -> None:
             node_type="view",
             name="Consensus: Hold NVIDIA",
             summary="Wait on mask respin",
-            facets={"stance": "hold", "pillars": ["Blackwell yield stabilizes"]},
+            facets={"stance": "hold", "pillars": ["Blackwell yield stabilizes"], "view_type": "analyst_report"},
         )
         db.upsert_consensus_view("ent_nvda", c1, _unit_vec(6), supporting_ids=["evt_call"], contradicting_ids=[])
         assert db.get_entity_consensus("ent_nvda").id == "vw_cons_1"
@@ -239,7 +239,7 @@ def test_consensus_supersession_and_theme_and_bfs_traversal() -> None:
             node_type="view",
             name="Consensus: Buy NVIDIA",
             summary="Blackwell ramping cleanly",
-            facets={"stance": "buy", "pillars": ["Hyperscaler capex >25%"]},
+            facets={"stance": "buy", "pillars": ["Hyperscaler capex >25%"], "view_type": "analyst_report"},
         )
         db.upsert_consensus_view("ent_nvda", c2, _unit_vec(7), supporting_ids=["evt_call"], contradicting_ids=[])
 
@@ -406,7 +406,7 @@ def test_query_entity_signals_sentiment_categories_and_edge_overrides() -> None:
                 from_id="evt_modem",
                 to_id="ent_aapl",
                 relation="ABOUT",
-                facets={"sentiment": "positive"},
+                facets={"sentiment": "positive", "basis": "extracted"},
                 source_doc_id="doc_1",
             )
         )
@@ -416,7 +416,7 @@ def test_query_entity_signals_sentiment_categories_and_edge_overrides() -> None:
                 from_id="evt_modem",
                 to_id="ent_qcom",
                 relation="ABOUT",
-                facets={"sentiment": "negative"},
+                facets={"sentiment": "negative", "basis": "extracted"},
                 source_doc_id="doc_1",
             )
         )
@@ -426,7 +426,7 @@ def test_query_entity_signals_sentiment_categories_and_edge_overrides() -> None:
                 from_id="evt_modem",
                 to_id="ent_nvda",
                 relation="ABOUT",
-                source_doc_id="doc_1",
+                source_doc_id="doc_1", facets={"basis": "extracted"},
             )
         )
         # Two edges from evt_rumored_news to ent_qcom to verify deduplication.
@@ -436,7 +436,7 @@ def test_query_entity_signals_sentiment_categories_and_edge_overrides() -> None:
                 from_id="evt_rumored_news",
                 to_id="ent_qcom",
                 relation="RELATES_TO",
-                source_doc_id="doc_1",
+                source_doc_id="doc_1", facets={"basis": "extracted"},
             )
         )
         db.upsert_edge(
@@ -445,11 +445,11 @@ def test_query_entity_signals_sentiment_categories_and_edge_overrides() -> None:
                 from_id="evt_rumored_news",
                 to_id="ent_qcom",
                 relation="ABOUT",
-                source_doc_id="doc_1",
+                source_doc_id="doc_1", facets={"basis": "extracted"},
             )
         )
         db.upsert_edge(
-            Edge(id="ed_vrumor", from_id="vw_rumor", to_id="ent_qcom", relation="ABOUT", source_doc_id="doc_1")
+            Edge(id="ed_vrumor", from_id="vw_rumor", to_id="ent_qcom", relation="ABOUT", source_doc_id="doc_1", facets={"basis": "extracted"})
         )
         db.upsert_edge(
             Edge(
@@ -457,7 +457,7 @@ def test_query_entity_signals_sentiment_categories_and_edge_overrides() -> None:
                 from_id="vw_legacy_cautious",
                 to_id="ent_qcom",
                 relation="ABOUT",
-                source_doc_id="doc_legacy",
+                source_doc_id="doc_legacy", facets={"basis": "extracted"},
             )
         )
         db.upsert_edge(
@@ -466,7 +466,7 @@ def test_query_entity_signals_sentiment_categories_and_edge_overrides() -> None:
                 from_id="evt_legacy_news",
                 to_id="ent_qcom",
                 relation="ABOUT",
-                source_doc_id="doc_legacy",
+                source_doc_id="doc_legacy", facets={"basis": "extracted"},
             )
         )
         db.upsert_edge(
@@ -475,7 +475,7 @@ def test_query_entity_signals_sentiment_categories_and_edge_overrides() -> None:
                 from_id="evt_authored",
                 to_id="ent_qcom",
                 relation="AUTHORED_BY",
-                source_doc_id="doc_1",
+                source_doc_id="doc_1", facets={"basis": "extracted"},
             )
         )
         db.upsert_consensus_view("ent_qcom", vw_cons_qcom, _unit_vec(7), [], [])
@@ -623,7 +623,7 @@ def test_transaction_rolls_back_every_nested_write_and_commits_once(tmp_path: Pa
     vec = [1.0, 0.0, 0.0, 0.0]
     a = Node(id="n_a", node_type="entity", name="Alpha", summary="a", facets={"entity_type": "company"})
     b = Node(id="n_b", node_type="entity", name="Beta", summary="b", facets={"entity_type": "company"})
-    edge = Edge(id="e_ab", from_id="n_a", to_id="n_b", relation="COMPETES_WITH")
+    edge = Edge(id="e_ab", from_id="n_a", to_id="n_b", relation="COMPETES_WITH", facets={"basis": "extracted"})
 
     with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
         with pytest.raises(RuntimeError):
@@ -651,9 +651,9 @@ def test_transaction_rolls_back_every_nested_write_and_commits_once(tmp_path: Pa
 def test_find_by_name_or_alias_matches_casefold_name_and_alias_by_type(tmp_path: Path) -> None:
     with OntologyDB(tmp_path / "lookup.db", embedding_dim=4, read_only=False) as db:
         db.upsert_node(
-            Node(id="ent_x", node_type="entity", name="Straße Corp", summary="x", aliases=[" SCX "])
+            Node(id="ent_x", node_type="entity", name="Straße Corp", summary="x", aliases=[" SCX "], facets={"entity_type": "company"})
         )
-        db.upsert_node(Node(id="thm_x", node_type="theme", name="SCX", summary="theme"))
+        db.upsert_node(Node(id="thm_x", node_type="theme", name="SCX", summary="theme", facets={"stage": "accelerating"}))
         # casefold (not SQL lower) so "STRASSE" matches "Straße".
         assert db.find_by_name_or_alias("STRASSE CORP").id == "ent_x"
         assert db.find_by_name_or_alias("scx", node_type="entity").id == "ent_x"
@@ -724,11 +724,11 @@ def test_cli_repair_reports_changes_then_zero_on_rerun(
             embedding=_wiring_vec(1),
         )
         db.upsert_node(
-            Node(id="evt_orphan", node_type="event", name="Orphan", summary="o", source_doc_id="doc_gone"),
+            Node(id="evt_orphan", node_type="event", name="Orphan", summary="o", source_doc_id="doc_gone", facets={"event_type": "fact"}),
             embedding=_wiring_vec(2),
         )
-        db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation="COMPETES_WITH"))
-        db.upsert_edge(Edge(id="e2", from_id="evt_orphan", to_id="ent_a", relation="ABOUT", source_doc_id="doc_gone"))
+        db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation="COMPETES_WITH", facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="e2", from_id="evt_orphan", to_id="ent_a", relation="ABOUT", source_doc_id="doc_gone", facets={"basis": "extracted"}))
     save_registry(create_minimal_registry(), reg_path)
     args = ["repair", "--db", str(db_path), "--registry", str(reg_path), "--json"]
 
@@ -1044,7 +1044,7 @@ def test_registry_resolves_company_by_ticker_and_theme_by_alias(tmp_path: Path) 
     (data_dir / "n.md").write_text("Note.", encoding="utf-8")
     with OntologyDB(tmp_path / "r.db", embedding_dim=WIRING_DIM, read_only=False) as db:
         db.upsert_node(_company("ent_vrt", "Vertiv"))
-        db.upsert_node(Node(id="thm_power", node_type="theme", name="AI Data Center Power & Cooling", summary="t"))
+        db.upsert_node(Node(id="thm_power", node_type="theme", name="AI Data Center Power & Cooling", summary="t", facets={"stage": "accelerating"}))
         db.upsert_node(Node(id="ent_vrt_person", node_type="entity", name="VRT Desk", summary="p",
                             facets={"entity_type": "person"}))
         llm = _RegistryResolveLLM(
@@ -1057,7 +1057,7 @@ def test_registry_resolves_company_by_ticker_and_theme_by_alias(tmp_path: Path) 
                     ExtractedEntity(temp_id="p1", name="Vertiv Holdings Co. Analyst", summary="s",
                                     entity_type="person"),
                 ],
-                themes=[ExtractedTheme(temp_id="t1", name="AI Data Center Power Bottleneck", summary="s")],
+                themes=[ExtractedTheme(temp_id="t1", name="AI Data Center Power Bottleneck", summary="s", stage="accelerating")],
             )
         )
         IngestionPipeline(db, llm, data_dir).run()
@@ -1067,3 +1067,130 @@ def test_registry_resolves_company_by_ticker_and_theme_by_alias(tmp_path: Path) 
         themes = [n for n in db.list_all_nodes() if n.node_type == "theme"]
         assert [t.id for t in themes] == ["thm_power"]
         assert "AI Data Center Power Bottleneck" in themes[0].aliases
+
+
+# ---------------------------------------------------------------------------
+# typed-registry-schema: every write path checks the registry's facet schema
+# ---------------------------------------------------------------------------
+
+_SHIPPED_REGISTRY = Path(__file__).resolve().parents[1] / "ontology_registry.json"
+
+
+def _typed_db(tmp_path: Path) -> OntologyDB:
+    from stock_ontology.registry import load_registry
+
+    db = OntologyDB(tmp_path / "typed.db", embedding_dim=8, registry=load_registry(_SHIPPED_REGISTRY))
+    for i, nid in enumerate(("ent_a", "ent_b")):
+        db.upsert_node(
+            Node(id=nid, node_type="entity", name=nid, summary=nid, facets={"entity_type": "company"}),
+            embedding=_unit_vec(i),
+        )
+    return db
+
+
+def _edge_facets(db: OntologyDB, edge_id: str) -> dict[str, Any]:
+    import json
+
+    row = db.conn.execute("SELECT facets_json FROM edges WHERE id = ?", (edge_id,)).fetchone()
+    return json.loads(row[0])
+
+
+def test_update_edge_refuses_dropping_required_basis(tmp_path: Path) -> None:
+    from stock_ontology.registry import FacetSchemaError
+
+    with _typed_db(tmp_path) as db:
+        db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation="COMPETE", facets={"basis": "extracted"}))
+        with pytest.raises(FacetSchemaError):
+            db.update_edge("e1", relation="COMPETE", from_id="ent_a", to_id="ent_b", facets={"note": "x"})
+        assert _edge_facets(db, "e1") == {"basis": "extracted"}
+
+
+def test_upsert_edge_merge_path_checks_merged_facets(tmp_path: Path) -> None:
+    with _typed_db(tmp_path) as db:
+        edge = Edge(id="e1", from_id="ent_a", to_id="ent_b", relation="COMPETE", facets={"basis": "Extracted"})
+        db.upsert_edge(edge)
+        assert _edge_facets(db, "e1") == {"basis": "extracted"}
+        # A legacy row without `basis`: merging facets into it still has to meet the schema.
+        db.conn.execute("UPDATE edges SET facets_json = '{}' WHERE id = 'e1'")
+        db.conn.commit()
+        with pytest.raises(ValueError):
+            db.upsert_edge(edge.model_copy(update={"facets": {"note": "x"}}))
+        assert _edge_facets(db, "e1") == {}
+
+
+def test_upsert_consensus_view_is_checked_and_conforms(tmp_path: Path) -> None:
+    from stock_ontology.registry import FacetSchemaError
+
+    with _typed_db(tmp_path) as db:
+        bad = Node(id="vw_c", node_type="view", name="c", summary="c", facets={"target_price": "a lot", "view_type": "analyst_report"})
+        with pytest.raises(FacetSchemaError):
+            db.upsert_consensus_view("ent_a", bad, _unit_vec(3), [], [])
+        assert db.get_node("vw_c") is None
+
+        good = Node(id="vw_c", node_type="view", name="c", summary="c", facets={"target_price": "630", "view_type": "analyst_report"})
+        db.upsert_consensus_view("ent_a", good, _unit_vec(3), [], [])
+        stored = db.get_node("vw_c")
+        assert stored is not None
+        assert stored.facets["view_type"] == "consensus" and stored.facets["target_price"] == 630
+        bases = {r[0] for r in db.conn.execute("SELECT json_extract(facets_json, '$.basis') FROM edges")}
+        assert bases == {"synthesized"}
+
+
+def test_merge_node_into_writes_no_facets_and_survivor_upsert_is_checked(tmp_path: Path) -> None:
+    from stock_ontology.registry import FacetSchemaError
+
+    with _typed_db(tmp_path) as db:
+        db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation="COMPETE", facets={"basis": "extracted"}))
+        survivor = db.get_node("ent_a")
+        assert survivor is not None
+        with pytest.raises(FacetSchemaError):
+            db.upsert_node(survivor.model_copy(update={"facets": {"ticker": "A"}}))
+        db.merge_node_into("ent_b", "ent_a")
+        assert db.get_node("ent_b") is None
+        assert db.get_node("ent_a").facets == {"entity_type": "company"}
+
+
+def test_writable_open_stamps_fresh_db_and_leaves_newer_stamp_and_unfixable_values(tmp_path: Path) -> None:
+    import json
+
+    from stock_ontology.registry import load_registry
+
+    reg = load_registry(_SHIPPED_REGISTRY)
+    path = tmp_path / "stamp.db"
+    with OntologyDB(path, embedding_dim=8, registry=reg) as db:
+        assert db.get_metadata("registry_version") == str(reg.version)
+        db.conn.execute(
+            "INSERT INTO nodes (id, node_type, name, summary, facets_json, created_at, updated_at) "
+            "VALUES ('vw', 'view', 'v', 'v', ?, '2026-01-01', '2026-01-01')",
+            (json.dumps({"view_type": "rumor", "target_price": "lots", "as_of": "2026-10-15"}),),
+        )
+        db.conn.commit()
+        db.set_metadata("registry_version", str(reg.version + 5))
+    with OntologyDB(path, embedding_dim=8, registry=reg) as db:
+        assert db.get_metadata("registry_version") == str(reg.version + 5)
+        db.set_metadata("registry_version", "1")
+    with OntologyDB(path, embedding_dim=8, registry=reg) as db:
+        assert db.get_metadata("registry_version") == str(reg.version)
+        row = db.conn.execute("SELECT facets_json FROM nodes WHERE id = 'vw'").fetchone()
+        assert json.loads(row[0])["target_price"] == "lots"
+
+
+def test_db_without_registry_enforces_the_default_schema_but_never_stamps(tmp_path: Path) -> None:
+    from stock_ontology.registry import FacetSchemaError
+
+    with OntologyDB(tmp_path / "plain.db", embedding_dim=8) as db:
+        with pytest.raises(FacetSchemaError):
+            db.upsert_node(Node(id="vw", node_type="view", name="v", summary="v", facets={"target_price": "lots", "view_type": "analyst_report"}))
+        for i, nid in enumerate(("ent_a", "ent_b")):
+            db.upsert_node(Node(id=nid, node_type="entity", name=nid, summary=nid, facets={"entity_type": "company"}), embedding=_unit_vec(i))
+        with pytest.raises(FacetSchemaError):
+            db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation="COMPETE", facets={}))
+        db.upsert_edge(Edge(id="e1", from_id="ent_a", to_id="ent_b", relation="COMPETE", facets={"basis": "extracted"}))
+        with pytest.raises(FacetSchemaError):
+            db.update_edge("e1", relation="COMPETE", from_id="ent_a", to_id="ent_b", facets={"basis": "guessed"})
+        bad = Node(id="vw_c", node_type="view", name="c", summary="c", facets={"as_of": "someday"})
+        with pytest.raises(FacetSchemaError):
+            db.upsert_consensus_view("ent_a", bad, _unit_vec(3), [], [])
+        db.merge_node_into("ent_b", "ent_a")
+        assert db.get_node("ent_a").facets == {"entity_type": "company"}
+        assert db.get_metadata("registry_version") is None

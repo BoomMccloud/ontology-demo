@@ -12,9 +12,19 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from stock_ontology.vocab import facet_vocabularies_spec, facet_vocabulary_differences
+from stock_ontology.vocab import (
+    coerce_facet_value,
+    facet_schema_differences,
+    facet_schema_spec,
+    facet_vocabularies_spec,
+    facet_vocabulary_differences,
+)
 
 SuggestionStatus = Literal["pending", "approved", "aliased", "rejected"]
+
+
+class FacetSchemaError(ValueError):
+    """A node or edge breaks the registry's facet schema: a required facet is missing or a kind is wrong."""
 
 
 def _utc_now_iso() -> str:
@@ -288,9 +298,12 @@ class OntologyRegistry(BaseModel):
     companies: list[CompanySpec] = Field(default_factory=list)
     themes: list[ThemeSpec] = Field(default_factory=list)
     facet_aliases: dict[str, dict[str, str]] = Field(default_factory=dict)
-    # The official facet vocabularies. `vocab.py` holds code's typed copy; loading a
-    # registry whose vocabularies differ from it fails, naming each difference.
-    facet_vocabularies: dict[str, Any] = Field(default_factory=facet_vocabularies_spec)
+    # The official facet vocabularies. The registry is the source and must declare them; `vocab.py`
+    # holds code's typed copy, and loading a registry that differs from it fails, naming each difference.
+    facet_vocabularies: dict[str, Any]
+    # Each official facet's kind and required flag, per node type and for edges. A registry
+    # without it declares no schema and enforces nothing; the built-in default declares it.
+    facet_schema: dict[str, Any] = Field(default_factory=dict)
     suggestions: RegistrySuggestions = Field(default_factory=RegistrySuggestions)
 
     @field_validator("facet_vocabularies")
@@ -302,6 +315,97 @@ class OntologyRegistry(BaseModel):
                 "Registry facet vocabularies differ from code (src/stock_ontology/vocab.py): " + "; ".join(diffs)
             )
         return value
+
+    @field_validator("facet_schema")
+    @classmethod
+    def _facet_schema_matches_code(cls, value: dict[str, Any]) -> dict[str, Any]:
+        diffs = facet_schema_differences(value) if value else []
+        if diffs:
+            raise ValueError(  # noqa: TRY003
+                "Code (src/stock_ontology/vocab.py) differs from the registry facet schema: " + "; ".join(diffs)
+            )
+        return value
+
+    def _facet_specs(self, node_type: str | None) -> dict[str, Any]:
+        """The declared `{facet: {kind, required}}` for a node type, or for edges when None."""
+        if not self.facet_schema:
+            return {}
+        if node_type is None:
+            return dict(self.facet_schema.get("edge", {}))
+        return dict(self.facet_schema.get("node", {}).get(node_type, {}))
+
+    def _vocabulary(self, node_type: str | None, key: str) -> dict[str, Any]:
+        group = (
+            self.facet_vocabularies.get("edge", {})
+            if node_type is None
+            else self.facet_vocabularies.get("node", {}).get(node_type, {})
+        )
+        return dict(group.get(key, {}))
+
+    def required_facets(self, node_type: str | None) -> set[str]:
+        """Facets every node of `node_type` (or every edge, when None) must carry."""
+        return {k for k, spec in self._facet_specs(node_type).items() if spec.get("required")}
+
+    def _coerce_facet(self, node_type: str | None, key: str, spec: dict[str, Any], value: Any) -> Any:
+        vocab = self._vocabulary(node_type, key)
+        return coerce_facet_value(
+            str(spec.get("kind")),
+            value,
+            members=tuple(vocab.get("members", {})),
+            aliases=vocab.get("aliases") or {},
+            required=bool(spec.get("required")),
+        )
+
+    def check_facets(self, node_type: str | None, facets: dict[str, Any]) -> dict[str, Any]:
+        """Return `facets` with official values coerced to their kind, or raise `FacetSchemaError`.
+
+        `node_type` None means an edge. Facets the registry does not declare pass through unchanged.
+        """
+        specs = self._facet_specs(node_type)
+        if not specs:
+            return facets
+        owner = f"{node_type} node" if node_type is not None else "edge"
+        out = dict(facets)
+        for key, spec in specs.items():
+            value = out.get(key)
+            if value is None:
+                if spec.get("required"):
+                    raise FacetSchemaError(f"{owner} is missing required facet {key!r}")  # noqa: TRY003
+                continue
+            try:
+                out[key] = self._coerce_facet(node_type, key, spec, value)
+            except ValueError as exc:
+                raise FacetSchemaError(f"{owner} facet {key!r}: {exc}") from exc  # noqa: TRY003
+        return out
+
+    def drop_uncoercible_optional(self, node_type: str | None, facets: dict[str, Any]) -> dict[str, Any]:
+        """Ingest rule: remove each optional official facet whose value cannot be coerced to its kind.
+
+        Required facets are left for `check_facets` to refuse, so the pipeline regenerates.
+        """
+        out = dict(facets)
+        for key, spec in self._facet_specs(node_type).items():
+            value = out.get(key)
+            if value is None or spec.get("required"):
+                continue
+            try:
+                self._coerce_facet(node_type, key, spec, value)
+            except ValueError:
+                out.pop(key)
+        return out
+
+    def migrate_facets(self, node_type: str | None, facets: dict[str, Any]) -> dict[str, Any]:
+        """Coerce each official facet to its kind where that is lossless; leave the rest unchanged."""
+        out = dict(facets)
+        for key, spec in self._facet_specs(node_type).items():
+            value = out.get(key)
+            if value is None:
+                continue
+            try:
+                out[key] = self._coerce_facet(node_type, key, spec, value)
+            except ValueError:
+                continue
+        return out
 
     @staticmethod
     def _default_facets_for_norm(spec: RelationSpec, norm_relation: str) -> dict[str, Any]:
@@ -730,6 +834,8 @@ def create_minimal_registry() -> OntologyRegistry:
     """Create the minimal starter official ontology registry."""
     return OntologyRegistry(
         version=1,
+        facet_vocabularies=facet_vocabularies_spec(),
+        facet_schema=facet_schema_spec(),
         relations=[
             RelationSpec(
                 name="ABOUT",

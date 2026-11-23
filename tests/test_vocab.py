@@ -103,8 +103,11 @@ def test_out_of_vocabulary_node_facets_reports_non_members() -> None:
 def test_extraction_models_coerce_through_vocab() -> None:
     view = ExtractedView(temp_id="v", name="n", summary="s", view_type="Rumour", stance="Outperform", sentiment="Ecstatic")
     assert (view.view_type, view.stance, view.sentiment) == ("rumor", "bullish", None)
+    # A required subtype outside the vocabulary stays missing (the pipeline regenerates);
+    # an optional enum keeps its fallback.
     event = ExtractedEvent(temp_id="e", name="n", summary="s", event_type="Gossip", status="Maybe")
-    assert (event.event_type, event.status, event.sentiment) == ("fact", "occurred", "neutral")
+    assert (event.event_type, event.status, event.sentiment) == (None, "occurred", "neutral")
+    assert ExtractedEvent(temp_id="e", name="n", summary="s", event_type="fact").event_type == "fact"
     schema = ExtractedView.model_json_schema()["properties"]["stance"]
     assert schema["enum"] == list(vocab.STANCE.members)
 
@@ -148,7 +151,9 @@ def test_audit_counts_and_lists_out_of_vocabulary_stored_values(tmp_path) -> Non
         # `stance` is not an event vocabulary, so it is not reported on an event.
         Node(id="evt_d", node_type="event", name="D", summary=".", facets={"event_type": "news", "stance": "odd"}),
     ]
-    with OntologyDB(tmp_path / "ontology.db", embedding_dim=4, read_only=False) as db:
+    # Legacy rows with values outside the vocabulary, written under a registry with no facet schema.
+    legacy = create_minimal_registry().model_copy(update={"facet_schema": {}})
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=4, read_only=False, registry=legacy) as db:
         for i, node in enumerate(nodes):
             db.upsert_node(node, embedding=[1.0 if j == i else 0.0 for j in range(4)])
         report = run_ontology_audit(db, create_minimal_registry())
@@ -161,7 +166,7 @@ def test_audit_counts_and_lists_out_of_vocabulary_stored_values(tmp_path) -> Non
 
 
 def test_cautious_stance_folds_into_bearish_with_low_conviction() -> None:
-    view = ExtractedView(temp_id="v", name="n", summary="s", stance="Cautious", conviction="high")
+    view = ExtractedView(temp_id="v", name="n", summary="s", stance="Cautious", conviction="high", view_type="analyst_report")
     assert (view.stance, view.conviction) == ("bearish", "low")
     syn = ConsensusSynthesis(stance="cautious", support_strength="weak", conviction="medium", summary="s")
     assert (syn.stance, syn.conviction) == ("bearish", "low")
@@ -266,3 +271,175 @@ def test_registry_and_code_declare_the_same_official_facet_vocabularies(tmp_path
     assert basis.members == ("extracted", "synthesized")
     assert basis.fallback is None
     assert vocab.EDGE_FACET_VOCABS["sentiment"] is vocab.SENTIMENT
+
+
+# ---------------------------------------------------------------------------
+# typed-registry-schema: facet kinds, required sets, and the registry drift check
+# ---------------------------------------------------------------------------
+
+SHIPPED_REGISTRY_PATH = __import__("pathlib").Path(__file__).resolve().parents[1] / "ontology_registry.json"
+
+
+def _shipped():
+    from stock_ontology.registry import load_registry
+
+    return load_registry(SHIPPED_REGISTRY_PATH)
+
+
+def test_code_facet_schema_declares_every_vocabulary_as_an_enum() -> None:
+    for node_type, group in vocab.NODE_FACET_SCHEMA.items():
+        enums = {k for k, spec in group.items() if spec.kind == "enum"}
+        assert enums == set(vocab.NODE_FACET_VOCABS[node_type]), node_type
+    assert {k for k, s in vocab.EDGE_FACET_SCHEMA.items() if s.kind == "enum"} == set(vocab.EDGE_FACET_VOCABS)
+    for group in [*vocab.NODE_FACET_SCHEMA.values(), vocab.EDGE_FACET_SCHEMA]:
+        assert all(spec.kind in vocab.FACET_KINDS for spec in group.values())
+
+
+def test_shipped_registry_declares_the_initial_required_sets_and_kinds() -> None:
+    reg = _shipped()
+    assert reg.facet_schema == vocab.facet_schema_spec()
+    assert {nt: reg.required_facets(nt) for nt in ("entity", "event", "view", "theme")} == {
+        "entity": {"entity_type"},
+        "event": {"event_type"},
+        "view": {"view_type"},
+        "theme": {"stage"},
+    }
+    assert reg.required_facets(None) == {"basis"}
+    node = reg.facet_schema["node"]
+    assert node["event"]["event_date"]["kind"] == "date"
+    assert node["view"]["as_of"]["kind"] == "date"
+    assert node["view"]["target_price"]["kind"] == "number"
+    assert reg.version >= 2
+
+
+@pytest.mark.parametrize(
+    ("mutate", "named"),
+    [
+        (lambda fs: fs["node"]["view"]["target_price"].update({"kind": "text"}), "target_price"),
+        (lambda fs: fs["node"]["view"]["stance"].update({"required": True}), "stance"),
+        (lambda fs: fs["edge"].pop("basis"), "edge.basis"),
+        (lambda fs: fs["node"]["event"].update({"headline": {"kind": "text", "required": False}}), "headline"),
+        (lambda fs: fs["node"].pop("theme"), "node.theme"),
+    ],
+    ids=["kind-drift", "required-drift", "missing-facet", "extra-facet", "missing-node-type"],
+)
+def test_load_registry_rejects_facet_schema_drift(tmp_path, mutate, named) -> None:
+    import json
+
+    from stock_ontology.registry import load_registry
+
+    raw = json.loads(SHIPPED_REGISTRY_PATH.read_text(encoding="utf-8"))
+    mutate(raw["facet_schema"])
+    path = tmp_path / "ontology_registry.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError) as excinfo:
+        load_registry(path)
+    assert "facet_schema" in str(excinfo.value) and named in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("kind", "raw", "expected"),
+    [
+        ("number", 630, 630),
+        ("number", 12.5, 12.5),
+        ("number", "630", 630),
+        ("number", " -12.50 ", -12.5),
+        ("date", "2026-10-15", "2026-10-15"),
+        ("date", "2026-10-15T09:30:00+00:00", "2026-10-15T09:30:00+00:00"),
+        ("text", "Morgan", "Morgan"),
+        ("text", 42, "42"),
+        ("list", ["a", 1], ["a", 1]),
+        ("enum", "Moonshot", "Moonshot"),
+    ],
+)
+def test_coerce_facet_value_accepts_or_converts_losslessly(kind, raw, expected) -> None:
+    out = vocab.coerce_facet_value(kind, raw)
+    assert out == expected and type(out) is type(expected)
+
+
+@pytest.mark.parametrize(
+    ("kind", "raw"),
+    [
+        ("number", "about six hundred"),
+        ("number", True),
+        ("number", "007"),
+        ("number", "1,200"),
+        ("number", [630]),
+        ("date", "Q3 2026"),
+        ("date", "2026-13-01"),
+        ("date", 20261015),
+        ("text", True),
+        ("text", {"a": 1}),
+        ("list", "a, b"),
+        ("enum", 3),
+        ("widget", "x"),
+    ],
+)
+def test_coerce_facet_value_refuses_lossy_or_wrong_kind(kind, raw) -> None:
+    with pytest.raises(ValueError):
+        vocab.coerce_facet_value(kind, raw)
+
+
+def test_required_enum_must_be_a_member_and_is_stored_canonical() -> None:
+    members, aliases = vocab.VIEW_TYPE.members, dict(vocab.VIEW_TYPE.aliases)
+    assert vocab.coerce_facet_value("enum", "Rumour", members=members, aliases=aliases, required=True) == "rumor"
+    with pytest.raises(ValueError):
+        vocab.coerce_facet_value("enum", "hunch", members=members, aliases=aliases, required=True)
+
+
+@pytest.mark.parametrize(
+    ("node_type", "facets"),
+    [
+        ("entity", {"ticker": "NVDA"}),
+        ("event", {"status": "occurred"}),
+        ("theme", {"stage": None}),
+        ("view", {"view_type": "hunch"}),
+        ("event", {"event_type": "news", "event_date": "soon"}),
+    ],
+    ids=["entity-no-entity_type", "event-no-event_type", "theme-null-stage", "view-oov-view_type", "bad-date"],
+)
+def test_check_facets_refuses_each_required_set_and_kind(node_type, facets) -> None:
+    from stock_ontology.registry import FacetSchemaError
+
+    with pytest.raises(FacetSchemaError):
+        _shipped().check_facets(node_type, facets)
+
+
+def test_check_facets_coerces_official_and_passes_undeclared_facets() -> None:
+    reg = _shipped()
+    facets = {"view_type": "Rumour", "target_price": "630", "author": 7, "notes": ["x"]}
+    assert reg.check_facets("view", facets) == {
+        "view_type": "rumor",
+        "target_price": 630,
+        "author": 7,
+        "notes": ["x"],
+    }
+    assert facets["target_price"] == "630"  # the input is not mutated
+
+
+def test_default_registry_declares_the_shipped_facet_schema() -> None:
+    from stock_ontology.registry import FacetSchemaError, create_minimal_registry
+
+    minimal = create_minimal_registry()
+    assert minimal.facet_schema == _shipped().facet_schema == vocab.facet_schema_spec()
+    assert minimal.facet_vocabularies == _shipped().facet_vocabularies
+    with pytest.raises(FacetSchemaError):
+        minimal.check_facets("view", {"view_type": "rumor", "target_price": "lots"})
+
+
+def test_registry_declaring_no_facet_schema_enforces_nothing() -> None:
+    from stock_ontology.registry import create_minimal_registry
+
+    bare = create_minimal_registry().model_copy(update={"facet_schema": {}})
+    assert bare.check_facets("view", {"target_price": "lots"}) == {"target_price": "lots"}
+    assert bare.required_facets("view") == set()
+
+
+def test_drop_uncoercible_optional_keeps_required_and_undeclared_facets() -> None:
+    facets = {"view_type": "hunch", "target_price": "$650", "as_of": "Q3", "stance": "bullish", "desk": [1]}
+    assert _shipped().drop_uncoercible_optional("view", facets) == {
+        "view_type": "hunch",
+        "stance": "bullish",
+        "desk": [1],
+    }
+    assert _shipped().drop_uncoercible_optional(None, {"sentiment": 3, "basis": "extracted"}) == {"basis": "extracted"}

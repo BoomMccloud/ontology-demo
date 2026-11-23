@@ -15,7 +15,7 @@ from typing import Any
 from stock_ontology.config import SUPPORTED_EXTENSIONS
 from stock_ontology.db import OntologyDB, node_meta
 from stock_ontology.llm import LLMClient
-from stock_ontology.registry import OntologyRegistry, create_minimal_registry
+from stock_ontology.registry import FacetSchemaError, OntologyRegistry, create_minimal_registry
 from stock_ontology.models import (
     Edge,
     Node,
@@ -24,11 +24,15 @@ from stock_ontology.models import (
     facets_list_to_dict,
     normalize_sentiment,
 )
-from stock_ontology.vocab import ENTITY_TYPE, STAGE
+from stock_ontology.vocab import ENTITY_TYPE, NODE_FACET_VOCABS, STAGE
 
 # Most recently updated entities and themes listed in the extraction catalog (each type),
 # in addition to every entity/theme the note names.
 CATALOG_RECENT_BUDGET = 500
+
+# Extraction calls per note: the first plus 2 regenerations when the result breaks the registry's
+# facet schema (a missing required facet or a wrong kind). After that the note fails.
+MAX_EXTRACTION_ATTEMPTS = 3
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +109,18 @@ class IngestionPipeline:
         self.llm = llm
         self.data_dir = Path(data_dir)
         self.registry = registry if registry is not None else create_minimal_registry()
+        if registry is not None:
+            # The DB enforces, migrates and stamps under the registry this run writes with.
+            db.use_registry(registry)
+
+    def _required_subtype(self, node_type: str, item: Any, field: str) -> str | None:
+        """The extracted subtype. When the registry requires it, an omitted or unknown value stays None."""
+        value = getattr(item, field)
+        if field in item.model_fields_set and value is not None:
+            return str(value)
+        if field in self.registry.required_facets(node_type):
+            return None
+        return NODE_FACET_VOCABS[node_type][field].fallback
 
     def _scan_files(self) -> dict[str, tuple[Path, int, int]]:
         """Return `{rel_posix_path: (abs_path, size, mtime_ns)}` for notes, without reading them."""
@@ -331,29 +347,37 @@ class IngestionPipeline:
             report.files_processed += 1
             return
 
-        extraction = self.llm.extract_document(
-            text=text,
-            source_meta=source_meta,
-            existing_catalog=self._build_existing_catalog(text),
-            known_facets=self.db.get_known_facet_keys(),
-        )
-
-        # All writes for this note commit together or not at all, so a failure partway
-        # leaves no partial rows behind and no ingestion log entry.
-        with self.db.transaction():
-            # Always clear this note's prior artifacts (including leftovers from a failed run).
-            self._clear_prior_artifacts(doc_id, replace_old_doc_id, note_companies)
-            nodes_written, edges_written = self._write_extraction(
-                extraction=extraction,
-                doc_id=doc_id,
+        for attempt in range(1, MAX_EXTRACTION_ATTEMPTS + 1):
+            extraction = self.llm.extract_document(
+                text=text,
                 source_meta=source_meta,
-                now=now,
-                affected_company_ids=note_companies,
+                existing_catalog=self._build_existing_catalog(text),
+                known_facets=self.db.get_known_facet_keys(),
             )
-            note_companies.update(self.db.get_doc_affected_company_ids(doc_id))
-            self.db.upsert_ingestion_log(
-                rel_path, doc_id, content_hash, now_iso, size=size, mtime_ns=mtime_ns
-            )
+            note_companies.clear()
+            try:
+                # All writes for this note commit together or not at all, so a failure partway
+                # leaves no partial rows behind and no ingestion log entry.
+                with self.db.transaction():
+                    # Always clear this note's prior artifacts (including leftovers from a failed run).
+                    self._clear_prior_artifacts(doc_id, replace_old_doc_id, note_companies)
+                    nodes_written, edges_written = self._write_extraction(
+                        extraction=extraction,
+                        doc_id=doc_id,
+                        source_meta=source_meta,
+                        now=now,
+                        affected_company_ids=note_companies,
+                    )
+                    note_companies.update(self.db.get_doc_affected_company_ids(doc_id))
+                    self.db.upsert_ingestion_log(
+                        rel_path, doc_id, content_hash, now_iso, size=size, mtime_ns=mtime_ns
+                    )
+            except FacetSchemaError as exc:
+                if attempt == MAX_EXTRACTION_ATTEMPTS:
+                    raise
+                logger.warning("Regenerating extraction for %s (attempt %d): %s", rel_path, attempt, exc)
+                continue
+            break
         affected_company_ids.update(note_companies)
         report.nodes_created_or_updated += nodes_written
         report.edges_created_or_updated += edges_written
@@ -387,14 +411,16 @@ class IngestionPipeline:
         for ent in extraction.entities:
             ent_facets = facets_list_to_dict(ent.facets)
             # A facet-list `entity_type` still wins over the field, but only as a member.
-            ent_facets["entity_type"] = ENTITY_TYPE.coerce(ent_facets.get("entity_type")) or ent.entity_type
+            ent_facets["entity_type"] = ENTITY_TYPE.coerce(ent_facets.get("entity_type")) or self._required_subtype(
+                "entity", ent, "entity_type"
+            )
             node, updated = self._resolve_canonical_node(
                 node_type="entity",
                 temp_id=ent.temp_id,
                 name=ent.name,
                 summary=ent.summary,
                 aliases=ent.aliases,
-                facets=ent_facets,
+                facets=self.registry.drop_uncoercible_optional("entity", ent_facets),
                 prefix="ent",
                 needs_embedding=needs_embedding,
             )
@@ -407,14 +433,16 @@ class IngestionPipeline:
 
         for thm in extraction.themes:
             thm_facets = facets_list_to_dict(thm.facets)
-            thm_facets["stage"] = STAGE.coerce(thm_facets.get("stage")) or thm.stage
+            thm_facets["stage"] = STAGE.coerce(thm_facets.get("stage")) or self._required_subtype(
+                "theme", thm, "stage"
+            )
             node, updated = self._resolve_canonical_node(
                 node_type="theme",
                 temp_id=thm.temp_id,
                 name=thm.name,
                 summary=thm.summary,
                 aliases=thm.aliases,
-                facets=thm_facets,
+                facets=self.registry.drop_uncoercible_optional("theme", thm_facets),
                 prefix="thm",
                 needs_embedding=needs_embedding,
             )
@@ -434,15 +462,31 @@ class IngestionPipeline:
         # 2. Build doc-scoped events and views.
         doc_nodes: list[Node] = []
         for ev in extraction.events:
-            node = _build_event_node(ev, doc_id=doc_id, source_meta=source_meta, now=now)
+            node = _build_event_node(
+                ev,
+                event_type=self._required_subtype("event", ev, "event_type"),
+                doc_id=doc_id,
+                source_meta=source_meta,
+                now=now,
+            )
             ref_map[ev.temp_id] = node.id
             local_nodes[node.id] = node
             doc_nodes.append(node)
         for vw in extraction.views:
-            node = _build_view_node(vw, doc_id=doc_id, source_meta=source_meta, now=now)
+            node = _build_view_node(
+                vw,
+                view_type=self._required_subtype("view", vw, "view_type"),
+                doc_id=doc_id,
+                source_meta=source_meta,
+                now=now,
+            )
             ref_map[vw.temp_id] = node.id
             local_nodes[node.id] = node
             doc_nodes.append(node)
+
+        # An optional official facet that cannot be coerced to its kind is dropped; the note is kept.
+        for node in doc_nodes:
+            node.facets = self.registry.drop_uncoercible_optional(node.node_type, node.facets)
 
         if doc_nodes:
             embeddings = self.llm.embed_texts([node_embedding_text(n) for n in doc_nodes])
@@ -478,6 +522,7 @@ class IngestionPipeline:
                     canon_facets.pop("sentiment", None)
             # `basis` is set by code, never taken from the LLM.
             canon_facets["basis"] = "extracted"
+            canon_facets = self.registry.drop_uncoercible_optional(None, canon_facets)
             self.db.upsert_edge(
                 Edge(
                     id=f"edge_{uuid.uuid4().hex[:12]}",
@@ -539,7 +584,7 @@ class IngestionPipeline:
             name=f"Consensus: {syn.stance.title()} {company.name}",
             summary=syn.summary.strip(),
             aliases=[],
-            facets=facets,
+            facets=self.registry.drop_uncoercible_optional("view", facets),
             source_doc_id=None,
             created_at=now,
             updated_at=now,
@@ -751,9 +796,11 @@ def _resolve_sentiment(*candidates: Any) -> str:
     return "neutral"
 
 
-def _build_event_node(ev: Any, *, doc_id: str, source_meta: dict[str, Any], now: datetime) -> Node:
+def _build_event_node(
+    ev: Any, *, event_type: str | None, doc_id: str, source_meta: dict[str, Any], now: datetime
+) -> Node:
     facets = facets_list_to_dict(ev.facets)
-    facets["event_type"] = ev.event_type
+    facets["event_type"] = event_type
     if ev.event_date:
         facets["event_date"] = ev.event_date
     facets["status"] = ev.status
@@ -774,9 +821,11 @@ def _build_event_node(ev: Any, *, doc_id: str, source_meta: dict[str, Any], now:
     )
 
 
-def _build_view_node(vw: Any, *, doc_id: str, source_meta: dict[str, Any], now: datetime) -> Node:
+def _build_view_node(
+    vw: Any, *, view_type: str | None, doc_id: str, source_meta: dict[str, Any], now: datetime
+) -> Node:
     facets = facets_list_to_dict(vw.facets)
-    vtype = vw.view_type
+    vtype = view_type
     if vtype == "consensus":
         vtype = "pm_view"
     facets["view_type"] = vtype

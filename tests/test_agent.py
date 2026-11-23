@@ -89,16 +89,16 @@ def _seed_db(db_path: Path) -> None:
             db.upsert_node(node, embedding=_unit_vec(idx))
 
         db.upsert_edge(
-            Edge(id="ed1", from_id="evt_q3", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_nvda_q3")
+            Edge(id="ed1", from_id="evt_q3", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_nvda_q3", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed2", from_id="ent_vrt", to_id="thm_power", relation="BENEFITS_FROM")
+            Edge(id="ed2", from_id="ent_vrt", to_id="thm_power", relation="BENEFITS_FROM", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed3", from_id="ent_nvda", to_id="thm_power", relation="EXPOSED_TO")
+            Edge(id="ed3", from_id="ent_nvda", to_id="thm_power", relation="EXPOSED_TO", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed4", from_id="ent_tsmc", to_id="ent_nvda", relation="SUPPLIES_TO")
+            Edge(id="ed4", from_id="ent_tsmc", to_id="ent_nvda", relation="SUPPLIES_TO", facets={"basis": "extracted"})
         )
         db.upsert_consensus_view(
             "ent_nvda",
@@ -358,10 +358,10 @@ def test_agent_ux3_query_entity_signals_negative_rumors_and_news(tmp_path: Path)
             db.upsert_node(node, embedding=_unit_vec(idx))
 
         db.upsert_edge(
-            Edge(id="es1", from_id="evt_sec", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_s1")
+            Edge(id="es1", from_id="evt_sec", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_s1", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="es2", from_id="vw_delay", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_s2")
+            Edge(id="es2", from_id="vw_delay", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_s2", facets={"basis": "extracted"})
         )
         db.upsert_edge(
             Edge(
@@ -369,7 +369,7 @@ def test_agent_ux3_query_entity_signals_negative_rumors_and_news(tmp_path: Path)
                 from_id="evt_dual",
                 to_id="ent_nvda",
                 relation="ABOUT",
-                facets={"sentiment": "negative"},
+                facets={"sentiment": "negative", "basis": "extracted"},
                 source_doc_id="doc_s3",
             )
         )
@@ -379,15 +379,15 @@ def test_agent_ux3_query_entity_signals_negative_rumors_and_news(tmp_path: Path)
                 from_id="evt_dual",
                 to_id="ent_aapl",
                 relation="ABOUT",
-                facets={"sentiment": "positive"},
+                facets={"sentiment": "positive", "basis": "extracted"},
                 source_doc_id="doc_s3",
             )
         )
         db.upsert_edge(
-            Edge(id="es4", from_id="evt_win", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_s4")
+            Edge(id="es4", from_id="evt_win", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_s4", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="es5", from_id="evt_old", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_s5")
+            Edge(id="es5", from_id="evt_old", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_s5", facets={"basis": "extracted"})
         )
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
@@ -686,7 +686,7 @@ def _seed_search_db(db_path: Path) -> None:
             node_type="view",
             name="Consensus: Buy Apple Inc.",
             summary="Maintain Buy on services growth.",
-            facets={"stance": "buy"},
+            facets={"stance": "buy", "view_type": "analyst_report"},
         )
         db.upsert_consensus_view("ent_aapl", cons, _unit_vec(9), supporting_ids=[], contradicting_ids=[])
 

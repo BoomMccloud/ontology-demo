@@ -52,6 +52,10 @@ from stock_ontology.vocab import (
 )
 
 
+REGISTRY_VERSION_KEY = "registry_version"
+"""`db_metadata` key holding the registry version the stored facets were migrated to."""
+
+
 def _edge_rank(relation: Any, edge_facets: dict[str, Any]) -> tuple[int, int]:
     """Rank duplicate edges to one neighbor: prefer a known sentiment, then ABOUT."""
     return (
@@ -87,6 +91,9 @@ class OntologyDB:
         self.registry: OntologyRegistry = (
             registry if registry is not None else create_minimal_registry()
         )
+        # Writes are always checked against `self.registry`; the default declares the shipped schema.
+        # Only an explicit registry migrates and stamps on open, so opening without one leaves rows as stored.
+        self._explicit_registry = registry is not None
         self._tx_depth = 0
 
         if self.read_only and self.db_path != ":memory:" and not Path(self.db_path).exists():
@@ -142,6 +149,58 @@ class OntologyDB:
         lookup_existed = self._has_node_lookup()
         init_schema(self.conn, self.embedding_dim)
         self._migrate_schema(backfill_lookup=not lookup_existed)
+        if self._explicit_registry:
+            self._migrate_facets_if_older()
+
+    def use_registry(self, registry: OntologyRegistry) -> None:
+        """Write under `registry` from now on; a writable DB stamped older is migrated to it."""
+        self.registry = registry
+        self._explicit_registry = True
+        if not self.read_only:
+            self._migrate_facets_if_older()
+
+    def _migrate_facets_if_older(self) -> None:
+        """Migrate stored facets when the DB's `registry_version` stamp is missing or older.
+
+        Only an explicit registry that declares a `facet_schema` migrates or stamps. Read-only opens never call this.
+        """
+        if not self.registry.facet_schema:
+            return
+        stamp = self.get_metadata(REGISTRY_VERSION_KEY)
+        if stamp is not None and stamp.isdigit() and int(stamp) >= self.registry.version:
+            return
+        self.migrate_facets()
+
+    def migrate_facets(self, registry: OntologyRegistry | None = None) -> int:
+        """Coerce every stored official facet to its registry kind where lossless, then stamp the version.
+
+        Uses `registry` (default: this DB's) without changing what writes are checked against.
+        Values that cannot be coerced stay as stored. A registry with no `facet_schema` does
+        nothing. Returns how many nodes and edges changed.
+        """
+        reg = registry if registry is not None else self.registry
+        if not reg.facet_schema:
+            return 0
+        changed = 0
+        with self.transaction():
+            for r in self.conn.execute("SELECT id, node_type, facets_json FROM nodes").fetchall():
+                facets = json.loads(r["facets_json"] or "{}")
+                migrated = reg.migrate_facets(str(r["node_type"]), facets)
+                if migrated != facets:
+                    self.conn.execute(
+                        "UPDATE nodes SET facets_json = ? WHERE id = ?", (json.dumps(migrated), r["id"])
+                    )
+                    changed += 1
+            for r in self.conn.execute("SELECT id, facets_json FROM edges").fetchall():
+                facets = json.loads(r["facets_json"] or "{}")
+                migrated = reg.migrate_facets(None, facets)
+                if migrated != facets:
+                    self.conn.execute(
+                        "UPDATE edges SET facets_json = ? WHERE id = ?", (json.dumps(migrated), r["id"])
+                    )
+                    changed += 1
+            self.set_metadata(REGISTRY_VERSION_KEY, str(reg.version))
+        return changed
 
     def _migrate_schema(self, *, backfill_lookup: bool) -> None:
         """Backfill derived data for databases created by older versions.
@@ -195,6 +254,7 @@ class OntologyDB:
             raise ValueError(  # noqa: TRY003
                 f"Embedding dimension mismatch: expected {self.embedding_dim}, got {len(embedding)}"
             )
+        facets = self.registry.check_facets(node.node_type, node.facets)
         with self.transaction():
             self.conn.execute(
                 """
@@ -217,7 +277,7 @@ class OntologyDB:
                     node.name,
                     node.summary,
                     json.dumps(node.aliases),
-                    json.dumps(node.facets),
+                    json.dumps(facets),
                     node.source_doc_id,
                     node.created_at.isoformat(),
                     node.updated_at.isoformat(),
@@ -245,13 +305,16 @@ class OntologyDB:
             ).fetchone()
             if existing is not None:
                 existing_facets = json.loads(existing["facets_json"])
-                merged_facets = merge_edge_facets(existing_facets, edge.facets)
+                merged_facets = self.registry.check_facets(
+                    None, merge_edge_facets(existing_facets, edge.facets)
+                )
                 self.conn.execute(
                     "UPDATE edges SET facets_json = ? WHERE id = ?",
                     (json.dumps(merged_facets), existing["id"]),
                 )
                 return str(existing["id"])
 
+            facets = self.registry.check_facets(None, edge.facets)
             self.conn.execute(
                 """
                 INSERT INTO edges (id, from_id, to_id, relation, facets_json, source_doc_id, created_at)
@@ -262,7 +325,7 @@ class OntologyDB:
                     edge.from_id,
                     edge.to_id,
                     norm_rel,
-                    json.dumps(edge.facets),
+                    json.dumps(facets),
                     edge.source_doc_id,
                     edge.created_at.isoformat(),
                 ),
@@ -351,6 +414,7 @@ class OntologyDB:
         facets: dict[str, Any],
     ) -> None:
         """Overwrite an edge's relation, endpoints, and facets in place."""
+        facets = self.registry.check_facets(None, facets)
         with self.transaction():
             self.conn.execute(
                 "UPDATE edges SET relation = ?, from_id = ?, to_id = ?, facets_json = ? WHERE id = ?",

@@ -120,19 +120,19 @@ def _seed_web_db(db_path: Path) -> None:
             db.upsert_node(n, embedding=_unit_vec(idx))
 
         db.upsert_edge(
-            Edge(id="ed1", from_id="evt_q3", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1")
+            Edge(id="ed1", from_id="evt_q3", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed2", from_id="vw_analyst", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1")
+            Edge(id="ed2", from_id="vw_analyst", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed3", from_id="ent_nvda", to_id="thm_power", relation="EXPOSED_TO")
+            Edge(id="ed3", from_id="ent_nvda", to_id="thm_power", relation="EXPOSED_TO", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed4", from_id="ent_tsmc", to_id="ent_nvda", relation="SUPPLIES_TO")
+            Edge(id="ed4", from_id="ent_tsmc", to_id="ent_nvda", relation="SUPPLIES_TO", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed5", from_id="evt_q3", to_id="ent_kenji", relation="AUTHORED_BY", source_doc_id="doc_1")
+            Edge(id="ed5", from_id="evt_q3", to_id="ent_kenji", relation="AUTHORED_BY", source_doc_id="doc_1", facets={"basis": "extracted"})
         )
         db.upsert_consensus_view("ent_nvda", cons, _unit_vec(7), ["evt_q3", "vw_analyst", "thm_power"], [])
 
@@ -394,7 +394,7 @@ def test_web_renders_sentiment_badges_and_edge_overrides(tmp_path: Path) -> None
                 from_id="evt_modem",
                 to_id="ent_aapl",
                 relation="ABOUT",
-                facets={"sentiment": "positive"},
+                facets={"sentiment": "positive", "basis": "extracted"},
                 source_doc_id="doc_1",
             )
         )
@@ -404,18 +404,18 @@ def test_web_renders_sentiment_badges_and_edge_overrides(tmp_path: Path) -> None
                 from_id="evt_modem",
                 to_id="ent_qcom",
                 relation="ABOUT",
-                facets={"sentiment": "negative"},
+                facets={"sentiment": "negative", "basis": "extracted"},
                 source_doc_id="doc_1",
             )
         )
         db.upsert_edge(
-            Edge(id="ed_thm", from_id="evt_modem", to_id="thm_edge", relation="RELATES_TO", source_doc_id="doc_1")
+            Edge(id="ed_thm", from_id="evt_modem", to_id="thm_edge", relation="RELATES_TO", source_doc_id="doc_1", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed_vw", from_id="vw_rumor", to_id="ent_qcom", relation="ABOUT", source_doc_id="doc_2")
+            Edge(id="ed_vw", from_id="vw_rumor", to_id="ent_qcom", relation="ABOUT", source_doc_id="doc_2", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed_leg", from_id="evt_legacy", to_id="ent_aapl", relation="ABOUT", source_doc_id="doc_0")
+            Edge(id="ed_leg", from_id="evt_legacy", to_id="ent_aapl", relation="ABOUT", source_doc_id="doc_0", facets={"basis": "extracted"})
         )
 
     settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=tmp_path)
@@ -512,7 +512,7 @@ def test_web_nav_and_advanced_search_filters(tmp_path: Path) -> None:
                 from_id="evt_modem",
                 to_id="ent_aapl",
                 relation="ABOUT",
-                facets={"sentiment": "positive"},
+                facets={"sentiment": "positive", "basis": "extracted"},
                 source_doc_id="doc_1",
             )
         )
@@ -522,15 +522,15 @@ def test_web_nav_and_advanced_search_filters(tmp_path: Path) -> None:
                 from_id="evt_modem",
                 to_id="ent_qcom",
                 relation="ABOUT",
-                facets={"sentiment": "negative"},
+                facets={"sentiment": "negative", "basis": "extracted"},
                 source_doc_id="doc_1",
             )
         )
         db.upsert_edge(
-            Edge(id="ed_vw", from_id="vw_rumor", to_id="ent_qcom", relation="ABOUT", source_doc_id="doc_2")
+            Edge(id="ed_vw", from_id="vw_rumor", to_id="ent_qcom", relation="ABOUT", source_doc_id="doc_2", facets={"basis": "extracted"})
         )
         db.upsert_edge(
-            Edge(id="ed_leg", from_id="evt_legacy", to_id="ent_aapl", relation="ABOUT", source_doc_id="doc_0")
+            Edge(id="ed_leg", from_id="evt_legacy", to_id="ent_aapl", relation="ABOUT", source_doc_id="doc_0", facets={"basis": "extracted"})
         )
 
     settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=tmp_path)
@@ -615,7 +615,7 @@ def test_web_catalog_screen_by_company_and_person_and_safety(tmp_path: Path) -> 
                 from_id="evt_q3",
                 to_id="ent_jensen_ceo",
                 relation="AUTHORED_BY",
-                source_doc_id="doc_1",
+                source_doc_id="doc_1", facets={"basis": "extracted"},
             )
         )
         db.upsert_edge(
@@ -624,7 +624,7 @@ def test_web_catalog_screen_by_company_and_person_and_safety(tmp_path: Path) -> 
                 from_id="vw_analyst",
                 to_id="ent_stacy_analyst",
                 relation="AUTHORED_BY",
-                source_doc_id="doc_1",
+                source_doc_id="doc_1", facets={"basis": "extracted"},
             )
         )
 
@@ -1099,14 +1099,14 @@ def test_web_ontology_view_connected_to_registry_and_audit(tmp_path: Path) -> No
             db.upsert_node(node, embedding=vec)
 
         for edge in (
-            Edge(id="ed1", from_id="evt_q3", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1"),
-            Edge(id="ed2", from_id="vw_note", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1"),
-            Edge(id="ed3", from_id="ent_vrt", to_id="ent_nvda", relation="SUPPLIES_TO"),
-            Edge(id="ed4", from_id="ent_vrt", to_id="ent_nvda", relation="COMPETES_WITH"),
-            Edge(id="ed5", from_id="ent_nvda", to_id="ent_kenji", relation="HAS_EMPLOYEE"),
-            Edge(id="ed6", from_id="ent_nvda", to_id="ent_kenji", relation="WORKS_AT"),
-            Edge(id="ed7", from_id="thm_power", to_id="ent_vrt", relation="BENEFITS_FROM"),
-            Edge(id="ed8", from_id="ent_nvda", to_id="ent_blackwell", relation="PRODUCES"),
+            Edge(id="ed1", from_id="evt_q3", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="ed2", from_id="vw_note", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="ed3", from_id="ent_vrt", to_id="ent_nvda", relation="SUPPLIES_TO", facets={"basis": "extracted"}),
+            Edge(id="ed4", from_id="ent_vrt", to_id="ent_nvda", relation="COMPETES_WITH", facets={"basis": "extracted"}),
+            Edge(id="ed5", from_id="ent_nvda", to_id="ent_kenji", relation="HAS_EMPLOYEE", facets={"basis": "extracted"}),
+            Edge(id="ed6", from_id="ent_nvda", to_id="ent_kenji", relation="WORKS_AT", facets={"basis": "extracted"}),
+            Edge(id="ed7", from_id="thm_power", to_id="ent_vrt", relation="BENEFITS_FROM", facets={"basis": "extracted"}),
+            Edge(id="ed8", from_id="ent_nvda", to_id="ent_blackwell", relation="PRODUCES", facets={"basis": "extracted"}),
         ):
             db.upsert_edge(edge)
 
@@ -1262,7 +1262,7 @@ def test_web_1997_home_minimal_link_cap(tmp_path: Path) -> None:
                         id=f"ed_{idx}_{c_idx}",
                         from_id=f"ent_co_{c_idx:02d}",
                         to_id=thm.id,
-                        relation="EXPOSED_TO",
+                        relation="EXPOSED_TO", facets={"basis": "extracted"},
                     )
                 )
 
@@ -1334,9 +1334,9 @@ def test_web_clean_reader_pages_no_db_ids_plumbing_or_italic_markers(tmp_path: P
         )
         for idx, n in enumerate([comp, thm, evt_bridge, evt_docid_only]):
             db.upsert_node(n, embedding=_unit_vec(idx))
-        db.upsert_edge(Edge(id="e1", from_id=evt_bridge.id, to_id=comp.id, relation="ABOUT"))
-        db.upsert_edge(Edge(id="e2", from_id=evt_bridge.id, to_id=thm.id, relation="SUPPORTS"))
-        db.upsert_edge(Edge(id="e3", from_id=evt_docid_only.id, to_id=comp.id, relation="ABOUT"))
+        db.upsert_edge(Edge(id="e1", from_id=evt_bridge.id, to_id=comp.id, relation="ABOUT", facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="e2", from_id=evt_bridge.id, to_id=thm.id, relation="SUPPORTS", facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="e3", from_id=evt_docid_only.id, to_id=comp.id, relation="ABOUT", facets={"basis": "extracted"}))
 
     data_dir = tmp_path / "data"
     acme_dir = data_dir / "ACME"
@@ -1451,13 +1451,13 @@ def test_home_themes_table_counts_companies_views_and_events(tmp_path: Path) -> 
         for idx, n in enumerate(nodes):
             db.upsert_node(n, embedding=_unit_vec(idx))
         for edge in [
-            Edge(id="e1", from_id="ent_a", to_id="thm_grid", relation="EXPOSED_TO"),
-            Edge(id="e2", from_id="ent_b", to_id="thm_grid", relation="EXPOSED_TO"),
-            Edge(id="e3", from_id="vw_1", to_id="thm_grid", relation="SUPPORTS"),
+            Edge(id="e1", from_id="ent_a", to_id="thm_grid", relation="EXPOSED_TO", facets={"basis": "extracted"}),
+            Edge(id="e2", from_id="ent_b", to_id="thm_grid", relation="EXPOSED_TO", facets={"basis": "extracted"}),
+            Edge(id="e3", from_id="vw_1", to_id="thm_grid", relation="SUPPORTS", facets={"basis": "extracted"}),
             # A second edge to the same view must not double-count it.
-            Edge(id="e4", from_id="vw_1", to_id="thm_grid", relation="ABOUT"),
-            Edge(id="e5", from_id="vw_2", to_id="thm_grid", relation="CONTRADICTS"),
-            Edge(id="e6", from_id="evt_1", to_id="thm_grid", relation="ABOUT"),
+            Edge(id="e4", from_id="vw_1", to_id="thm_grid", relation="ABOUT", facets={"basis": "extracted"}),
+            Edge(id="e5", from_id="vw_2", to_id="thm_grid", relation="CONTRADICTS", facets={"basis": "extracted"}),
+            Edge(id="e6", from_id="evt_1", to_id="thm_grid", relation="ABOUT", facets={"basis": "extracted"}),
         ]:
             db.upsert_edge(edge)
 
@@ -1594,14 +1594,14 @@ def _seed_presentation_db(db_path: Path) -> None:
         for idx, n in enumerate(nodes):
             db.upsert_node(n, embedding=_unit_vec(idx))
         for edge in [
-            Edge(id="p1", from_id="evt_capex", to_id="ent_tsmc", relation="ABOUT", facets={"sentiment": "positive"}, source_doc_id="doc_c"),
-            Edge(id="p2", from_id="evt_old", to_id="ent_tsmc", relation="ABOUT", source_doc_id="doc_o"),
-            Edge(id="p3", from_id="vw_rumor", to_id="ent_tsmc", relation="ABOUT", source_doc_id="doc_r"),
-            Edge(id="p4", from_id="ent_tsmc", to_id="thm_ai", relation="EXPOSED_TO", facets={"sentiment": "positive"}),
-            Edge(id="p5", from_id="ent_asml", to_id="ent_tsmc", relation="SUPPLIES_TO"),
-            Edge(id="p6", from_id="ent_wei", to_id="ent_tsmc", relation="WORKS_AT"),
-            Edge(id="p7", from_id="evt_capex", to_id="thm_ai", relation="RELATES_TO", facets={"sentiment": "positive"}, source_doc_id="doc_c"),
-            Edge(id="p8", from_id="vw_rumor", to_id="thm_ai", relation="CONTRADICTS", source_doc_id="doc_r"),
+            Edge(id="p1", from_id="evt_capex", to_id="ent_tsmc", relation="ABOUT", facets={"sentiment": "positive", "basis": "extracted"}, source_doc_id="doc_c"),
+            Edge(id="p2", from_id="evt_old", to_id="ent_tsmc", relation="ABOUT", source_doc_id="doc_o", facets={"basis": "extracted"}),
+            Edge(id="p3", from_id="vw_rumor", to_id="ent_tsmc", relation="ABOUT", source_doc_id="doc_r", facets={"basis": "extracted"}),
+            Edge(id="p4", from_id="ent_tsmc", to_id="thm_ai", relation="EXPOSED_TO", facets={"sentiment": "positive", "basis": "extracted"}),
+            Edge(id="p5", from_id="ent_asml", to_id="ent_tsmc", relation="SUPPLIES_TO", facets={"basis": "extracted"}),
+            Edge(id="p6", from_id="ent_wei", to_id="ent_tsmc", relation="WORKS_AT", facets={"basis": "extracted"}),
+            Edge(id="p7", from_id="evt_capex", to_id="thm_ai", relation="RELATES_TO", facets={"sentiment": "positive", "basis": "extracted"}, source_doc_id="doc_c"),
+            Edge(id="p8", from_id="vw_rumor", to_id="thm_ai", relation="CONTRADICTS", source_doc_id="doc_r", facets={"basis": "extracted"}),
         ]:
             db.upsert_edge(edge)
         old_cons = Node(
@@ -1609,7 +1609,7 @@ def _seed_presentation_db(db_path: Path) -> None:
             node_type="view",
             name="Consensus: Hold TSMC",
             summary="Hold pending capex clarity.",
-            facets={"stance": "hold", "as_of": "2026-09-01"},
+            facets={"stance": "hold", "as_of": "2026-09-01", "view_type": "analyst_report"},
         )
         db.upsert_consensus_view("ent_tsmc", old_cons, _unit_vec(8), ["evt_old"], [])
         new_cons = Node(
@@ -1622,7 +1622,7 @@ def _seed_presentation_db(db_path: Path) -> None:
                 "support_strength": "strong",
                 "conviction": "high",
                 "as_of": "2026-11-15",
-                "pillars": ["AI wafer demand"],
+                "pillars": ["AI wafer demand"], "view_type": "analyst_report",
             },
         )
         db.upsert_consensus_view("ent_tsmc", new_cons, _unit_vec(9), ["evt_capex"], ["vw_rumor"])
@@ -1768,9 +1768,9 @@ def _seed_search_db(db_path: Path) -> None:
         db.upsert_node(aapl, embedding=_unit_vec(2))
         db.upsert_node(theme, embedding=_unit_vec(3))
         db.upsert_node(event, embedding=_unit_vec(4))
-        db.upsert_edge(Edge(id="se1", from_id="ent_nvda", to_id="thm_power", relation="EXPOSED_TO"))
+        db.upsert_edge(Edge(id="se1", from_id="ent_nvda", to_id="thm_power", relation="EXPOSED_TO", facets={"basis": "extracted"}))
         db.upsert_edge(
-            Edge(id="se2", from_id="evt_nvda_q3", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_q3")
+            Edge(id="se2", from_id="evt_nvda_q3", to_id="ent_nvda", relation="ABOUT", source_doc_id="doc_q3", facets={"basis": "extracted"})
         )
         # FakeWebLLM embeds every query as _unit_vec(0), so this consensus is the nearest vector.
         cons = Node(
@@ -1778,7 +1778,7 @@ def _seed_search_db(db_path: Path) -> None:
             node_type="view",
             name="Consensus: Buy Apple Inc.",
             summary="Maintain Buy on services growth.",
-            facets={"stance": "buy", "as_of": "2026-11-15"},
+            facets={"stance": "buy", "as_of": "2026-11-15", "view_type": "analyst_report"},
         )
         db.upsert_consensus_view("ent_aapl", cons, _unit_vec(0), [], [])
 
@@ -2164,7 +2164,13 @@ def _seed_basis_theme_db(db_path: Path) -> None:
             ("eb6", "vw_soft", "ABOUT", "ent_msft", {"basis": "extracted"}),
         ]
         for eid, src, rel, dst, facets in edges:
-            db.upsert_edge(Edge(id=eid, from_id=src, to_id=dst, relation=rel, facets=facets, source_doc_id="doc_b"))
+            stored = facets or {"basis": "extracted"}
+            db.upsert_edge(Edge(id=eid, from_id=src, to_id=dst, relation=rel, facets=stored, source_doc_id="doc_b"))
+        # eb3 and eb4 are legacy rows written before `basis` was required: strip it by raw SQL.
+        with db.transaction():
+            db.conn.execute(
+                "UPDATE edges SET facets_json = json_remove(facets_json, '$.basis') WHERE id IN ('eb3', 'eb4')"
+            )
         cons = Node(
             id="vw_cons_msft",
             node_type="view",

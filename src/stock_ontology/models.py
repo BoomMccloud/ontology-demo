@@ -163,14 +163,17 @@ def _choices(members: tuple[str, ...]) -> str:
     return " | ".join(members)
 
 
-CoercedEntityType = Annotated[EntityType, _ingest_coercer(ENTITY_TYPE)]
-CoercedEventType = Annotated[EventType, _ingest_coercer(EVENT_TYPE)]
+# Required subtypes (registry `facet_schema`): an out-of-vocabulary value becomes None instead of
+# the fallback, and the default applies only when the field is omitted. Under a registry that
+# requires the facet, the pipeline treats either as missing and regenerates the extraction.
+CoercedEntityType = Annotated[EntityType | None, BeforeValidator(ENTITY_TYPE.coerce)]
+CoercedEventType = Annotated[EventType | None, BeforeValidator(EVENT_TYPE.coerce)]
 CoercedEventStatus = Annotated[EventStatus, _ingest_coercer(EVENT_STATUS)]
-CoercedViewType = Annotated[ViewType, _ingest_coercer(VIEW_TYPE)]
+CoercedViewType = Annotated[ViewType | None, BeforeValidator(VIEW_TYPE.coerce)]
 CoercedStance = Annotated[Stance, _ingest_coercer(STANCE)]
 CoercedSupportStrength = Annotated[SupportStrength, _ingest_coercer(SUPPORT_STRENGTH)]
 CoercedConviction = Annotated[Conviction, _ingest_coercer(CONVICTION)]
-CoercedStage = Annotated[Stage, _ingest_coercer(STAGE)]
+CoercedStage = Annotated[Stage | None, BeforeValidator(STAGE.coerce)]
 # An unknown sentiment is treated as missing, so `resolve_item_sentiment` precedence applies.
 CoercedSentiment = Annotated[Sentiment | None, BeforeValidator(SENTIMENT.coerce)]
 

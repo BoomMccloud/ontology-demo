@@ -252,48 +252,48 @@ def _seed_read_consolidation_db(db_path: Path) -> None:
 
         edges = [
             # Multi-doc duplicate + reversed + RELATES_TO theme links on Vertiv -> positive
-            Edge(id="e_vp1", from_id="ent_vrt", to_id="thm_power", relation="BENEFITS_FROM", source_doc_id="doc_1"),
-            Edge(id="e_vp2", from_id="thm_power", to_id="ent_vrt", relation="BENEFITS_FROM", source_doc_id="doc_2"),
-            Edge(id="e_vp3", from_id="ent_vrt", to_id="thm_power", relation="RELATES_TO", source_doc_id="doc_3"),
+            Edge(id="e_vp1", from_id="ent_vrt", to_id="thm_power", relation="BENEFITS_FROM", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_vp2", from_id="thm_power", to_id="ent_vrt", relation="BENEFITS_FROM", source_doc_id="doc_2", facets={"basis": "extracted"}),
+            Edge(id="e_vp3", from_id="ent_vrt", to_id="thm_power", relation="RELATES_TO", source_doc_id="doc_3", facets={"basis": "extracted"}),
             Edge(
                 id="e_vp4",
                 from_id="ent_vrt",
                 to_id="thm_power",
                 relation="EXPOSED_TO",
-                facets={"sentiment": "positive"},
+                facets={"sentiment": "positive", "basis": "extracted"},
                 source_doc_id="doc_4",
             ),
             # Indirect event link to thm_power
-            Edge(id="e_ev_vrt", from_id="evt_rack", to_id="ent_vrt", relation="ABOUT", source_doc_id="doc_1"),
-            Edge(id="e_ev_pwr", from_id="evt_rack", to_id="thm_power", relation="RELATES_TO", source_doc_id="doc_1"),
+            Edge(id="e_ev_vrt", from_id="evt_rack", to_id="ent_vrt", relation="ABOUT", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_ev_pwr", from_id="evt_rack", to_id="thm_power", relation="RELATES_TO", source_doc_id="doc_1", facets={"basis": "extracted"}),
             # Negative theme exposure across docs (one reversed)
-            Edge(id="e_vt1", from_id="ent_vrt", to_id="thm_tariff", relation="HURT_BY", source_doc_id="doc_1"),
-            Edge(id="e_vt2", from_id="thm_tariff", to_id="ent_vrt", relation="HURT_BY", source_doc_id="doc_2"),
+            Edge(id="e_vt1", from_id="ent_vrt", to_id="thm_tariff", relation="HURT_BY", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_vt2", from_id="thm_tariff", to_id="ent_vrt", relation="HURT_BY", source_doc_id="doc_2", facets={"basis": "extracted"}),
             # Mixed theme exposure across docs
-            Edge(id="e_vc1", from_id="ent_vrt", to_id="thm_capex", relation="BENEFITS_FROM", source_doc_id="doc_1"),
-            Edge(id="e_vc2", from_id="ent_vrt", to_id="thm_capex", relation="HURT_BY", source_doc_id="doc_2"),
+            Edge(id="e_vc1", from_id="ent_vrt", to_id="thm_capex", relation="BENEFITS_FROM", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_vc2", from_id="ent_vrt", to_id="thm_capex", relation="HURT_BY", source_doc_id="doc_2", facets={"basis": "extracted"}),
             # Second affected company on thm_power
-            Edge(id="e_np1", from_id="ent_nvda", to_id="thm_power", relation="BENEFITS_FROM", source_doc_id="doc_1"),
+            Edge(id="e_np1", from_id="ent_nvda", to_id="thm_power", relation="BENEFITS_FROM", source_doc_id="doc_1", facets={"basis": "extracted"}),
             Edge(
                 id="e_np2",
                 from_id="ent_nvda",
                 to_id="thm_power",
                 relation="EXPOSED_TO",
-                facets={"sentiment": "positive"},
+                facets={"sentiment": "positive", "basis": "extracted"},
                 source_doc_id="doc_2",
             ),
             # Entity-to-entity multi-doc/inverse/symmetric links on Vertiv
-            Edge(id="e_buy1", from_id="ent_vrt", to_id="ent_tsmc", relation="CUSTOMER_OF", source_doc_id="doc_1"),
-            Edge(id="e_buy2", from_id="ent_tsmc", to_id="ent_vrt", relation="SUPPLIES_TO", source_doc_id="doc_2"),
-            Edge(id="e_sell1", from_id="ent_nvda", to_id="ent_vrt", relation="CUSTOMER_OF", source_doc_id="doc_1"),
-            Edge(id="e_sell2", from_id="ent_vrt", to_id="ent_nvda", relation="SUPPLIES_TO", source_doc_id="doc_2"),
-            Edge(id="e_cmp1", from_id="ent_vrt", to_id="ent_schn", relation="COMPETES_WITH", source_doc_id="doc_1"),
-            Edge(id="e_cmp2", from_id="ent_schn", to_id="ent_vrt", relation="COMPETES_WITH", source_doc_id="doc_2"),
-            Edge(id="e_own_sub", from_id="ent_sub", to_id="ent_vrt", relation="SUBSIDIARY_OF", source_doc_id="doc_1"),
-            Edge(id="e_own_par1", from_id="ent_vrt", to_id="ent_parent", relation="SUBSIDIARY_OF", source_doc_id="doc_1"),
-            Edge(id="e_own_par2", from_id="ent_parent", to_id="ent_vrt", relation="OWNS", source_doc_id="doc_2"),
-            Edge(id="e_emp1", from_id="ent_vrt", to_id="ent_jane", relation="HAS_EMPLOYEE", source_doc_id="doc_1"),
-            Edge(id="e_emp2", from_id="ent_vrt", to_id="ent_jane", relation="WORKS_AT", source_doc_id="doc_2"),
+            Edge(id="e_buy1", from_id="ent_vrt", to_id="ent_tsmc", relation="CUSTOMER_OF", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_buy2", from_id="ent_tsmc", to_id="ent_vrt", relation="SUPPLIES_TO", source_doc_id="doc_2", facets={"basis": "extracted"}),
+            Edge(id="e_sell1", from_id="ent_nvda", to_id="ent_vrt", relation="CUSTOMER_OF", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_sell2", from_id="ent_vrt", to_id="ent_nvda", relation="SUPPLIES_TO", source_doc_id="doc_2", facets={"basis": "extracted"}),
+            Edge(id="e_cmp1", from_id="ent_vrt", to_id="ent_schn", relation="COMPETES_WITH", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_cmp2", from_id="ent_schn", to_id="ent_vrt", relation="COMPETES_WITH", source_doc_id="doc_2", facets={"basis": "extracted"}),
+            Edge(id="e_own_sub", from_id="ent_sub", to_id="ent_vrt", relation="SUBSIDIARY_OF", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_own_par1", from_id="ent_vrt", to_id="ent_parent", relation="SUBSIDIARY_OF", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_own_par2", from_id="ent_parent", to_id="ent_vrt", relation="OWNS", source_doc_id="doc_2", facets={"basis": "extracted"}),
+            Edge(id="e_emp1", from_id="ent_vrt", to_id="ent_jane", relation="HAS_EMPLOYEE", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_emp2", from_id="ent_vrt", to_id="ent_jane", relation="WORKS_AT", source_doc_id="doc_2", facets={"basis": "extracted"}),
         ]
         for edge in edges:
             db.upsert_edge(edge)
@@ -460,11 +460,11 @@ class _WriteNormalizationFakeLLM:
                 ExtractedEntity(temp_id="c_org", name="Zeta Labs", summary="Research lab.", entity_type="company"),
             ],
             themes=[
-                ExtractedTheme(temp_id="t_pos", name="Power Cooling", summary="Cooling demand."),
-                ExtractedTheme(temp_id="t_neg", name="Export Curbs", summary="Tariff & export risk."),
-                ExtractedTheme(temp_id="t_rev", name="Domestic Reshoring", summary="US fab buildout."),
-                ExtractedTheme(temp_id="t_rel", name="Edge Inference", summary="On-device inference."),
-                ExtractedTheme(temp_id="t_mix", name="Capex Cycle", summary="Mixed capex cycle."),
+                ExtractedTheme(temp_id="t_pos", name="Power Cooling", summary="Cooling demand.", stage="accelerating"),
+                ExtractedTheme(temp_id="t_neg", name="Export Curbs", summary="Tariff & export risk.", stage="accelerating"),
+                ExtractedTheme(temp_id="t_rev", name="Domestic Reshoring", summary="US fab buildout.", stage="accelerating"),
+                ExtractedTheme(temp_id="t_rel", name="Edge Inference", summary="On-device inference.", stage="accelerating"),
+                ExtractedTheme(temp_id="t_mix", name="Capex Cycle", summary="Mixed capex cycle.", stage="accelerating"),
             ],
             edges=[
                 ExtractedEdge(from_ref="c_seller", to_ref="c_buyer", relation="SUPPLIES_TO"),
@@ -593,10 +593,10 @@ def test_registry_driven_repair_and_reciprocal_contradiction_audit(tmp_path: Pat
             Node(id="ent_child", node_type="entity", name="SubCo", summary="Sub.", facets={"entity_type": "company"}),
             Node(id="ent_p1", node_type="entity", name="Alice", summary="Analyst.", facets={"entity_type": "person"}),
             Node(id="ent_p2", node_type="entity", name="Bob", summary="Engineer.", facets={"entity_type": "person"}),
-            Node(id="thm_1", node_type="theme", name="Power Cooling", summary="T1."),
-            Node(id="thm_2", node_type="theme", name="Tariff Risk", summary="T2."),
-            Node(id="thm_3", node_type="theme", name="AI Capex", summary="T3."),
-            Node(id="thm_4", node_type="theme", name="Grid Expansion", summary="T4."),
+            Node(id="thm_1", node_type="theme", name="Power Cooling", summary="T1.", facets={"stage": "accelerating"}),
+            Node(id="thm_2", node_type="theme", name="Tariff Risk", summary="T2.", facets={"stage": "accelerating"}),
+            Node(id="thm_3", node_type="theme", name="AI Capex", summary="T3.", facets={"stage": "accelerating"}),
+            Node(id="thm_4", node_type="theme", name="Grid Expansion", summary="T4.", facets={"stage": "accelerating"}),
         ]
         for idx, node in enumerate(nodes):
             db.upsert_node(node, embedding=_unit_vec(idx))
@@ -606,39 +606,39 @@ def test_registry_driven_repair_and_reciprocal_contradiction_audit(tmp_path: Pat
 
         legacy_edges = [
             # SUPPLIES_TO + CUSTOMER_OF in same doc collapse to single (ent_a, BUY, ent_b)
-            Edge(id="e_sup", from_id="ent_b", to_id="ent_a", relation="SUPPLIES_TO", source_doc_id="doc_1"),
-            Edge(id="e_cust", from_id="ent_a", to_id="ent_b", relation="CUSTOMER_OF", source_doc_id="doc_1"),
+            Edge(id="e_sup", from_id="ent_b", to_id="ent_a", relation="SUPPLIES_TO", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_cust", from_id="ent_a", to_id="ent_b", relation="CUSTOMER_OF", source_doc_id="doc_1", facets={"basis": "extracted"}),
             # Opposite COMPETES_WITH in same doc collapse to single canonical-order COMPETE
-            Edge(id="e_cmp_ba", from_id="ent_b", to_id="ent_a", relation="COMPETES_WITH", source_doc_id="doc_1"),
-            Edge(id="e_cmp_ab", from_id="ent_a", to_id="ent_b", relation="COMPETES_WITH", source_doc_id="doc_1"),
+            Edge(id="e_cmp_ba", from_id="ent_b", to_id="ent_a", relation="COMPETES_WITH", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_cmp_ab", from_id="ent_a", to_id="ent_b", relation="COMPETES_WITH", source_doc_id="doc_1", facets={"basis": "extracted"}),
             # SUBSIDIARY_OF -> OWNS
-            Edge(id="e_sub", from_id="ent_child", to_id="ent_parent", relation="SUBSIDIARY_OF", source_doc_id="doc_1"),
+            Edge(id="e_sub", from_id="ent_child", to_id="ent_parent", relation="SUBSIDIARY_OF", source_doc_id="doc_1", facets={"basis": "extracted"}),
             # HAS_EMPLOYEE & reversed WORKS_AT -> person WORKS_AT org
-            Edge(id="e_emp", from_id="ent_a", to_id="ent_p1", relation="HAS_EMPLOYEE", source_doc_id="doc_1"),
-            Edge(id="e_wrk_rev", from_id="ent_a", to_id="ent_p2", relation="WORKS_AT", source_doc_id="doc_1"),
+            Edge(id="e_emp", from_id="ent_a", to_id="ent_p1", relation="HAS_EMPLOYEE", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_wrk_rev", from_id="ent_a", to_id="ent_p2", relation="WORKS_AT", source_doc_id="doc_1", facets={"basis": "extracted"}),
             # Same-doc duplicate theme links with earliest ID empty-facets RELATES_TO must preserve facets on collapse
-            Edge(id="e_01_rel", from_id="ent_a", to_id="thm_1", relation="RELATES_TO", facets={}, source_doc_id="doc_1"),
-            Edge(id="e_02_ben", from_id="ent_a", to_id="thm_1", relation="BENEFITS_FROM", facets={}, source_doc_id="doc_1"),
+            Edge(id="e_01_rel", from_id="ent_a", to_id="thm_1", relation="RELATES_TO", facets={"basis": "extracted"}, source_doc_id="doc_1"),
+            Edge(id="e_02_ben", from_id="ent_a", to_id="thm_1", relation="BENEFITS_FROM", facets={"basis": "extracted"}, source_doc_id="doc_1"),
             Edge(
                 id="e_03_rev",
                 from_id="thm_1",
                 to_id="ent_a",
                 relation="EXPOSED_TO",
-                facets={"evidence": "rack power"},
+                facets={"evidence": "rack power", "basis": "extracted"},
                 source_doc_id="doc_1",
             ),
             # HURT_BY -> EXPOSED_TO negative
-            Edge(id="e_hurt", from_id="ent_a", to_id="thm_2", relation="HURT_BY", source_doc_id="doc_1"),
+            Edge(id="e_hurt", from_id="ent_a", to_id="thm_2", relation="HURT_BY", source_doc_id="doc_1", facets={"basis": "extracted"}),
             # BENEFITS_FROM + HURT_BY in same doc -> mixed
-            Edge(id="e_mix_1", from_id="ent_a", to_id="thm_3", relation="BENEFITS_FROM", source_doc_id="doc_1"),
-            Edge(id="e_mix_2", from_id="ent_a", to_id="thm_3", relation="HURT_BY", source_doc_id="doc_1"),
+            Edge(id="e_mix_1", from_id="ent_a", to_id="thm_3", relation="BENEFITS_FROM", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_mix_2", from_id="ent_a", to_id="thm_3", relation="HURT_BY", source_doc_id="doc_1", facets={"basis": "extracted"}),
             # Entity-theme RELATES_TO -> EXPOSED_TO
-            Edge(id="e_rel_4", from_id="ent_a", to_id="thm_4", relation="RELATES_TO", source_doc_id="doc_1"),
+            Edge(id="e_rel_4", from_id="ent_a", to_id="thm_4", relation="RELATES_TO", source_doc_id="doc_1", facets={"basis": "extracted"}),
             # Unmapped relation kept intact
-            Edge(id="e_unm", from_id="ent_a", to_id="ent_c", relation="PARTNERS_WITH", source_doc_id="doc_1"),
+            Edge(id="e_unm", from_id="ent_a", to_id="ent_c", relation="PARTNERS_WITH", source_doc_id="doc_1", facets={"basis": "extracted"}),
             # Reciprocal BUY contradiction across docs (must not guess direction)
-            Edge(id="e_rcp_1", from_id="ent_c", to_id="ent_d", relation="SUPPLIES_TO", source_doc_id="doc_1"),
-            Edge(id="e_rcp_2", from_id="ent_d", to_id="ent_c", relation="SUPPLIES_TO", source_doc_id="doc_2"),
+            Edge(id="e_rcp_1", from_id="ent_c", to_id="ent_d", relation="SUPPLIES_TO", source_doc_id="doc_1", facets={"basis": "extracted"}),
+            Edge(id="e_rcp_2", from_id="ent_d", to_id="ent_c", relation="SUPPLIES_TO", source_doc_id="doc_2", facets={"basis": "extracted"}),
         ]
         for edge in legacy_edges:
             db.upsert_edge(edge)
@@ -801,10 +801,10 @@ class _TwoNoteDeletionFakeLLM:
                 ExtractedEntity(temp_id="c_tsmc", name="TSMC", summary="Foundry.", entity_type="company"),
             ],
             themes=[
-                ExtractedTheme(temp_id="t_pwr", name="AI Power", summary="Power bottleneck."),
+                ExtractedTheme(temp_id="t_pwr", name="AI Power", summary="Power bottleneck.", stage="accelerating"),
             ],
             events=[
-                ExtractedEvent(temp_id=evt_id, name=evt_name, summary=f"Fact from {rel_path}.", sentiment="positive"),
+                ExtractedEvent(temp_id=evt_id, name=evt_name, summary=f"Fact from {rel_path}.", sentiment="positive", event_type="fact"),
             ],
             edges=[
                 ExtractedEdge(from_ref=evt_id, to_ref="c_vrt", relation="ABOUT"),
@@ -840,25 +840,25 @@ def test_guardrail_event_view_dedup_and_single_note_deletion_retention(tmp_path:
         for idx, node in enumerate([nvda, evt, vw]):
             db.upsert_node(node, embedding=_unit_vec(idx))
         # Secondary non-ABOUT edge inserted first, ABOUT edge with entity-level sentiment override second.
-        db.upsert_edge(Edge(id="e_m1", from_id="evt_multi", to_id="ent_nvda", relation="MENTIONS", source_doc_id="doc_1"))
+        db.upsert_edge(Edge(id="e_m1", from_id="evt_multi", to_id="ent_nvda", relation="MENTIONS", source_doc_id="doc_1", facets={"basis": "extracted"}))
         db.upsert_edge(
             Edge(
                 id="e_a1",
                 from_id="evt_multi",
                 to_id="ent_nvda",
                 relation="ABOUT",
-                facets={"sentiment": "positive"},
+                facets={"sentiment": "positive", "basis": "extracted"},
                 source_doc_id="doc_1",
             )
         )
-        db.upsert_edge(Edge(id="e_m2", from_id="vw_multi", to_id="ent_nvda", relation="MENTIONS", source_doc_id="doc_1"))
+        db.upsert_edge(Edge(id="e_m2", from_id="vw_multi", to_id="ent_nvda", relation="MENTIONS", source_doc_id="doc_1", facets={"basis": "extracted"}))
         db.upsert_edge(
             Edge(
                 id="e_a2",
                 from_id="vw_multi",
                 to_id="ent_nvda",
                 relation="ABOUT",
-                facets={"sentiment": "negative"},
+                facets={"sentiment": "negative", "basis": "extracted"},
                 source_doc_id="doc_1",
             )
         )

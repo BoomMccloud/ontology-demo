@@ -39,6 +39,21 @@ table, a new facet merge rule. A column added to an existing table goes in
   With `read_only=True` it sets `PRAGMA query_only = ON`, so SQLite itself
   rejects writes. Writable connections use WAL, call `init_schema`, and backfill
   `node_lookup` if any node lacks rows there.
+- Facet schema: `upsert_node`, `upsert_edge` (both the insert and the merge
+  path), and `update_edge` pass facets through `registry.check_facets` and
+  refuse a missing required facet or a wrong kind with `FacetSchemaError`;
+  `upsert_consensus_view` writes through `upsert_node` and `upsert_edge`.
+  `merge_node_into` writes no facets.
+  Enforcement is on with the default registry too, so a DB opened without a
+  registry enforces the shipped schema.
+- Registry version: `db_metadata` key `registry_version` records the registry
+  version the stored facets were migrated to. A writable open with an explicit
+  registry that declares a `facet_schema`, or `use_registry(registry)` on a
+  writable DB, runs `migrate_facets` when the stamp is missing or older: it coerces
+  stored official facets to their kind where lossless (`"630"` to `630`),
+  leaves values it cannot coerce as stored, and writes the stamp. A newer
+  stamp is left alone. Read-only opens never migrate or stamp. Opening
+  without an explicit registry enforces but never migrates or stamps.
 - Transactions: `transaction()` nests; only the outermost scope commits.
 - Writes: `upsert_node`, `upsert_edge` (relation through
   `normalize_relation_name`), `upsert_consensus_view`,
