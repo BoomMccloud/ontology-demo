@@ -148,6 +148,11 @@ def ingest(
         if report.consensus_updated_for
         else translate("cli.none_value", lang=resolved_lang),
     )
+    table.add_row(
+        translate("cli.metric_pending_relations", lang=resolved_lang),
+        ", ".join(f"{name} ({count})" for name, count in sorted(report.unmapped_relations_pending.items()))
+        or translate("cli.none_value", lang=resolved_lang),
+    )
     table.add_row(translate("cli.metric_errors", lang=resolved_lang), str(len(report.errors)))
     console.print(table)
     if report.errors:

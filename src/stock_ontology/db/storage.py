@@ -464,11 +464,14 @@ class OntologyDB:
                 "UPDATE edges SET from_id = ? WHERE from_id = ?", (survivor_id, loser_id)
             )
             self.conn.execute("UPDATE edges SET to_id = ? WHERE to_id = ?", (survivor_id, loser_id))
+            self.conn.execute("UPDATE pending_edges SET from_id = ? WHERE from_id = ?", (survivor_id, loser_id))
+            self.conn.execute("UPDATE pending_edges SET to_id = ? WHERE to_id = ?", (survivor_id, loser_id))
             self.conn.execute("DELETE FROM node_vectors WHERE node_id = ?", (loser_id,))
             self.conn.execute("DELETE FROM nodes WHERE id = ?", (loser_id,))
             cur = self.conn.execute(
                 "DELETE FROM edges WHERE from_id = to_id AND from_id = ?", (survivor_id,)
             )
+            self.conn.execute("DELETE FROM pending_edges WHERE from_id = to_id AND from_id = ?", (survivor_id,))
         return max(cur.rowcount, 0)
 
     def delete_edges(self, edge_ids: list[str]) -> int:

@@ -391,6 +391,7 @@
   "cli.metric_nodes": "Nœuds créés/mis à jour",
   "cli.metric_edges": "Liens créés/mis à jour",
   "cli.metric_consensus": "Consensus mis à jour pour",
+  "cli.metric_pending_relations": "Relations en attente de revue",
   "cli.metric_errors": "Erreurs",
   "cli.per_item_errors": "Erreurs par élément (ignorées proprement) :",
   "cli.none_value": "(aucun)",

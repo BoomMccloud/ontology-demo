@@ -56,8 +56,10 @@ type.
   the note's extraction, up to 2 regenerations (`MAX_EXTRACTION_ATTEMPTS = 3`
   calls in `pipeline.py`) before the note fails. An optional official facet
   whose value cannot be coerced to its kind is dropped before the write, in
-  extraction and consensus synthesis, and the note is kept. Only under a
-  registry that declares no `facet_schema` does a subtype keep its fallback.
+  extraction and consensus synthesis, and the note is kept. A required subtype
+  never takes a fallback. The extraction catalog lists each entity type's
+  required facets from the registry (`entity_type_required_facets`), and the
+  prompt tells the LLM to omit an entity whose required facet it cannot determine.
   Repair
   stores the member or the lowercased raw value, never the fallback
   (`canonicalize_stored`). Values are stored canonical, so readers compare

@@ -801,6 +801,29 @@ def test_cli_ingest_uses_registry_file_for_relations(
     assert relations == {"WORKS_AT"}
 
 
+def test_cli_ingest_prints_relations_held_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from typer.testing import CliRunner
+
+    import stock_ontology.cli as cli_module
+
+    monkeypatch.setenv("EMBEDDING_DIM", str(WIRING_DIM))
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setattr(cli_module, "create_llm_client", lambda _settings: _CliIngestFakeLLM())
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "note.md").write_text("Ann works with Bo.", encoding="utf-8")
+    reg_path = tmp_path / "ontology_registry.json"
+    save_registry(create_minimal_registry(), reg_path)
+    monkeypatch.setenv("ONTOLOGY_REGISTRY", str(reg_path))
+
+    result = CliRunner().invoke(
+        cli_module.app, ["ingest", "--db", str(tmp_path / "ontology.db"), "--data-dir", str(data_dir)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Relations pending review" in result.output
+    assert "EMPLOYED_BY_CUSTOM (1)" in result.output
+
+
 # ---------------------------------------------------------------------------
 # Ingestion follow-ups: supporting unit tests
 # ---------------------------------------------------------------------------
@@ -1305,9 +1328,12 @@ def test_pending_edges_table_holds_raw_relation_and_cascades_with_endpoints(tmp_
         assert (row["relation"], json.loads(row["facets_json"])) == ("partners-with", {"basis": "extracted", "x": [1]})
         assert db.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 0
 
-        # Merging away an endpoint deletes the node, so its pending rows cascade.
+        db.insert_pending_edge(Edge(id="p3", from_id="ent_a", to_id="ent_c", relation="X", facets={"basis": "extracted"}))
+
+        # A merge repoints the loser's pending rows; one between the merged pair would be a self-loop.
         db.merge_node_into("ent_a", "ent_b")
-        assert [r[0] for r in _pending_rows(db)] == ["p2"]
+        rows = db.conn.execute("SELECT id, from_id, to_id FROM pending_edges ORDER BY id").fetchall()
+        assert [tuple(r) for r in rows] == [("p2", "ent_b", "ent_c"), ("p3", "ent_b", "ent_c")]
         db.conn.execute("DELETE FROM nodes WHERE id = 'ent_c'")
         db.conn.commit()
         assert _pending_rows(db) == []

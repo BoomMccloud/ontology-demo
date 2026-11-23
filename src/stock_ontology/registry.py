@@ -421,6 +421,11 @@ class OntologyRegistry(BaseModel):
         """Facets every node of `node_type` (or every edge, when None) must carry."""
         return {k for k, spec in self._facet_specs(node_type, entity_type).items() if spec.get("required")}
 
+    def entity_type_required_facets(self) -> dict[str, list[str]]:
+        """Facets each entity type must carry beyond `entity_type`; types requiring none are left out."""
+        required = {et: sorted(self.required_facets("entity", et) - {"entity_type"}) for et in ENTITY_TYPE.members}
+        return {et: keys for et, keys in required.items() if keys}
+
     def _coerce_facet(self, node_type: str | None, key: str, spec: dict[str, Any], value: Any) -> Any:
         vocab = self._vocabulary(node_type, key)
         return coerce_facet_value(

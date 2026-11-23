@@ -391,6 +391,7 @@
   "cli.metric_nodes": "생성/업데이트된 노드",
   "cli.metric_edges": "생성/업데이트된 엣지",
   "cli.metric_consensus": "컨센서스 업데이트 기업",
+  "cli.metric_pending_relations": "검토 대기 관계",
   "cli.metric_errors": "오류",
   "cli.per_item_errors": "항목별 오류 (안전하게 건너뜀):",
   "cli.none_value": "(없음)",

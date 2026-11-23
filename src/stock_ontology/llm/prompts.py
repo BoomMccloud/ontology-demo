@@ -28,7 +28,8 @@ Extract structured knowledge strictly using the 4 ontology node types and direct
 1. entity: Company, Person, Product/Tech, Institution, Sector, or Region.
    - Use canonical names (e.g., "NVIDIA", "TSMC", "Vertiv"). Put tickers/abbreviations in `aliases`.
    - Include `entity_type` ({format_choices(ENTITY_TYPE.members, sep=", ")}).
-   - For companies, add useful facets like `ticker` and `sector`. For people, add `role`, `organization`, `credibility` (`high`|`medium`|`low`) when discernible.
+   - Every entity must carry the facets listed for its type under "Required entity facets" at the end of the catalog. If the document does not state one, use well-established public knowledge. If you still cannot determine a required facet, do not extract that entity.
+   - Also add useful optional facets when discernible, such as `ticker` for companies and `credibility` (`high`|`medium`|`low`) for people.
 2. event: Any objective observation, fact, news item, earnings release, meeting, or upcoming catalyst.
    - `event_type`: {format_choices(EVENT_TYPE.members)}.
    - `status`: {format_choices(EVENT_STATUS.members)}.

@@ -20,7 +20,7 @@ Pure definitions. Nothing here opens a connection.
   aliases, for exact-match resolution), and `pending_edges` (extracted edges
   whose relation the registry does not map: from_id, to_id, the raw relation,
   facets, source_doc_id, created_at; rows cascade when an endpoint node is
-  deleted, including the loser of a merge). It then adds columns that shipped
+  deleted; `merge_node_into` repoints them to the survivor and drops self-loops). It then adds columns that shipped
   later, listed in `_ADDED_COLUMNS` (`ingestion_log.size` and `mtime_ns`). It
   is idempotent, so old databases upgrade on open.
 - `row_to_node`, `row_to_edge`, `node_to_dict` map between SQLite rows and the

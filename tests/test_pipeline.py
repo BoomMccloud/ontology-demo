@@ -1882,17 +1882,22 @@ def test_pipeline_does_not_regenerate_for_non_schema_failures(tmp_path: Path) ->
     assert llm.extract_calls == [rel]
 
 
-def test_pipeline_under_a_registry_without_schema_keeps_the_subtype_fallback(tmp_path: Path) -> None:
-    from stock_ontology.registry import create_minimal_registry
+def test_extraction_catalog_lists_required_entity_facets_from_the_registry(tmp_path: Path) -> None:
+    import json
 
-    data_dir, _ = _kappa_note(tmp_path)
-    llm = _SchemaBreakingFakeLLM([{"event_type": "gossip"}])
-    bare = create_minimal_registry().model_copy(update={"facet_schema": {}})
+    from stock_ontology.registry import load_registry
+
+    raw = json.loads((Path(__file__).parents[1] / "ontology_registry.json").read_text(encoding="utf-8"))
+    raw["facet_schema"]["node"]["entity:product"] = {"process_node": {"kind": "text", "required": True}}
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
     with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM) as db:
-        report = IngestionPipeline(db, llm, data_dir, registry=bare).run()
-        assert report.errors == [] and len(llm.extract_calls) == 1
-        events = [n for n in db.list_all_nodes() if n.node_type == "event"]
-        assert [e.facets["event_type"] for e in events] == ["fact"]
+        catalog = IngestionPipeline(db, FakePipelineLLM(), data_dir, registry=load_registry(path))._build_existing_catalog()
+    assert "- company: sector" in catalog
+    assert "- person: organization, role" in catalog
+    assert "- product: process_node" in catalog
 
 
 class _BadTargetConsensusFakeLLM(_SchemaBreakingFakeLLM):

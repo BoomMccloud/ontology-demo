@@ -24,7 +24,7 @@ from stock_ontology.models import (
     facets_list_to_dict,
     normalize_sentiment,
 )
-from stock_ontology.vocab import ENTITY_TYPE, NODE_FACET_VOCABS, STAGE
+from stock_ontology.vocab import ENTITY_TYPE, STAGE
 
 # Most recently updated entities and themes listed in the extraction catalog (each type),
 # in addition to every entity/theme the note names.
@@ -115,14 +115,11 @@ class IngestionPipeline:
             # The DB enforces, migrates and stamps under the registry this run writes with.
             db.use_registry(registry)
 
-    def _required_subtype(self, node_type: str, item: Any, field: str) -> str | None:
-        """The extracted subtype. When the registry requires it, an omitted or unknown value stays None."""
+    @staticmethod
+    def _required_subtype(item: Any, field: str) -> str | None:
+        """The extracted subtype. An omitted or unknown value stays None, so the write is refused."""
         value = getattr(item, field)
-        if field in item.model_fields_set and value is not None:
-            return str(value)
-        if field in self.registry.required_facets(node_type):
-            return None
-        return NODE_FACET_VOCABS[node_type][field].fallback
+        return str(value) if field in item.model_fields_set and value is not None else None
 
     def _scan_files(self) -> dict[str, tuple[Path, int, int]]:
         """Return `{rel_posix_path: (abs_path, size, mtime_ns)}` for notes, without reading them."""
@@ -174,6 +171,11 @@ class IngestionPipeline:
                 to_sig = "|".join(spec.to_types) or "*"
                 arrow = "<->" if spec.symmetric else "->"
                 lines.append(f"- {spec.name} ({from_sig} {arrow} {to_sig})")
+        required = self.registry.entity_type_required_facets()
+        if required:
+            lines.append("")
+            lines.append("Required entity facets (put each in `facets`):")
+            lines.extend(f"- {entity_type}: {', '.join(keys)}" for entity_type, keys in required.items())
         return "\n".join(lines)
 
     def _resolve_canonical_node(
@@ -422,8 +424,7 @@ class IngestionPipeline:
         for ent in extraction.entities:
             ent_facets = facets_list_to_dict(ent.facets)
             # A facet-list `entity_type` still wins over the field, but only as a member.
-            ent_facets["entity_type"] = ENTITY_TYPE.coerce(ent_facets.get("entity_type")) or self._required_subtype(
-                "entity", ent, "entity_type"
+            ent_facets["entity_type"] = ENTITY_TYPE.coerce(ent_facets.get("entity_type")) or self._required_subtype(ent, "entity_type"
             )
             node, updated = self._resolve_canonical_node(
                 node_type="entity",
@@ -444,8 +445,7 @@ class IngestionPipeline:
 
         for thm in extraction.themes:
             thm_facets = facets_list_to_dict(thm.facets)
-            thm_facets["stage"] = STAGE.coerce(thm_facets.get("stage")) or self._required_subtype(
-                "theme", thm, "stage"
+            thm_facets["stage"] = STAGE.coerce(thm_facets.get("stage")) or self._required_subtype(thm, "stage"
             )
             node, updated = self._resolve_canonical_node(
                 node_type="theme",
@@ -475,7 +475,7 @@ class IngestionPipeline:
         for ev in extraction.events:
             node = _build_event_node(
                 ev,
-                event_type=self._required_subtype("event", ev, "event_type"),
+                event_type=self._required_subtype(ev, "event_type"),
                 doc_id=doc_id,
                 source_meta=source_meta,
                 now=now,
@@ -486,7 +486,7 @@ class IngestionPipeline:
         for vw in extraction.views:
             node = _build_view_node(
                 vw,
-                view_type=self._required_subtype("view", vw, "view_type"),
+                view_type=self._required_subtype(vw, "view_type"),
                 doc_id=doc_id,
                 source_meta=source_meta,
                 now=now,
