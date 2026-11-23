@@ -153,6 +153,11 @@ def ingest(
         ", ".join(f"{name} ({count})" for name, count in sorted(report.unmapped_relations_pending.items()))
         or translate("cli.none_value", lang=resolved_lang),
     )
+    table.add_row(
+        translate("cli.metric_facets_dropped", lang=resolved_lang),
+        ", ".join(f"{key} ({count})" for key, count in sorted(report.invalid_facets_dropped.items()))
+        or translate("cli.none_value", lang=resolved_lang),
+    )
     table.add_row(translate("cli.metric_errors", lang=resolved_lang), str(len(report.errors)))
     console.print(table)
     if report.errors:
@@ -872,7 +877,7 @@ def repair(
     llm = create_llm_client(settings) if reembed else None
     reembedded = 0
     with OntologyDB(settings.db_path, embedding_dim=settings.embedding_dim, read_only=False) as store:
-        report = repair_ontology(store, reg)
+        report = repair_ontology(store, reg, data_dir=settings.data_dir)
         if llm is not None and report.merged_survivor_ids:
             reembedded = reembed_nodes(store, llm, report.merged_survivor_ids)
 

@@ -514,7 +514,7 @@
           "required": false
         },
         "target_price": {
-          "kind": "number",
+          "kind": "money",
           "required": false
         }
       },

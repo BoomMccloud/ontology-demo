@@ -418,16 +418,16 @@ def test_repair_migrates_facet_kinds_and_stamps_registry_version(tmp_path: Path)
         db.conn.execute(
             "INSERT INTO nodes (id, node_type, name, summary, facets_json, created_at, updated_at) "
             "VALUES ('vw', 'view', 'v', 'v', ?, '2026-01-01', '2026-01-01')",
-            (json.dumps({"view_type": "rumor", "target_price": " 630 "}),),
+            (json.dumps({"view_type": "rumor", "target_price": " USD 630 "}),),
         )
         db.conn.commit()
         assert db.get_metadata("registry_version") is None
 
         report = repair_ontology(db, reg)
-        assert report.facets_migrated == 1
+        assert report.money_facets_migrated == 1
         assert report.total_changes == 1
         row = db.conn.execute("SELECT facets_json FROM nodes WHERE id = 'vw'").fetchone()
-        assert json.loads(row[0])["target_price"] == 630
+        assert json.loads(row[0])["target_price"] == {"amount": 630, "currency": "USD"}
         assert db.get_metadata("registry_version") == reg.schema_stamp()
 
         again = repair_ontology(db, reg)
@@ -524,3 +524,40 @@ def test_repair_stays_strict_on_a_legacy_unmapped_edge_it_must_rewrite(tmp_path:
         # The run rolled back: the row is untouched and was not moved to pending.
         assert db.conn.execute("SELECT relation, facets_json FROM edges").fetchall()[0][1] == "{}"
         assert db.conn.execute("SELECT COUNT(*) FROM pending_edges").fetchone()[0] == 0
+
+
+def test_repair_reads_a_missing_currency_from_the_source_note(tmp_path: Path) -> None:
+    import json
+
+    from stock_ontology.registry import load_registry
+
+    repair_ontology = _load_repair_ontology()
+    reg = load_registry(Path(__file__).resolve().parents[1] / "ontology_registry.json")
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "note.md").write_text("Acme PT $650. Local PT NT$3,100. Both $700 and NT$700 appear.", encoding="utf-8")
+    prices = {"vw_usd": 650, "vw_twd": "3100+", "vw_mixed": 700, "vw_absent": 999, "vw_text": "a lot", "vw_coded": "US$600"}
+    with OntologyDB(tmp_path / "repair.db", embedding_dim=DIM) as db:
+        for node_id, price in prices.items():
+            facets = {"view_type": "analyst_report", "target_price": price, "source": {"file_path": "note.md"}}
+            db.conn.execute(
+                "INSERT INTO nodes (id, node_type, name, summary, facets_json, created_at, updated_at) "
+                "VALUES (?, 'view', ?, 'v', ?, '2026-01-01', '2026-01-01')",
+                (node_id, node_id, json.dumps(facets)),
+            )
+        db.conn.commit()
+
+        report = repair_ontology(db, reg, data_dir=data)
+
+        stored = {
+            r[0]: json.loads(r[1])["target_price"] for r in db.conn.execute("SELECT id, facets_json FROM nodes")
+        }
+        assert stored == {
+            "vw_usd": {"amount": 650, "currency": "USD"},
+            "vw_twd": {"amount": 3100, "currency": "TWD", "qualifier": "at_least"},
+            "vw_mixed": 700,
+            "vw_absent": 999,
+            "vw_text": "a lot",
+            "vw_coded": {"amount": 600, "currency": "USD"},
+        }
+        assert (report.money_facets_migrated, report.money_facets_unresolved) == (3, 3)

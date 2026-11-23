@@ -39,6 +39,8 @@ Extract structured knowledge strictly using the 4 ontology node types and direct
    - `view_type`: {format_choices(EXTRACTED_VIEW_TYPES)}.
    - NEVER emit `consensus` or `house_consensus` views from an individual document; fund consensus is synthesized separately.
    - Set `stance` ({format_choices(STANCE.members, sep="|")}), `sentiment` ({_SENTIMENTS_TIGHT}, consistent with `stance`: `bullish` (including buy ratings) -> `positive`, `bearish` (including sell ratings; use `conviction: low` for a merely cautious view) -> `negative`, `neutral` (including hold ratings) -> `neutral`, or `mixed` when nuanced), `support_strength` ({format_choices(SUPPORT_STRENGTH.members, sep="|")}), and `conviction` ({format_choices(CONVICTION.members, sep="|")}).
+   - Put an analyst price target in the `target_price` facet as a 3-letter currency code and amount, such as `USD 650` or `TWD 4000`, with a trailing `+` for "at least" (`TWD 3100+`). Use the currency the document states. Never write a bare number or a plain `$`.
+   - Set `as_of` to an exact ISO date (YYYY-MM-DD), never a period like `Q3 2026`. Omit it if no exact date is known.
 4. theme: A meta-narrative, secular trend, or investment thesis (e.g., "AI Data Center Power Bottleneck").
 
 Resolution & linking rules:

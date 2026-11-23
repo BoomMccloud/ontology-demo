@@ -392,6 +392,7 @@
   "cli.metric_edges": "作成/更新エッジ",
   "cli.metric_consensus": "コンセンサス更新企業",
   "cli.metric_pending_relations": "レビュー待ちのリレーション",
+  "cli.metric_facets_dropped": "破棄された無効なファセット",
   "cli.metric_errors": "エラー",
   "cli.per_item_errors": "項目別エラー（安全にスキップ）：",
   "cli.none_value": "（なし）",

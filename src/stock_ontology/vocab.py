@@ -419,7 +419,7 @@ def out_of_vocabulary_node_facets(node_type: str, facets: dict[str, Any]) -> dic
 # Facet schema: each official facet's value kind and whether it is required
 # ---------------------------------------------------------------------------
 
-FacetKind = Literal["enum", "number", "date", "text", "list"]
+FacetKind = Literal["enum", "number", "date", "text", "list", "money"]
 FACET_KINDS: tuple[str, ...] = get_args(FacetKind)
 
 
@@ -452,7 +452,7 @@ NODE_FACET_SCHEMA: dict[str, dict[str, FacetSpec]] = {
         "support_strength": _ENUM,
         "conviction": _ENUM,
         "as_of": FacetSpec("date"),
-        "target_price": FacetSpec("number"),
+        "target_price": FacetSpec("money"),
     },
     "theme": {"stage": _REQUIRED_ENUM},
 }
@@ -539,6 +539,40 @@ def facet_schema_problems(declared: Any) -> list[str]:
 
 _INT_RE = re.compile(r"-?(0|[1-9][0-9]*)")
 _FLOAT_RE = re.compile(r"-?(0|[1-9][0-9]*)\.[0-9]+")
+_MONEY_SYMBOLS = {"US$": "USD", "NT$": "TWD", "HK$": "HKD"}
+_MONEY_AMOUNT = r"(?P<amount>[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)(?P<plus>\+)?"
+_MONEY_RES = (
+    re.compile(rf"(?P<currency>US\$|NT\$|HK\$|[A-Z]{{3}})\s*{_MONEY_AMOUNT}"),
+    re.compile(rf"{_MONEY_AMOUNT}\s*(?P<currency>[A-Z]{{3}})"),
+)
+_CURRENCY_RE = re.compile(r"[A-Z]{3}")
+
+
+def _coerce_money(value: Any) -> dict[str, Any]:
+    """Return `{amount, currency[, qualifier]}`. A bare number or a plain `$` names no currency, so it fails."""
+    if isinstance(value, str):
+        text = value.strip()
+        match = next((m for m in (r.fullmatch(text) for r in _MONEY_RES) if m), None)
+        if match is None:
+            raise ValueError(f"expected an amount with a currency, got {value!r}")  # noqa: TRY003
+        raw = match["amount"].replace(",", "")
+        money: dict[str, Any] = {
+            "amount": float(raw) if "." in raw else int(raw),
+            "currency": _MONEY_SYMBOLS.get(match["currency"], match["currency"]),
+        }
+        if match["plus"]:
+            money["qualifier"] = "at_least"
+        value = money
+    if not isinstance(value, Mapping) or not {"amount", "currency"} <= set(value) <= {"amount", "currency", "qualifier"}:
+        raise ValueError(f"expected an amount with a currency, got {value!r}")  # noqa: TRY003
+    amount, currency = value["amount"], value["currency"]
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
+        raise ValueError(f"expected a positive amount, got {amount!r}")  # noqa: TRY003
+    if not isinstance(currency, str) or not _CURRENCY_RE.fullmatch(currency):
+        raise ValueError(f"expected a 3-letter currency code, got {currency!r}")  # noqa: TRY003
+    if value.get("qualifier", "at_least") != "at_least":
+        raise ValueError(f"unknown money qualifier {value['qualifier']!r}")  # noqa: TRY003
+    return dict(value)
 
 
 def coerce_facet_value(
@@ -596,6 +630,8 @@ def coerce_facet_value(
         if isinstance(value, list):
             return value
         raise ValueError(f"expected a list, got {value!r}")  # noqa: TRY003
+    if kind == "money":
+        return _coerce_money(value)
     raise ValueError(f"unknown facet kind {kind!r}")  # noqa: TRY003
 
 
