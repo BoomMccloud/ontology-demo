@@ -17,9 +17,12 @@ pipeline, the agent, and embeddings all go through it.
 
 ## Interface
 
-`LLMClient` has four methods:
+`LLMClient` has these methods:
 
-- `extract_document(...)` returns an `ExtractionResult`.
+- `extract_stage(stage=...)` runs one ordered extraction (`entities`, `events`
+  or `views`) and returns an `ExtractionResult`. Providers and the router
+  implement it; a client without it falls back to `extract_document`.
+- `extract_document(...)` returns an `ExtractionResult` from one call.
 - `synthesize_consensus(...)` returns a `ConsensusSynthesis`.
 - `embed_texts(texts)` returns vectors.
 - `generate_agent_reply(...)` returns an `AgentTurn` with text or tool calls.

@@ -393,6 +393,8 @@
   "cli.metric_consensus": "コンセンサス更新企業",
   "cli.metric_pending_relations": "レビュー待ちのリレーション",
   "cli.metric_facets_dropped": "破棄された無効なファセット",
+  "cli.metric_extraction_retries": "抽出の再試行",
+  "cli.metric_unresolved_refs": "参照先が欠けたエッジ",
   "cli.metric_errors": "エラー",
   "cli.per_item_errors": "項目別エラー（安全にスキップ）：",
   "cli.none_value": "（なし）",

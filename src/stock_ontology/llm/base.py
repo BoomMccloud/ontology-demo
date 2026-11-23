@@ -15,7 +15,10 @@ from stock_ontology.llm.prompts import (
     CONSENSUS_SYSTEM_PROMPT,
     EXTRACTION_SYSTEM_PROMPT,
     build_consensus_prompt,
+    STAGE_SCHEMAS,
+    STAGE_SYSTEM_PROMPTS,
     build_extraction_prompt,
+    build_stage_prompt,
 )
 from stock_ontology.models import ConsensusSynthesis, ExtractionResult, Node
 
@@ -296,6 +299,30 @@ class BaseLLMProvider(ABC):
             ),
             schema=ExtractionResult,
         )
+
+    def extract_stage(
+        self,
+        *,
+        stage: str,
+        text: str,
+        source_meta: dict[str, Any],
+        existing_catalog: str,
+        known_facets: dict[str, list[str]],
+        prior: ExtractionResult,
+    ) -> ExtractionResult:
+        """Run one extraction stage. Its schema only allows the node types that stage owns."""
+        result = self.generate_structured(
+            system_instruction=STAGE_SYSTEM_PROMPTS[stage],
+            prompt=build_stage_prompt(
+                text=text,
+                source_meta=source_meta,
+                existing_catalog=existing_catalog,
+                known_facets=known_facets,
+                prior=prior,
+            ),
+            schema=STAGE_SCHEMAS[stage],
+        )
+        return ExtractionResult(**{name: getattr(result, name) for name in type(result).model_fields})
 
     def synthesize_consensus(
         self,

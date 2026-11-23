@@ -393,6 +393,8 @@
   "cli.metric_consensus": "Consenso actualizado para",
   "cli.metric_pending_relations": "Relaciones pendientes de revisión",
   "cli.metric_facets_dropped": "Facetas no válidas descartadas",
+  "cli.metric_extraction_retries": "Reintentos de extracción",
+  "cli.metric_unresolved_refs": "Aristas con referencias faltantes",
   "cli.metric_errors": "Errores",
   "cli.per_item_errors": "Errores por elemento (omitidos de forma segura):",
   "cli.none_value": "(ninguno)",

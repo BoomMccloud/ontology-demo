@@ -393,6 +393,8 @@
   "cli.metric_consensus": "已更新共识的公司",
   "cli.metric_pending_relations": "待审核关系",
   "cli.metric_facets_dropped": "已丢弃的无效分面",
+  "cli.metric_extraction_retries": "抽取重试次数",
+  "cli.metric_unresolved_refs": "引用缺失的边",
   "cli.metric_errors": "错误数",
   "cli.per_item_errors": "逐项错误（已安全跳过）：",
   "cli.none_value": "（无）",

@@ -14,10 +14,11 @@ from typing import Any
 
 from stock_ontology.config import SUPPORTED_EXTENSIONS
 from stock_ontology.db import OntologyDB, node_meta
-from stock_ontology.llm import LLMClient
+from stock_ontology.llm import EXTRACTION_STAGES, LLMClient
 from stock_ontology.registry import FacetSchemaError, OntologyRegistry, create_minimal_registry
 from stock_ontology.models import (
     Edge,
+    ExtractionResult,
     Node,
     NodeType,
     derive_sentiment_from_stance,
@@ -55,6 +56,10 @@ class IngestReport:
     unmapped_relations_pending: dict[str, int] = field(default_factory=dict)
     # Date or money facets still invalid after the last extraction attempt, dropped: key -> count.
     invalid_facets_dropped: dict[str, int] = field(default_factory=dict)
+    # Regenerations by extraction run (`entities`, `events`, `views`; `document` for a one-call client).
+    extraction_retries: dict[str, int] = field(default_factory=dict)
+    # Extracted edges skipped because an endpoint matched no resolved node.
+    unresolved_edge_refs: int = 0
     consensus_updated_for: list[str] = field(default_factory=list)
     errors: list[tuple[str, str]] = field(default_factory=list)
 
@@ -361,16 +366,15 @@ class IngestionPipeline:
             report.files_processed += 1
             return
 
+        stage_results: dict[str, ExtractionResult] = {}
+        first_stale = 0
         for attempt in range(1, MAX_EXTRACTION_ATTEMPTS + 1):
-            extraction = self.llm.extract_document(
-                text=text,
-                source_meta=source_meta,
-                existing_catalog=self._build_existing_catalog(text),
-                known_facets=self.db.get_known_facet_keys(),
-            )
+            extraction, edge_stages = self._extract_note(text, source_meta, stage_results, first_stale)
             note_companies.clear()
             pending: dict[str, int] = {}
             dropped: dict[str, int] = {}
+            cursor: dict[str, str | None] = {"stage": None}
+            unresolved: list[str] = []
             try:
                 # All writes for this note commit together or not at all, so a failure partway
                 # leaves no partial rows behind and no ingestion log entry.
@@ -386,6 +390,9 @@ class IngestionPipeline:
                         pending_relations=pending,
                         final_attempt=attempt == MAX_EXTRACTION_ATTEMPTS,
                         dropped_facets=dropped,
+                        edge_stages=edge_stages,
+                        stage_cursor=cursor,
+                        unresolved_refs=unresolved,
                     )
                     note_companies.update(self.db.get_doc_affected_company_ids(doc_id))
                     self.db.upsert_ingestion_log(
@@ -394,7 +401,12 @@ class IngestionPipeline:
             except FacetSchemaError as exc:
                 if attempt == MAX_EXTRACTION_ATTEMPTS:
                     raise
-                logger.warning("Regenerating extraction for %s (attempt %d): %s", rel_path, attempt, exc)
+                # Later runs link to this run's IDs, so this run and every run after it repeat.
+                stage = cursor["stage"] if stage_results else None
+                first_stale = EXTRACTION_STAGES.index(stage) if stage in EXTRACTION_STAGES else 0
+                retry_key = stage or "document"
+                report.extraction_retries[retry_key] = report.extraction_retries.get(retry_key, 0) + 1
+                logger.warning("Regenerating %s extraction for %s (attempt %d): %s", retry_key, rel_path, attempt, exc)
                 continue
             break
         affected_company_ids.update(note_companies)
@@ -404,7 +416,77 @@ class IngestionPipeline:
             report.unmapped_relations_pending[relation] = report.unmapped_relations_pending.get(relation, 0) + count
         for key, count in dropped.items():
             report.invalid_facets_dropped[key] = report.invalid_facets_dropped.get(key, 0) + count
+        report.unresolved_edge_refs += len(unresolved)
         report.files_processed += 1
+
+    def _extract_note(
+        self,
+        text: str,
+        source_meta: dict[str, Any],
+        stage_results: dict[str, ExtractionResult],
+        first_stale: int,
+    ) -> tuple[ExtractionResult, dict[int, str]]:
+        """Run the stale extraction stages in order; return the merged result and each edge's stage.
+
+        A client without `extract_stage` makes one `extract_document` call, and `stage_results` stays empty.
+        """
+        catalog = self._build_existing_catalog(text)
+        known_facets = self.db.get_known_facet_keys()
+        extract_stage = getattr(self.llm, "extract_stage", None)
+        if extract_stage is None:
+            return (
+                self.llm.extract_document(
+                    text=text, source_meta=source_meta, existing_catalog=catalog, known_facets=known_facets
+                ),
+                {},
+            )
+        for index, stage in enumerate(EXTRACTION_STAGES):
+            if index < first_stale and stage in stage_results:
+                continue
+            prior = _merge_stages([stage_results[s] for s in EXTRACTION_STAGES[:index]])
+            result = extract_stage(
+                stage=stage,
+                text=text,
+                source_meta=source_meta,
+                existing_catalog=catalog,
+                known_facets=known_facets,
+                prior=prior,
+            )
+            stage_results[stage] = self._namespace_temp_ids(result, index + 1)
+        merged = _merge_stages([stage_results[s] for s in EXTRACTION_STAGES])
+        edge_stages = {id(edge): stage for stage in EXTRACTION_STAGES for edge in stage_results[stage].edges}
+        return merged, edge_stages
+
+    def _namespace_temp_ids(self, result: ExtractionResult, run: int) -> ExtractionResult:
+        """Prefix this run's new temp IDs, so two runs reusing `e1` cannot collide. Existing DB IDs are kept."""
+        renamed: dict[str, str] = {}
+
+        def rename(items: list[Any]) -> list[Any]:
+            out = []
+            for item in items:
+                if self.db.get_node(item.temp_id) is not None:
+                    out.append(item)
+                    continue
+                renamed[item.temp_id] = f"r{run}.{item.temp_id}"
+                out.append(item.model_copy(update={"temp_id": renamed[item.temp_id]}))
+            return out
+
+        entities, themes, events, views = (
+            rename(result.entities),
+            rename(result.themes),
+            rename(result.events),
+            rename(result.views),
+        )
+        edges = [
+            edge.model_copy(
+                update={
+                    "from_ref": renamed.get(edge.from_ref, edge.from_ref),
+                    "to_ref": renamed.get(edge.to_ref, edge.to_ref),
+                }
+            )
+            for edge in result.edges
+        ]
+        return ExtractionResult(entities=entities, themes=themes, events=events, views=views, edges=edges)
 
     def _clear_prior_artifacts(
         self, doc_id: str, replace_old_doc_id: str | None, affected_company_ids: set[str]
@@ -425,12 +507,19 @@ class IngestionPipeline:
         pending_relations: dict[str, int],
         final_attempt: bool = True,
         dropped_facets: dict[str, int] | None = None,
+        edge_stages: dict[int, str] | None = None,
+        stage_cursor: dict[str, str | None] | None = None,
+        unresolved_refs: list[str] | None = None,
     ) -> tuple[int, int]:
         """Write resolved entities/themes, doc-scoped events/views, and edges; return counts.
 
         An edge whose relation the registry does not map is held in `pending_edges` with its raw
         relation, not written to `edges`; its name is counted in `pending_relations`.
+        `stage_cursor` records which extraction run owns the item being written, so a refused
+        write regenerates that run. An edge with an unresolved endpoint is added to `unresolved_refs`.
         """
+        cursor: dict[str, str | None] = stage_cursor if stage_cursor is not None else {}
+        cursor["stage"] = "entities"
 
         def clean(node_type: str | None, facets: dict[str, Any], relation: str | None = None) -> dict[str, Any]:
             """Drop bad optional facets. A bad date or money value stays, to force a regeneration, until the last try."""
@@ -535,14 +624,20 @@ class IngestionPipeline:
         if doc_nodes:
             embeddings = self.llm.embed_texts([node_embedding_text(n) for n in doc_nodes])
             for node, vec in zip(doc_nodes, embeddings, strict=True):
+                cursor["stage"] = "events" if node.node_type == "event" else "views"
                 self.db.upsert_node(node, embedding=vec)
                 nodes_written += 1
 
         # 3. Resolve & store edges.
         for ex_edge in extraction.edges:
+            cursor["stage"] = (edge_stages or {}).get(id(ex_edge))
             from_id = self._resolve_node_ref(ex_edge.from_ref, ref_map)
             to_id = self._resolve_node_ref(ex_edge.to_ref, ref_map)
-            if from_id is None or to_id is None or from_id == to_id:
+            if from_id is None or to_id is None:
+                if unresolved_refs is not None:
+                    unresolved_refs.append(ex_edge.from_ref if from_id is None else ex_edge.to_ref)
+                continue
+            if from_id == to_id:
                 continue
             edge_facets = facets_list_to_dict(ex_edge.facets)
             from_type, from_et = self._node_endpoint_meta(from_id, local_nodes)
@@ -779,6 +874,17 @@ class IngestionPipeline:
                 if on_tick is not None:
                     on_tick(report)
             time.sleep(interval_seconds)
+
+
+def _merge_stages(results: list[ExtractionResult]) -> ExtractionResult:
+    """One `ExtractionResult` holding the nodes and edges of `results`; the edge objects are shared."""
+    return ExtractionResult.model_construct(
+        entities=[n for r in results for n in r.entities],
+        themes=[n for r in results for n in r.themes],
+        events=[n for r in results for n in r.events],
+        views=[n for r in results for n in r.views],
+        edges=[e for r in results for e in r.edges],
+    )
 
 
 def _resolve_embedding_provenance(llm: Any) -> tuple[str | None, str | None]:

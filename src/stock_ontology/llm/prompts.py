@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from stock_ontology.models import Node
+from stock_ontology.models import EntityStageResult, EventStageResult, ExtractionResult, Node, ViewStageResult
 from stock_ontology.vocab import (
     CONVICTION,
     ENTITY_TYPE,
@@ -56,6 +56,91 @@ Resolution & linking rules:
   - Entity -> Theme: `entity --EXPOSED_TO--> theme` with a `sentiment` facet ({_SENTIMENTS}) instead of emitting `BENEFITS_FROM`, `HURT_BY`, or duplicate `RELATES_TO`.
 """
 
+EXTRACTION_STAGES: tuple[str, ...] = ("entities", "events", "views")
+"""Extraction runs for one note, in order. Each run links to what the earlier runs resolved."""
+
+STAGE_SCHEMAS: dict[str, type[EntityStageResult | EventStageResult | ViewStageResult]] = {
+    "entities": EntityStageResult,
+    "events": EventStageResult,
+    "views": ViewStageResult,
+}
+
+_STAGE_LINKING = """Linking rules:
+- Reference nodes by the exact IDs listed in the prompt, in `from_ref` and `to_ref`.
+- Every edge must carry the facets listed for its relation under "Required edge facets" at the end of the catalog.
+- Reuse facet keys from Known Facets where appropriate, and add new snake_case facets when useful.
+"""
+
+ENTITY_STAGE_PROMPT = f"""You are an investment research ontology extractor for a stock fund.
+This is run 1 of 3. Extract ONLY entities, themes, and the edges between them. Later runs extract events and views and can only link to what you return, so be exhaustive.
+
+entity: Company, Person, Institution, Sector, or Region.
+- Include every company, person and institution the document names, including analysts, executives, research firms, banks, customers, suppliers, competitors and acquisition targets.
+- Do not extract products, technologies or platforms as entities.
+- Use canonical names (e.g., "NVIDIA", "TSMC", "Vertiv"). Put tickers/abbreviations in `aliases`.
+- Include `entity_type` ({format_choices(ENTITY_TYPE.members, sep=", ")}).
+- Every entity must carry the facets listed for its type under "Required entity facets" at the end of the catalog. If the document does not state one, use well-established public knowledge. Omit an entity only if you still cannot determine a required facet.
+- Also add useful optional facets when discernible, such as `ticker` for companies and `credibility` (`high`|`medium`|`low`) for people.
+
+theme: A meta-narrative, secular trend, or investment thesis (e.g., "AI Data Center Power Bottleneck").
+
+Resolution:
+- If an entity or theme already exists in the Existing Catalog, set its `temp_id` to the exact existing `id` and return it, so later runs can link to it. Do not create a duplicate.
+- Give a new entity or theme a `temp_id` like `e1` or `t1`.
+
+Edges (use only these relations in this run):
+- `person --WORKS_AT--> company/institution`: emit one for EVERY person the document ties to an employer, including each analyst and their firm and each executive and their company. Put the title in a `role` facet.
+- `parent --OWNS--> child/institution`: for acquisitions and equity stakes. When the document states a deal value, put it in a `transaction_value` facet as a 3-letter currency code and amount, such as `USD 1.45B`.
+- `buyer --BUY--> seller`: all supply-chain and customer links, never `SUPPLIES_TO` or `CUSTOMER_OF`.
+- `company --COMPETE--> company`.
+- `entity --EXPOSED_TO--> theme` with a `sentiment` facet ({_SENTIMENTS}), instead of `BENEFITS_FROM`, `HURT_BY` or `RELATES_TO`.
+
+{_STAGE_LINKING}"""
+
+EVENT_STAGE_PROMPT = f"""You are an investment research ontology extractor for a stock fund.
+This is run 2 of 3. Extract ONLY events and their edges. Entities and themes are already resolved and listed in the prompt; do not create any.
+
+event: Any objective observation, fact, news item, earnings release, meeting, or upcoming catalyst.
+- Give each event a `temp_id` like `ev1`.
+- `event_type`: {format_choices(EVENT_TYPE.members)}.
+- `status`: {format_choices(EVENT_STATUS.members)}.
+- `sentiment`: {_SENTIMENTS} reflecting directional impact on the primary subject (use `mixed` for offsetting effects or opposing multi-company impacts).
+- Set `event_date` to an exact ISO date (YYYY-MM-DD) when known. Omit it otherwise.
+- Keep products, technologies and platforms in the event's text.
+- Put any document-specific source details you observe (e.g., `author`, `source_kind`, `source_title`, `source_date`) in `facets`.
+
+Edges (use only these relations in this run):
+- `event --ABOUT--> entity|theme` for each subject. When a multi-company event affects companies differently, set node `sentiment` to `mixed` and add a `sentiment` facet ({_SENTIMENTS}) on each company's `ABOUT` edge.
+- `event --RELATES_TO--> theme`.
+- `event --AUTHORED_BY--> person|institution`.
+
+{_STAGE_LINKING}"""
+
+VIEW_STAGE_PROMPT = f"""You are an investment research ontology extractor for a stock fund.
+This is run 3 of 3. Extract ONLY views and their edges. Entities, themes and events are already resolved and listed in the prompt; do not create any.
+
+view: Any subjective claim, rumor, analyst take, channel check, or PM note. Extract one view per distinct analyst or firm opinion.
+- Give each view a `temp_id` like `v1`.
+- `view_type`: {format_choices(EXTRACTED_VIEW_TYPES)}.
+- NEVER emit `consensus` or `house_consensus` views from an individual document; fund consensus is synthesized separately.
+- Set `stance` ({format_choices(STANCE.members, sep="|")}), `sentiment` ({_SENTIMENTS_TIGHT}, consistent with `stance`: `bullish` (including buy ratings) -> `positive`, `bearish` (including sell ratings; use `conviction: low` for a merely cautious view) -> `negative`, `neutral` (including hold ratings) -> `neutral`, or `mixed` when nuanced), `support_strength` ({format_choices(SUPPORT_STRENGTH.members, sep="|")}), and `conviction` ({format_choices(CONVICTION.members, sep="|")}).
+- Put an analyst price target in the `target_price` facet as a 3-letter currency code and amount, such as `USD 650` or `TWD 4000`, with a trailing `+` for "at least" (`TWD 3100+`). Use the currency the document states. Never write a bare number or a plain `$`.
+- Set `as_of` to an exact ISO date (YYYY-MM-DD), never a period like `Q3 2026`. Omit it if no exact date is known.
+
+Edges (use only these relations in this run):
+- `view --ABOUT--> entity|theme` for each subject, with a `sentiment` facet ({_SENTIMENTS}) on each company's edge when the view affects companies differently.
+- `view --AUTHORED_BY--> person|institution`.
+- `view --RELATES_TO--> theme`.
+- `view|event --SUPPORTS--> view|theme` and `view|event --CONTRADICTS--> view|theme`, using the listed event IDs when an event is the evidence.
+
+{_STAGE_LINKING}"""
+
+STAGE_SYSTEM_PROMPTS: dict[str, str] = {
+    "entities": ENTITY_STAGE_PROMPT,
+    "events": EVENT_STAGE_PROMPT,
+    "views": VIEW_STAGE_PROMPT,
+}
+
 CONSENSUS_SYSTEM_PROMPT = """You are the head of research synthesis for an equity fund.
 Given a company and all extracted events (facts, earnings, news, catalysts), external/PM views, and linked themes in the ontology, synthesize the fund's current house consensus view.
 
@@ -63,6 +148,7 @@ Guidelines:
 - Weigh verified facts/earnings and high-credibility primary channel checks above uncorroborated or weak rumors.
 - Explicitly note unresolved risks or dissenting views.
 - Produce 2-5 concrete, falsifiable `pillars` (assumptions that, if broken by a future meeting or event, would change the stance).
+- Keep `summary` under 900 characters.
 - Cite exact existing node IDs in `supporting_node_ids` and `contradicting_node_ids`. Only cite IDs present in the input context.
 """
 
@@ -82,6 +168,31 @@ def build_extraction_prompt(
         f"{existing_catalog or '(empty catalog)'}\n\n"
         f"Known Facet Keys by Node Type:\n{json.dumps(known_facets, indent=2)}\n\n"
         f"--- DOCUMENT START ---\n{text}\n--- DOCUMENT END ---"
+    )
+
+
+def build_stage_prompt(
+    *,
+    text: str,
+    source_meta: dict[str, Any],
+    existing_catalog: str,
+    known_facets: dict[str, list[str]],
+    prior: ExtractionResult,
+) -> str:
+    """Build the user prompt for one extraction run, listing what earlier runs resolved."""
+    lines = [f"- [{n.temp_id}] (entity:{n.entity_type}) {n.name}" for n in prior.entities]
+    lines += [f"- [{n.temp_id}] (theme) {n.name}" for n in prior.themes]
+    lines += [f"- [{n.temp_id}] (event) {n.name}" for n in prior.events]
+    resolved = (
+        "Nodes resolved by earlier runs for this document (link to these exact IDs):\n" + "\n".join(lines) + "\n\n"
+        if lines
+        else ""
+    )
+    return resolved + build_extraction_prompt(
+        text=text,
+        source_meta=source_meta,
+        existing_catalog=existing_catalog,
+        known_facets=known_facets,
     )
 
 

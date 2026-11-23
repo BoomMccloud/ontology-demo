@@ -53,7 +53,7 @@ type.
 - Ingest stores the member or the fallback (`coerce_or_fallback`) for an
   optional facet. A facet the registry requires gets no fallback: a missing
   or out-of-vocabulary value fails the write, and the pipeline regenerates
-  the note's extraction, up to 2 regenerations (`MAX_EXTRACTION_ATTEMPTS = 3`
+  the extraction run that owns the item and every later run, up to 2 regenerations (`MAX_EXTRACTION_ATTEMPTS = 3`
   calls in `pipeline.py`) before the note fails. A bad optional `date` or
   `money` value also regenerates; if it is still bad on the last attempt, only
   that facet is dropped and counted in `IngestReport.invalid_facets_dropped`.

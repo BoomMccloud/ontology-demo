@@ -14,9 +14,11 @@ from stock_ontology.llm.base import (
 )
 from stock_ontology.llm.prompts import (
     CONSENSUS_SYSTEM_PROMPT,
+    EXTRACTION_STAGES,
     EXTRACTION_SYSTEM_PROMPT,
     build_consensus_prompt,
     build_extraction_prompt,
+    build_stage_prompt,
     strip_json_fences,
 )
 from stock_ontology.llm.providers import (
@@ -41,6 +43,7 @@ __all__ = [
     "CONSENSUS_SYSTEM_PROMPT",
     "DashScopeClient",
     "DashScopeProvider",
+    "EXTRACTION_STAGES",
     "EXTRACTION_SYSTEM_PROMPT",
     "ErrorKind",
     "GeminiClient",
@@ -55,6 +58,7 @@ __all__ = [
     "ToolCall",
     "build_consensus_prompt",
     "build_extraction_prompt",
+    "build_stage_prompt",
     "build_provider",
     "classify_error",
     "create_llm_client",

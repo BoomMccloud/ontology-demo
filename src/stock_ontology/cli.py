@@ -158,6 +158,12 @@ def ingest(
         ", ".join(f"{key} ({count})" for key, count in sorted(report.invalid_facets_dropped.items()))
         or translate("cli.none_value", lang=resolved_lang),
     )
+    table.add_row(
+        translate("cli.metric_extraction_retries", lang=resolved_lang),
+        ", ".join(f"{stage} ({count})" for stage, count in sorted(report.extraction_retries.items()))
+        or translate("cli.none_value", lang=resolved_lang),
+    )
+    table.add_row(translate("cli.metric_unresolved_refs", lang=resolved_lang), str(report.unresolved_edge_refs))
     table.add_row(translate("cli.metric_errors", lang=resolved_lang), str(len(report.errors)))
     console.print(table)
     if report.errors:

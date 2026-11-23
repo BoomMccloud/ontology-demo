@@ -393,6 +393,8 @@
   "cli.metric_consensus": "Consensus updated for",
   "cli.metric_pending_relations": "Relations pending review",
   "cli.metric_facets_dropped": "Invalid facets dropped",
+  "cli.metric_extraction_retries": "Extraction retries",
+  "cli.metric_unresolved_refs": "Edges with missing references",
   "cli.metric_errors": "Errors",
   "cli.per_item_errors": "Per-item errors (skipped cleanly):",
   "cli.none_value": "(none)",

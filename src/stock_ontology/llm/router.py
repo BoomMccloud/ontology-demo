@@ -191,6 +191,30 @@ class LLMRouter:
         )
         return result
 
+    def extract_stage(
+        self,
+        *,
+        stage: str,
+        text: str,
+        source_meta: dict[str, Any],
+        existing_catalog: str,
+        known_facets: dict[str, list[str]],
+        prior: ExtractionResult,
+    ) -> ExtractionResult:
+        result, _, _ = self._execute(
+            self.chat_providers,
+            f"extract_stage:{stage}",
+            lambda p: p.extract_stage(
+                stage=stage,
+                text=text,
+                source_meta=source_meta,
+                existing_catalog=existing_catalog,
+                known_facets=known_facets,
+                prior=prior,
+            ),
+        )
+        return result
+
     def synthesize_consensus(
         self,
         *,

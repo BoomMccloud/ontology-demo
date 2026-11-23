@@ -316,6 +316,28 @@ class ExtractionResult(BaseModel):
     edges: list[ExtractedEdge] = Field(default_factory=list)
 
 
+class EntityStageResult(BaseModel):
+    """Extraction run 1: the note's entities and themes, and the edges between them."""
+
+    entities: list[ExtractedEntity] = Field(default_factory=list)
+    themes: list[ExtractedTheme] = Field(default_factory=list)
+    edges: list[ExtractedEdge] = Field(default_factory=list)
+
+
+class EventStageResult(BaseModel):
+    """Extraction run 2: the note's events and their edges to resolved nodes."""
+
+    events: list[ExtractedEvent] = Field(default_factory=list)
+    edges: list[ExtractedEdge] = Field(default_factory=list)
+
+
+class ViewStageResult(BaseModel):
+    """Extraction run 3: the note's views and their edges to resolved nodes."""
+
+    views: list[ExtractedView] = Field(default_factory=list)
+    edges: list[ExtractedEdge] = Field(default_factory=list)
+
+
 class ConsensusSynthesis(BaseModel):
     """Pipeline-synthesized fund consensus view for a single company entity."""
 

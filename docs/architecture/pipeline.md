@@ -19,10 +19,21 @@ Turns research notes into graph rows. It's the main writer to `ontology.db`.
    whose hash uniquely matches a vanished one is relinked to its new path
    (`relink_document`) instead of re-extracted. Removed or changed files have
    their prior rows deleted.
-3. For each new or changed note, call `LLMClient.extract_document` with a
-   catalog of existing nodes, getting back an `ExtractionResult`. The catalog
+3. For each new or changed note, run three ordered extractions through
+   `LLMClient.extract_stage`, each with a catalog of existing nodes. The catalog
    lists nodes named in the note first (`find_nodes_mentioned_in`), then
    recent ones.
+   - `entities`: entities, themes, and `WORKS_AT`, `OWNS`, `BUY`, `COMPETE`
+     and `EXPOSED_TO` edges. Only this run creates entities and themes.
+   - `events`: events and their edges, linked to the resolved entities and themes.
+   - `views`: views and their edges, linked to everything resolved so far.
+
+   Each run's output schema only allows the node types it owns, and its new
+   temp IDs are namespaced so runs cannot collide. A refused write repeats the
+   run that owns the item and every later run, up to `MAX_EXTRACTION_ATTEMPTS`
+   for the note. `IngestReport.extraction_retries` counts these by run, and
+   `unresolved_edge_refs` counts edges whose endpoint matched no node. A client
+   without `extract_stage` makes one `extract_document` call.
 4. Resolve each extracted entity or theme to an existing node only by exact
    ID, name, or alias, or by the registry mapping it to the same official
    company (ticker, name, alias) or theme; otherwise create a new node.
