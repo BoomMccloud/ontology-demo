@@ -52,17 +52,14 @@ table, a new facet merge rule. A column added to an existing table goes in
   `merge_node_into` writes no facets.
   Enforcement is on with the default registry too, so a DB opened without a
   registry enforces the shipped schema.
-- Schema stamp: `db_metadata` key `registry_version` records the registry's
-  `schema_stamp()`, a hash of `facet_vocabularies`, `facet_schema` and
-  `metadata_max_length`, that the stored facets were migrated to. A writable
-  open with an explicit registry, or `use_registry(registry)` on a writable DB,
-  runs `migrate_facets` when the stamp is missing or differs (an older integer
-  stamp included): it coerces stored official facets to their kind where
-  lossless (`"630"` to `630`), leaves values it cannot coerce as stored, and
-  writes the stamp. A matching stamp skips the migration, so a schema edit
-  migrates without a `version` bump. Read-only opens never migrate or stamp.
-  Opening without an explicit registry enforces but never migrates or stamps.
-- Transactions: `transaction()` nests; only the outermost scope commits.
+- Registry state: `db_metadata` records the applied registry definitions, full
+  revision, and facet schema stamp. Ordinary opens select the applied registry
+  when one is recorded. A fresh database can start with the supplied registry.
+  An existing database with a mismatched legacy schema stamp requires explicit
+  adoption. Writable opens do not migrate stored ontology rows to a new registry.
+  The approved rollout validates rows before recording the revision and stamp
+  in the same transaction.
+
 - Writes: `upsert_node`, `upsert_edge` (mapped relation stored through
   `normalize_relation_name`), `insert_pending_edge` (an unmapped relation,
   stored raw in `pending_edges`), `upsert_consensus_view`,

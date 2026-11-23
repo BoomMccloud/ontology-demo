@@ -601,7 +601,7 @@ def test_sync_suggestions_idempotent_and_preserves_admin_decisions(tmp_path: Pat
     assert sum3.pending_companies == 1
 
 
-def test_cli_audit_command_reads_ro_and_syncs_registry(tmp_path: Path) -> None:
+def test_cli_audit_command_reads_ro_and_syncs_proposals(tmp_path: Path) -> None:
     db_path = tmp_path / "cli_audit.db"
     reg_path = tmp_path / "ontology_registry.json"
     _seed_audit_db(db_path)
@@ -628,7 +628,7 @@ def test_cli_audit_command_reads_ro_and_syncs_registry(tmp_path: Path) -> None:
     assert parsed["report"]["summary"]["unmapped_companies"] == 2
     assert len(load_registry(reg_path).suggestions.companies) == 0
 
-    # 2. Default sync writes pending suggestions to registry without mutating DB.
+    # 2. Default sync writes a proposal queue beside the registry.
     res_sync = runner.invoke(
         app,
         [
@@ -641,10 +641,10 @@ def test_cli_audit_command_reads_ro_and_syncs_registry(tmp_path: Path) -> None:
     )
     assert res_sync.exit_code == 0, res_sync.output
     assert "Ontology Audit:" in res_sync.output
-    updated_reg = load_registry(reg_path)
-    assert len(updated_reg.suggestions.relations) == 1
-    assert len(updated_reg.suggestions.companies) == 2
-    assert len(updated_reg.suggestions.themes) == 2
+    queue = json.loads(reg_path.with_suffix(".suggestions.json").read_text(encoding="utf-8"))["suggestions"]
+    assert len(queue["relations"]) == 1
+    assert len(queue["companies"]) == 2
+    assert len(queue["themes"]) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -691,14 +691,15 @@ def test_cli_audit_queues_merge_suggestions_and_keeps_human_decisions(tmp_path: 
 
     first = runner.invoke(app, args)
     assert first.exit_code == 0, first.output
-    pairs = _merge_suggestions_by_pair(reg_path)
+    pairs = _merge_suggestions_by_pair(reg_path.with_suffix(".suggestions.json"))
     assert theme_pair in pairs, "near-duplicate theme pair was not queued as a merge suggestion"
     assert company_pair in pairs, "duplicate company pair was not queued as a merge suggestion"
     assert pairs[theme_pair][0]["status"] == "pending"
     assert pairs[company_pair][0]["status"] == "pending"
 
-    # A human rejects the theme pair and approves the company pair in the registry file.
-    raw = json.loads(reg_path.read_text(encoding="utf-8"))
+    # Review decisions live in the separate suggestion queue.
+    queue_path = reg_path.with_suffix(".suggestions.json")
+    raw = json.loads(queue_path.read_text(encoding="utf-8"))
     for item in raw["suggestions"]["merges"]:
         pair = frozenset({item["node_a_id"], item["node_b_id"]})
         if pair == theme_pair:
@@ -706,11 +707,11 @@ def test_cli_audit_queues_merge_suggestions_and_keeps_human_decisions(tmp_path: 
             item["reviewer_note"] = "Distinct themes."
         elif pair == company_pair:
             item["status"] = "approved"
-    reg_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    queue_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
 
     second = runner.invoke(app, args)
     assert second.exit_code == 0, second.output
-    pairs = _merge_suggestions_by_pair(reg_path)
+    pairs = _merge_suggestions_by_pair(reg_path.with_suffix(".suggestions.json"))
     assert len(pairs[theme_pair]) == 1, "rejected merge pair was queued again"
     assert pairs[theme_pair][0]["status"] == "rejected"
     assert pairs[theme_pair][0]["reviewer_note"] == "Distinct themes."
@@ -825,7 +826,9 @@ def test_cli_audit_sync_keeps_facet_vocabulary_section_unchanged(tmp_path: Path)
     assert result.exit_code == 0, result.output
 
     after = json.loads(reg_path.read_text(encoding="utf-8"))
-    assert after["suggestions"] != before["suggestions"], "audit sync wrote no suggestions"
+    queued = json.loads(reg_path.with_suffix(".suggestions.json").read_text(encoding="utf-8"))
+    assert queued["suggestions"] != before["suggestions"], "audit sync wrote no suggestions"
+    assert after == before
     for key in section_keys:
         assert json.dumps(after.get(key), indent=2) == json.dumps(before[key], indent=2), key
 
@@ -881,6 +884,7 @@ def test_cli_audit_sync_queues_relations_held_only_in_pending_edges(tmp_path: Pa
     save_registry(create_minimal_registry(), reg_path)
     res = CliRunner().invoke(app, ["audit", "--db", str(db_path), "--registry", str(reg_path)])
     assert res.exit_code == 0, res.output
-    queued = {s.name: s for s in load_registry(reg_path).suggestions.relations}
-    assert queued["FROBNICATES"].status == "pending" and queued["FROBNICATES"].edge_count == 1
-    assert queued["PRODUCES"].edge_count == 3
+    queue = json.loads(reg_path.with_suffix(".suggestions.json").read_text(encoding="utf-8"))
+    queued = {item["name"]: item for item in queue["suggestions"]["relations"]}
+    assert queued["FROBNICATES"]["status"] == "pending" and queued["FROBNICATES"]["edge_count"] == 1
+    assert queued["PRODUCES"]["edge_count"] == 3

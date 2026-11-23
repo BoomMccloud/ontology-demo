@@ -16,6 +16,7 @@ from stock_ontology.audit import (
     run_ontology_audit,
 )
 from stock_ontology.db import OntologyDB, node_to_dict
+from stock_ontology.db.schema import reconcile_sentiment
 from stock_ontology.i18n import (
     DEFAULT_LANGUAGE,
     translate,
@@ -452,26 +453,33 @@ class ThemeHeader:
 
 
 @dataclass(frozen=True)
-class ExposureLink:
-    """How a first-order company is exposed to a theme: directly, or via an event or view."""
+class ExposureNote:
+    """One note's stated exposure of a company to a theme."""
 
-    # "direct", or "<event|view>: <name>" for a link through an event or view.
-    via: str
-    relation: str | None
-    direction: str | None
     sentiment: str | None
-    entity_relation: str | None
-    theme_relation: str | None
     source: SourceCitation
 
 
 @dataclass(frozen=True)
-class AffectedCompanyRow:
-    """One company a theme affects, directly or through an event or view about it."""
+class ThemeEvidenceItem:
+    """An event or view about both a company and a theme, linking to its row on the page."""
+
+    id: str
+    name: str
+    date: str | None
+    # Set only from the company's own ABOUT edge, never inherited from the event or view.
+    sentiment: str | None
+
+
+@dataclass(frozen=True)
+class ThemeCompanyRow:
+    """One company on a theme page. `is_exposed` means a note states an EXPOSED_TO link."""
 
     company: EntityHeader
-    consensus_stance: str | None
-    links: tuple[ExposureLink, ...]
+    is_exposed: bool
+    exposure: str | None
+    notes: tuple[ExposureNote, ...]
+    evidence: tuple[ThemeEvidenceItem, ...]
 
 
 def _text(value: Any) -> str | None:
@@ -619,37 +627,107 @@ def _theme_header(theme: dict[str, Any]) -> ThemeHeader:
     )
 
 
-def _exposure_link(link: dict[str, Any], data_dir: Path | None) -> ExposureLink:
-    via = str(link.get("via", ""))
-    if via == "direct":
-        facets = link.get("facets")
-        link_sent = facets.get("sentiment") if isinstance(facets, dict) else None
-        return ExposureLink(
-            via=via,
-            relation=str(link.get("relation", "")),
-            direction=str(link.get("direction", "outgoing")),
-            sentiment=_text(link.get("exposure_sentiment") or link_sent),
-            entity_relation=None,
-            theme_relation=None,
-            source=SourceCitation(),
+def _canonical_relation(db: OntologyDB, relation: Any) -> str:
+    match = db.registry.resolve_relation(str(relation))
+    return match.canonical if match is not None else str(relation)
+
+
+def _exposure_notes(
+    db: OntologyDB,
+    theme_edges: list[dict[str, Any]],
+    company_id: str,
+    file_by_doc: dict[str, str],
+    data_dir: Path | None,
+) -> tuple[ExposureNote, ...]:
+    """Return one stated exposure per source note, so disagreement between notes stays visible."""
+    by_doc: dict[str | None, str | None] = {}
+    for item in theme_edges:
+        if (
+            item["neighbor"]["id"] != company_id
+            or is_synthesized_edge(item.get("facets"))
+            or _canonical_relation(db, item["relation"]) != "EXPOSED_TO"
+        ):
+            continue
+        doc_id = item.get("source_doc_id")
+        by_doc[doc_id] = reconcile_sentiment(by_doc.get(doc_id), (item.get("facets") or {}).get("sentiment"))
+    notes = [
+        ExposureNote(
+            sentiment=sentiment,
+            source=_source_citation({"source": {"file_path": file_by_doc.get(doc_id or "", "")}}, data_dir),
         )
-    return ExposureLink(
-        via=via,
-        relation=None,
-        direction=None,
-        sentiment=None,
-        entity_relation=str(link.get("entity_relation", "")),
-        theme_relation=str(link.get("theme_relation", "")),
-        source=_source_citation(link, data_dir),
-    )
+        for doc_id, sentiment in by_doc.items()
+    ]
+    return tuple(sorted(notes, key=lambda note: note.source.label or ""))
 
 
-def _affected_company_row(row: dict[str, Any], data_dir: Path | None) -> AffectedCompanyRow:
-    return AffectedCompanyRow(
-        company=_entity_header(row["company"], "company"),
-        consensus_stance=_text(row.get("consensus_stance")),
-        links=tuple(_exposure_link(link, data_dir) for link in row.get("links", ())),
-    )
+def _theme_evidence(
+    db: OntologyDB,
+    row: dict[str, Any],
+    edges_by_node: dict[str, list[dict[str, Any]]],
+) -> tuple[ThemeEvidenceItem, ...]:
+    """Return each event or view linking this company to the theme, newest first."""
+    company_id = row["company"]["id"]
+    items: dict[str, ThemeEvidenceItem] = {}
+    for link in row.get("links", ()):
+        node_id = link.get("via_node_id")
+        if not node_id or node_id in items:
+            continue
+        if node_id not in edges_by_node:
+            edges_by_node[node_id] = db.get_incident_edges(node_id)
+        edges = edges_by_node[node_id]
+        sentiment = None
+        for edge in edges:
+            if (
+                edge["neighbor"]["id"] == company_id
+                and not is_synthesized_edge(edge.get("facets"))
+                and _canonical_relation(db, edge["relation"]) == "ABOUT"
+            ):
+                sentiment = reconcile_sentiment(sentiment, (edge.get("facets") or {}).get("sentiment"))
+        facets = link.get("facets") or {}
+        items[node_id] = ThemeEvidenceItem(
+            id=str(node_id),
+            name=str(link.get("via", "")).partition(": ")[2],
+            date=_text(facets.get("event_date") or facets.get("as_of")),
+            sentiment=sentiment,
+        )
+    return tuple(sorted(items.values(), key=lambda item: (item.date or "", item.name), reverse=True))
+
+
+def _theme_company_rows(
+    db: OntologyDB,
+    theme_id: str,
+    rows: list[dict[str, Any]],
+    data_dir: Path | None,
+) -> list[ThemeCompanyRow]:
+    """Map theme companies to rows, most-documented first."""
+    theme_edges = db.get_incident_edges(theme_id)
+    file_by_doc = {entry["doc_id"]: path for path, entry in db.get_ingestion_log().items()}
+    edges_by_node: dict[str, list[dict[str, Any]]] = {}
+    out: list[ThemeCompanyRow] = []
+    for row in rows:
+        exposure_link = next(
+            (
+                link
+                for link in row.get("links", ())
+                if link.get("via") == "direct" and link.get("relation") == "EXPOSED_TO"
+            ),
+            None,
+        )
+        out.append(
+            ThemeCompanyRow(
+                company=_entity_header(row["company"], "company"),
+                is_exposed=exposure_link is not None,
+                exposure=_text(exposure_link.get("exposure_sentiment")) if exposure_link else None,
+                notes=(
+                    _exposure_notes(db, theme_edges, row["company"]["id"], file_by_doc, data_dir)
+                    if exposure_link
+                    else ()
+                ),
+                evidence=_theme_evidence(db, row, edges_by_node),
+            )
+        )
+    out.sort(key=lambda r: (-len(r.notes), -len(r.evidence), r.company.name.casefold()))
+    return out
 
 
 def build_entity_context(
@@ -757,12 +835,14 @@ def build_theme_context(
 
     events = [_event_row(pair[1], data_dir) for pair in events_by_id.values()]
     views = [_view_row(pair[1], data_dir) for pair in views_by_id.values()]
+    company_rows = _theme_company_rows(db, theme_id, theme_data["companies"], data_dir)
 
     return {
         "theme": _theme_header(theme),
         "stage": facets.get("stage", ""),
         "extra_facets": _format_facet_pairs(facets, extra_keys, lang=lang),
-        "companies": [_affected_company_row(row, data_dir) for row in theme_data["companies"]],
+        "exposed_companies": [row for row in company_rows if row.is_exposed],
+        "mentioned_companies": [row for row in company_rows if not row.is_exposed],
         "events": events,
         "views": views,
         "page_context": translate(

@@ -259,10 +259,10 @@ def test_web_home_entity_theme_search_and_clippy_chat(tmp_path: Path) -> None:
     assert "Liquid Cooling CDUs" in r_person.text
     assert "Company Profile" not in r_person.text
 
-    # 4. Theme page: affected companies only.
+    # 4. Theme page: companies tied to the theme only.
     r_theme = client.get("/theme/thm_power")
     assert r_theme.status_code == 200
-    assert "Affected Companies" in r_theme.text
+    assert "Exposed Companies" in r_theme.text
     assert "2nd-Order" not in r_theme.text
     assert "NVIDIA" in r_theme.text
     assert "TSMC" not in r_theme.text  # a supplier of an affected company, not listed
@@ -897,7 +897,7 @@ def test_web_multilingual_pages_preserve_original_notes(tmp_path: Path, lang: st
     r_theme = client.get("/theme/thm_power", params={"lang": lang})
     assert r_theme.status_code == 200
     theme_text = html.unescape(r_theme.text)
-    assert translate("theme.affected_companies", lang=lang) in theme_text
+    assert translate("theme.exposed_companies", lang=lang) in theme_text
     assert "AI Data Center Power Bottleneck" in r_theme.text
 
     # 4. Search page
@@ -1949,17 +1949,15 @@ def test_theme_page_templates_only_see_presentation_models(tmp_path: Path) -> No
     assert page.status_code == 200
     text = page.text
     assert '<span class="badge badge-accelerating">STAGE: accelerating</span>' in text
-    first = text.split('aria-label="Affected Companies"', 1)[1].split("</section>", 1)[0]
+    first = text.split('aria-label="Exposed Companies"', 1)[1].split("</section>", 1)[0]
     assert '<a href="/entity/ent_tsmc"><strong>TSMC</strong></a>' in first
     assert '<span class="mono">(TSM)</span>' in first
-    assert '<span class="badge badge-bullish">bullish</span>' in first
-    direct = first.split("exposed to", 1)[1].split("</li>", 1)[0]
-    assert '<span class="badge badge-positive">positive</span>' in direct
-    assert '<span class="source-cite">(direct)</span>' in direct
-    assert "ABOUT &rarr; event: Capex Raise &rarr; RELATES_TO" in first
-    assert '<a href="/catalog?file=TSMC/2026-11-10_capex.md">Capex Raise Notes</a>' in first
-    assert "ABOUT &rarr; view: Pricing Rumor &rarr; CONTRADICTS" in first
-    assert "[TSMC — Rumor (2026-11-12)]" in first
+    assert '<span class="badge badge-positive">positive</span>' in first
+    assert "badge-bullish" not in first, "the company's overall stance is not theme exposure"
+    assert "(direct)" not in first
+    assert ">Capex Raise</a>" in first
+    assert ">Pricing Rumor</a>" in first
+    assert "&rarr;" not in first
     # ASML only supplies TSMC, so it is not a company the theme affects.
     assert "ent_asml" not in text
 
@@ -1968,7 +1966,7 @@ def test_theme_page_templates_only_see_presentation_models(tmp_path: Path) -> No
         ctx = build_theme_context(db, "thm_ai", data_dir=tmp_path, lang="en")
     assert _raw_facet_paths(ctx) == []
     assert dataclasses.is_dataclass(ctx["theme"])
-    for key in ("companies", "events", "views"):
+    for key in ("exposed_companies", "events", "views"):
         assert ctx[key] and all(dataclasses.is_dataclass(item) for item in ctx[key]), key
 
     # 3. No template the theme page renders reads raw facets.
@@ -1978,6 +1976,53 @@ def test_theme_page_templates_only_see_presentation_models(tmp_path: Path) -> No
         name for name in closure if RAW_FACET_TOKEN.search((TEMPLATES_DIR / name).read_text(encoding="utf-8"))
     )
     assert offenders == []
+
+
+def test_theme_page_separates_stated_exposure_from_evidence_mentions(tmp_path: Path) -> None:
+    from stock_ontology.web.viewmodels import build_theme_context
+
+    db_path = tmp_path / "theme_split.db"
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        nodes = [
+            Node(id="thm_x", node_type="theme", name="Packaging", summary="s", facets={"stage": "emerging"}),
+            Node(id="ent_exp", node_type="entity", name="Exposed Co", summary="s", facets={"entity_type": "company"}),
+            Node(id="ent_men", node_type="entity", name="Mentioned Co", summary="s", facets={"entity_type": "company"}),
+            Node(
+                id="evt_x",
+                node_type="event",
+                name="Yield Miss",
+                summary="s",
+                facets={"event_type": "fact", "event_date": "2026-11-01", "sentiment": "negative"},
+            ),
+        ]
+        for idx, node in enumerate(nodes):
+            db.upsert_node(node, embedding=_unit_vec(idx))
+        for doc_id, file_path in (("doc_a", "X/a.md"), ("doc_b", "X/b.md")):
+            db.upsert_ingestion_log(file_path, doc_id, doc_id)
+        for edge in [
+            Edge(id="e1", from_id="ent_exp", to_id="thm_x", relation="EXPOSED_TO",
+                 facets={"basis": "extracted", "sentiment": "positive"}, source_doc_id="doc_a"),
+            Edge(id="e2", from_id="ent_exp", to_id="thm_x", relation="EXPOSED_TO",
+                 facets={"basis": "extracted", "sentiment": "mixed"}, source_doc_id="doc_b"),
+            Edge(id="e3", from_id="evt_x", to_id="thm_x", relation="RELATES_TO", facets={"basis": "extracted"}),
+            Edge(id="e4", from_id="evt_x", to_id="ent_exp", relation="ABOUT",
+                 facets={"basis": "extracted", "sentiment": "positive"}),
+            Edge(id="e5", from_id="evt_x", to_id="ent_men", relation="ABOUT", facets={"basis": "extracted"}),
+        ]:
+            db.upsert_edge(edge)
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        ctx = build_theme_context(db, "thm_x", lang="en")
+
+    assert [row.company.name for row in ctx["exposed_companies"]] == ["Exposed Co"]
+    assert [row.company.name for row in ctx["mentioned_companies"]] == ["Mentioned Co"]
+    exposed = ctx["exposed_companies"][0]
+    assert exposed.exposure == "mixed"
+    assert sorted(note.sentiment for note in exposed.notes) == ["mixed", "positive"], "each note keeps its stance"
+    assert exposed.evidence[0].sentiment == "positive", "the company's ABOUT edge sets evidence sentiment"
+    mentioned = ctx["mentioned_companies"][0]
+    assert mentioned.exposure is None and mentioned.notes == ()
+    assert mentioned.evidence[0].sentiment is None, "the event's own sentiment is not company exposure"
 
 
 @pytest.mark.parametrize("lang", SUPPORTED_LANGUAGE_CODES)
@@ -2207,7 +2252,7 @@ def test_theme_readers_skip_synthesized_edges(tmp_path: Path) -> None:
     assert {"Extracted Seat Pricing View", "Legacy Usage View"} <= view_names
     assert "Consensus: Buy Microsoft" not in view_names
     assert "Soft Linked Copilot View" not in view_names, "a view linked to the theme only by a synthesized edge is listed"
-    companies = {row.company.name for row in ctx["companies"]}
+    companies = {row.company.name for row in [*ctx["exposed_companies"], *ctx["mentioned_companies"]]}
     assert "Oracle" in companies
     assert "Microsoft" not in companies, "Microsoft reaches the theme only through synthesized edges"
 

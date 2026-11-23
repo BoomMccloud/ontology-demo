@@ -138,8 +138,8 @@ promotes it once the registry allows those endpoints.
   schema. A registry without `facet_vocabularies`, `facet_schema` or
   `metadata_max_length` is refused; code's copy is never filled in.
 - `schema_stamp()` hashes `facet_vocabularies`, `facet_schema` and
-  `metadata_max_length`; the DB records it. The registry `version` (now 2) is
-  the human-facing label only; see [storage.md](storage.md).
+  `metadata_max_length`. The database also records the applied version and
+  its full official definition hash. See [storage.md](storage.md).
 
 ## Registry (`registry.py`)
 
@@ -149,8 +149,8 @@ and `update_edge` apply it on write.
 `OntologyRegistry` holds canonical relations (with aliases, inverses, and
 domain and range rules), core companies, house themes, facet aliases, the
 official facet vocabularies (`facet_vocabularies`: per node type and for
-edges, each vocabulary's members with definitions, aliases and fallback), and a
-queue of pending suggestions. Official edge facets are `sentiment` and `basis`
+edges, each vocabulary's members with definitions, aliases and fallback).
+Pending suggestions are stored in a separate queue. Official edge facets are `sentiment` and `basis`
 (`extracted | synthesized`, set by code at each edge write). Other edge facet
 keys stay free-form, and `audit` reports them in `non_official_edge_facet_keys`. `canonicalize_edge` maps a raw relation and
 direction to the canonical form. `create_minimal_registry()` is the built-in

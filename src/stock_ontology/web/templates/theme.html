@@ -24,61 +24,109 @@
   {% include "partials/facet_generic_table.html" %}
 {% endwith %}
 
-<section class="section-block" aria-label="{{ t('theme.affected_companies') }}">
-  <h2>{{ t('theme.affected_companies') }} ({{ companies | length }})</h2>
-  {% if companies %}
-    <table class="catalog-table">
-      <thead>
-        <tr>
-          <th>{{ t('theme.col_company') }}</th>
-          <th>{{ t('theme.col_consensus') }}</th>
-          <th>{{ t('theme.col_exposure') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in companies %}
-          <tr>
-            <td>
-              <a href="/entity/{{ row.company.id }}"><strong>{{ row.company.name }}</strong></a>
-              {% if row.company.ticker %}
-                <span class="mono">({{ row.company.ticker }})</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if row.consensus_stance %}
-                <span class="badge badge-{{ row.consensus_stance }}">{{ t_enum('stance', row.consensus_stance) }}</span>
-              {% else %}
-                {{ t('common.none') }}
-              {% endif %}
-            </td>
-            <td>
-              <ul class="u-m-0 u-pl-18px">
-                {% for link in row.links %}
-                  <li>
-                    {% if link.via == "direct" %}
-                      {{ format_relation(link.relation, link.direction) }}
-                      {% if link.sentiment %}
-                        <span class="badge badge-{{ link.sentiment }}">{{ t_enum('sentiment', link.sentiment) }}</span>
-                      {% endif %}
-                      <span class="source-cite">({{ t('theme.via_direct') }})</span>
-                    {% else %}
-                      <span class="mono">{{ t_enum('relation', link.entity_relation) }} &rarr; {{ format_via(link.via) }} &rarr; {{ t_enum('relation', link.theme_relation) }}</span>
-                      {% if link.source.label %}
-                        <span class="source-cite">[{% if link.source.exists %}<a href="/catalog?file={{ link.source.file | urlencode }}">{{ link.source.label }}</a>{% else %}{{ link.source.label }}{% endif %}]</span>
-                      {% endif %}
-                    {% endif %}
-                  </li>
-                {% endfor %}
-              </ul>
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p>{{ t('theme.affected_companies_empty') }}</p>
+{% macro company_cell(row) %}
+  <a href="/entity/{{ row.company.id }}"><strong>{{ row.company.name }}</strong></a>
+  {% if row.company.ticker %}
+    <span class="mono">({{ row.company.ticker }})</span>
   {% endif %}
+{% endmacro %}
+
+{% macro evidence_cell(row) %}
+  {% if row.evidence %}
+    <details>
+      <summary class="mono u-cursor-pointer">{{ t('theme.evidence_count_one' if row.evidence | length == 1 else 'theme.evidence_count_other', count=row.evidence | length) }}</summary>
+      <ul class="u-m-6px-0-0 u-pl-18px">
+        {% for item in row.evidence %}
+          <li>
+            {% if item.date %}<span class="mono">{{ item.date }}</span>{% endif %}
+            <a href="#node-{{ item.id }}">{{ item.name }}</a>
+            {% if item.sentiment %}
+              <span class="badge badge-{{ item.sentiment }}">{{ t_enum('sentiment', item.sentiment) }}</span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% else %}
+    {{ t('common.none') }}
+  {% endif %}
+{% endmacro %}
+
+{% if exposed_companies %}
+<section class="section-block" aria-label="{{ t('theme.exposed_companies') }}">
+  <h2>{{ t('theme.exposed_companies') }} ({{ exposed_companies | length }})</h2>
+  <table class="catalog-table">
+    <thead>
+      <tr>
+        <th>{{ t('theme.col_company') }}</th>
+        <th>{{ t('theme.col_exposure') }}</th>
+        <th>{{ t('theme.col_evidence') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in exposed_companies %}
+        <tr>
+          <td>{{ company_cell(row) }}</td>
+          <td>
+            {% if row.exposure %}
+              <span class="badge badge-{{ row.exposure }}">{{ t_enum('sentiment', row.exposure) }}</span>
+            {% else %}
+              {{ t('common.none') }}
+            {% endif %}
+            {% if row.notes %}
+              <details class="u-mt-10px">
+                <summary class="mono u-cursor-pointer">{{ t('theme.note_count_one' if row.notes | length == 1 else 'theme.note_count_other', count=row.notes | length) }}</summary>
+                <ul class="u-m-6px-0-0 u-pl-18px">
+                  {% for note in row.notes %}
+                    <li>
+                      {% if note.sentiment %}
+                        <span class="badge badge-{{ note.sentiment }}">{{ t_enum('sentiment', note.sentiment) }}</span>
+                      {% endif %}
+                      {% if note.source.label %}
+                        <span class="source-cite">{% if note.source.exists %}<a href="/catalog?file={{ note.source.file | urlencode }}">{{ note.source.label }}</a>{% else %}{{ note.source.label }}{% endif %}</span>
+                      {% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
+              </details>
+            {% endif %}
+          </td>
+          <td>{{ evidence_cell(row) }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </section>
+{% endif %}
+
+{% if mentioned_companies %}
+<section class="section-block" aria-label="{{ t('theme.mentioned_companies') }}">
+  <h2>{{ t('theme.mentioned_companies') }} ({{ mentioned_companies | length }})</h2>
+  <table class="catalog-table">
+    <thead>
+      <tr>
+        <th>{{ t('theme.col_company') }}</th>
+        <th>{{ t('theme.col_evidence') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in mentioned_companies %}
+        <tr>
+          <td>{{ company_cell(row) }}</td>
+          <td>{{ evidence_cell(row) }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if not exposed_companies and not mentioned_companies %}
+<section class="section-block" aria-label="{{ t('theme.affected_companies') }}">
+  <h2>{{ t('theme.affected_companies') }} (0)</h2>
+  <p>{{ t('theme.affected_companies_empty') }}</p>
+</section>
+{% endif %}
 
 {% include "partials/section_events.html" %}
 {% include "partials/section_views.html" %}

@@ -10,7 +10,7 @@ import pytest
 from stock_ontology.audit import run_ontology_audit
 from stock_ontology.db import OntologyDB
 from stock_ontology.models import Edge, Node
-from stock_ontology.registry import create_minimal_registry, load_registry
+from stock_ontology.registry import FacetSchemaError, create_minimal_registry, load_registry
 from stock_ontology.repair import repair_ontology
 
 SHIPPED_REGISTRY = Path(__file__).resolve().parents[1] / "ontology_registry.json"
@@ -335,14 +335,15 @@ def _stored_target_price(db: OntologyDB):
     return json.loads(row[0])["target_price"]
 
 
-def test_writable_open_migrates_rows_and_stamps_older_registry_version(tmp_path: Path) -> None:
+def test_writable_open_preserves_rows_and_older_registry_stamp(tmp_path: Path) -> None:
     db_path = tmp_path / "old.db"
     _seed_old_stamp(db_path)
     reg = _shipped_registry()
-    with OntologyDB(db_path, embedding_dim=DIM, registry=reg) as db:
-        price = _stored_target_price(db)
-        assert price == {"amount": 630, "currency": "USD"}
-        assert db.get_metadata("registry_version") == reg.schema_stamp()
+    with pytest.raises(FacetSchemaError, match="explicit registry adoption"):
+        OntologyDB(db_path, embedding_dim=DIM, registry=reg)
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        assert _stored_target_price(db) == "USD 630"
+        assert db.get_metadata("registry_version") == "0"
 
 
 def test_read_only_open_of_old_or_unstamped_db_reads_without_writing(tmp_path: Path) -> None:
@@ -583,7 +584,7 @@ def _add_optional_view_facet(raw: dict) -> None:
     raw["facet_schema"]["node"]["view"]["horizon"] = {"kind": "text", "required": False}
 
 
-def test_schema_change_without_version_bump_migrates_and_restamps(tmp_path: Path) -> None:
+def test_schema_change_without_version_bump_does_not_adopt(tmp_path: Path) -> None:
     db_path = tmp_path / "drift.db"
     shipped = _shipped_registry()
     with OntologyDB(db_path, embedding_dim=DIM, registry=shipped) as db:
@@ -598,10 +599,11 @@ def test_schema_change_without_version_bump_migrates_and_restamps(tmp_path: Path
 
     changed = load_registry(_write_registry(tmp_path, _add_optional_view_facet))
     assert changed.version == shipped.version
-    with OntologyDB(db_path, embedding_dim=DIM, registry=changed) as db:
-        price = _stored_target_price(db)
-        assert price == {"amount": 630, "currency": "USD"}
-        assert db.get_metadata("registry_version") != stamp_before
+    with pytest.raises(FacetSchemaError, match="explicit registry adoption"):
+        OntologyDB(db_path, embedding_dim=DIM, registry=changed)
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        assert _stored_target_price(db) == "USD 630"
+        assert db.get_metadata("registry_version") == stamp_before
 
 
 def test_undeclared_edge_facets_round_trip(tmp_path: Path) -> None:
