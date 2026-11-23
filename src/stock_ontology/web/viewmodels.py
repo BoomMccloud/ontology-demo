@@ -121,6 +121,9 @@ def format_facet_value(value: Any, lang: str = DEFAULT_LANGUAGE) -> str:
     if isinstance(value, list):
         return ", ".join(str(v) for v in value)
     if isinstance(value, dict):
+        if {"amount", "currency"} <= set(value):
+            prefix = "\u2265 " if value.get("qualifier") == "at_least" else ""
+            return f"{prefix}{value['currency']} {value['amount']:,}"
         return json.dumps(value, ensure_ascii=False)
     return str(value)
 

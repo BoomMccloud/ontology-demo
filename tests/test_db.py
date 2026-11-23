@@ -1161,11 +1161,11 @@ def test_upsert_consensus_view_is_checked_and_conforms(tmp_path: Path) -> None:
             db.upsert_consensus_view("ent_a", bad, _unit_vec(3), [], [])
         assert db.get_node("vw_c") is None
 
-        good = Node(id="vw_c", node_type="view", name="c", summary="c", facets={"target_price": "630", "view_type": "analyst_report"})
+        good = Node(id="vw_c", node_type="view", name="c", summary="c", facets={"target_price": "USD 630", "view_type": "analyst_report"})
         db.upsert_consensus_view("ent_a", good, _unit_vec(3), [], [])
         stored = db.get_node("vw_c")
         assert stored is not None
-        assert stored.facets["view_type"] == "consensus" and stored.facets["target_price"] == 630
+        assert stored.facets["view_type"] == "consensus" and stored.facets["target_price"] == {"amount": 630, "currency": "USD"}
         bases = {r[0] for r in db.conn.execute("SELECT json_extract(facets_json, '$.basis') FROM edges")}
         assert bases == {"synthesized"}
 
@@ -1207,15 +1207,15 @@ def test_writable_open_stamps_fresh_db_skips_matching_stamp_and_migrates_any_oth
     with OntologyDB(path, embedding_dim=8, registry=reg) as db:
         assert db.get_metadata("registry_version") == reg.schema_stamp()
         insert_view(db, "vw_lots", "lots")
-        insert_view(db, "vw_num", "630")
+        insert_view(db, "vw_num", "USD 630")
     # A matching stamp skips the migration: the coercible row stays as stored.
     with OntologyDB(path, embedding_dim=8, registry=reg) as db:
-        assert target_price(db, "vw_num") == "630"
+        assert target_price(db, "vw_num") == "USD 630"
         # Any other stamp migrates, an old integer version or a "newer" one alike.
         db.set_metadata("registry_version", str(reg.version + 5))
     with OntologyDB(path, embedding_dim=8, registry=reg) as db:
         assert db.get_metadata("registry_version") == reg.schema_stamp()
-        assert target_price(db, "vw_num") == 630
+        assert target_price(db, "vw_num") == {"amount": 630, "currency": "USD"}
         assert target_price(db, "vw_lots") == "lots"
 
 

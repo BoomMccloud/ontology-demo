@@ -318,7 +318,7 @@ def test_shipped_registry_declares_the_initial_required_sets_and_kinds() -> None
     node = reg.facet_schema["node"]
     assert node["event"]["event_date"]["kind"] == "date"
     assert node["view"]["as_of"]["kind"] == "date"
-    assert node["view"]["target_price"]["kind"] == "number"
+    assert node["view"]["target_price"]["kind"] == "money"
     assert reg.version >= 2
 
 
@@ -342,7 +342,7 @@ def _load_with_schema(tmp_path, mutate):
         (lambda fs: fs["node"]["entity"]["entity_type"].update({"required": False}), "entity.entity_type"),
         (lambda fs: fs["node"]["event"]["event_type"].update({"kind": "text"}), "event.event_type"),
         (lambda fs: fs["node"]["view"].pop("view_type"), "view.view_type"),
-        (lambda fs: fs["node"]["view"]["as_of"].update({"kind": "money"}), "as_of"),
+        (lambda fs: fs["node"]["view"]["as_of"].update({"kind": "blob"}), "as_of"),
         (lambda fs: fs["node"]["view"]["as_of"].pop("required"), "as_of"),
         (lambda fs: fs["node"].update({"widget": {}}), "node.widget"),
         (lambda fs: fs["node"].update({"entity:spaceship": {}}), "entity:spaceship"),
@@ -508,14 +508,14 @@ def test_check_facets_refuses_each_required_set_and_kind(node_type, facets) -> N
 
 def test_check_facets_coerces_official_and_passes_undeclared_facets() -> None:
     reg = _shipped()
-    facets = {"view_type": "Rumour", "target_price": "630", "author": 7, "notes": ["x"]}
+    facets = {"view_type": "Rumour", "target_price": "US$630", "author": 7, "notes": ["x"]}
     assert reg.check_facets("view", facets) == {
         "view_type": "rumor",
-        "target_price": 630,
+        "target_price": {"amount": 630, "currency": "USD"},
         "author": 7,
         "notes": ["x"],
     }
-    assert facets["target_price"] == "630"  # the input is not mutated
+    assert facets["target_price"] == "US$630"  # the input is not mutated
 
 
 def test_default_registry_enforces_its_built_in_base_schema() -> None:
@@ -579,3 +579,39 @@ def test_drop_uncoercible_optional_keeps_required_and_undeclared_facets() -> Non
         "desk": [1],
     }
     assert _shipped().drop_uncoercible_optional(None, {"sentiment": 3, "basis": "extracted"}) == {"basis": "extracted"}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("US$600", {"amount": 600, "currency": "USD"}),
+        ("NT$4000", {"amount": 4000, "currency": "TWD"}),
+        ("NT$3100+", {"amount": 3100, "currency": "TWD", "qualifier": "at_least"}),
+        ("US$1,000", {"amount": 1000, "currency": "USD"}),
+        ("650.5 EUR", {"amount": 650.5, "currency": "EUR"}),
+        ({"amount": 5, "currency": "JPY"}, {"amount": 5, "currency": "JPY"}),
+    ],
+)
+def test_money_keeps_amount_currency_and_qualifier(raw, expected) -> None:
+    from stock_ontology.vocab import coerce_facet_value
+
+    assert coerce_facet_value("money", raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["$650", 650, "650", "about 600", "USD", "US$0", True, {"amount": 5}, {"amount": 5, "currency": "usd"},
+     {"amount": 5, "currency": "USD", "qualifier": "maybe"}],
+)
+def test_money_refuses_values_without_a_clear_amount_and_currency(raw) -> None:
+    from stock_ontology.vocab import coerce_facet_value
+
+    with pytest.raises(ValueError):
+        coerce_facet_value("money", raw)
+
+
+def test_money_facet_displays_currency_and_qualifier() -> None:
+    from stock_ontology.web.viewmodels import format_facet_value
+
+    assert format_facet_value({"amount": 1000, "currency": "USD"}) == "USD 1,000"
+    assert format_facet_value({"amount": 3100, "currency": "TWD", "qualifier": "at_least"}) == "\u2265 TWD 3,100"

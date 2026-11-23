@@ -166,7 +166,7 @@ def test_upsert_edge_refuses_edge_without_basis(tmp_path: Path) -> None:
 def test_conforming_view_with_free_form_facets_round_trips(tmp_path: Path) -> None:
     facets = {
         "view_type": "analyst_report",
-        "target_price": 630,
+        "target_price": {"amount": 630, "currency": "USD"},
         "as_of": "2026-10-15",
         "house_flavor": {"nested": ["a", 1]},
         "author": "Morgan Tech Research",
@@ -307,7 +307,9 @@ def test_ingest_drops_uncoercible_optional_facet_and_keeps_note(tmp_path: Path) 
     reg = _shipped_registry()
     with OntologyDB(tmp_path / "o.db", embedding_dim=DIM, registry=reg) as db:
         report = IngestionPipeline(db, llm, data, registry=reg).run()
-        assert llm.extract_calls == [rel]
+        # A bad money value regenerates; still bad after the last attempt, only that facet is dropped.
+        assert llm.extract_calls == [rel, rel, rel]
+        assert report.invalid_facets_dropped == {"target_price": 1}
         # Consensus synthesis is not under test here; the note itself must not fail.
         assert [path for path, _ in report.errors if not path.startswith("consensus:")] == []
         assert rel in db.get_ingestion_log()
@@ -322,7 +324,7 @@ def _seed_old_stamp(db_path: Path) -> None:
         db.conn.execute(
             "INSERT INTO nodes (id, node_type, name, summary, facets_json, created_at, updated_at) "
             "VALUES ('vw_old', 'view', 'Old', 'old', ?, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
-            (json.dumps({"view_type": "analyst_report", "target_price": "630"}),),
+            (json.dumps({"view_type": "analyst_report", "target_price": "USD 630"}),),
         )
         db.conn.commit()
         db.set_metadata("registry_version", "0")
@@ -339,7 +341,7 @@ def test_writable_open_migrates_rows_and_stamps_older_registry_version(tmp_path:
     reg = _shipped_registry()
     with OntologyDB(db_path, embedding_dim=DIM, registry=reg) as db:
         price = _stored_target_price(db)
-        assert isinstance(price, (int, float)) and not isinstance(price, bool) and price == 630
+        assert price == {"amount": 630, "currency": "USD"}
         assert db.get_metadata("registry_version") == reg.schema_stamp()
 
 
@@ -353,7 +355,7 @@ def test_read_only_open_of_old_or_unstamped_db_reads_without_writing(tmp_path: P
                 db.conn.commit()
         before = db_path.read_bytes()
         with OntologyDB(db_path, embedding_dim=DIM, read_only=True, registry=_shipped_registry()) as db:
-            assert _stored_target_price(db) == "630"
+            assert _stored_target_price(db) == "USD 630"
             assert db.get_metadata("registry_version") == stamp
             run_ontology_audit(db, _shipped_registry())
         assert db_path.read_bytes() == before
@@ -588,7 +590,7 @@ def test_schema_change_without_version_bump_migrates_and_restamps(tmp_path: Path
         db.conn.execute(
             "INSERT INTO nodes (id, node_type, name, summary, facets_json, created_at, updated_at) "
             "VALUES ('vw_old', 'view', 'Old', 'old', ?, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
-            (json.dumps({"view_type": "analyst_report", "target_price": "630"}),),
+            (json.dumps({"view_type": "analyst_report", "target_price": "USD 630"}),),
         )
         db.conn.commit()
         stamp_before = db.get_metadata("registry_version")
@@ -598,7 +600,7 @@ def test_schema_change_without_version_bump_migrates_and_restamps(tmp_path: Path
     assert changed.version == shipped.version
     with OntologyDB(db_path, embedding_dim=DIM, registry=changed) as db:
         price = _stored_target_price(db)
-        assert isinstance(price, int) and not isinstance(price, bool) and price == 630
+        assert price == {"amount": 630, "currency": "USD"}
         assert db.get_metadata("registry_version") != stamp_before
 
 

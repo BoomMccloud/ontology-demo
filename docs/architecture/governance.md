@@ -55,6 +55,11 @@ Merge survivors keep a stale embedding. `RepairReport.merged_survivor_ids`
 lists them, and the CLI `repair` command passes them to the pipeline's
 `reembed_nodes`.
 
+Repair rewrites stored `money` facets as amount plus currency. When a value
+names no currency, it reads the one currency the source note writes next to
+that amount (`$` and `US$` are USD, `NT$` is TWD, `HK$` is HKD). A value it
+cannot resolve stays as stored and is counted in `money_facets_unresolved`.
+
 `repair` is the second writer to `ontology.db` besides ingestion. It issues
 no SQL itself. Its writes go through `OntologyDB` methods made for it:
 `list_artifact_doc_ids`, `count_document_artifacts`, `update_edge`,

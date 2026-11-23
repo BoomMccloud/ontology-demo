@@ -8,16 +8,18 @@ All reads and writes go through `OntologyDB`; this module issues no SQL.
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from stock_ontology.db import OntologyDB, merge_edge_facets
 from stock_ontology.models import Edge, Node
 from stock_ontology.registry import OntologyRegistry, normalize_name_key
-from stock_ontology.vocab import VIEW_TYPE, canonicalize_edge_facets, canonicalize_node_facets
+from stock_ontology.vocab import VIEW_TYPE, canonicalize_edge_facets, canonicalize_node_facets, coerce_facet_value
 
 
 @dataclass
@@ -35,6 +37,9 @@ class RepairReport:
     edge_basis_backfilled: int = 0
     # Nodes and edges whose official facets were coerced to their registry kind (`"630"` -> 630).
     facets_migrated: int = 0
+    # Money facets rewritten as amount plus currency, and those whose currency could not be determined.
+    money_facets_migrated: int = 0
+    money_facets_unresolved: int = 0
     nodes_merged: int = 0
     self_loops_deleted: int = 0
     # Pending edges whose relation the registry now maps, written to `edges` and removed from pending.
@@ -54,6 +59,7 @@ class RepairReport:
             + self.duplicate_edges_deleted
             + self.edge_basis_backfilled
             + self.facets_migrated
+            + self.money_facets_migrated
             + self.nodes_merged
             + self.self_loops_deleted
             + self.pending_edges_promoted
@@ -61,13 +67,14 @@ class RepairReport:
 
 
 
-def repair_ontology(db: OntologyDB, registry: OntologyRegistry) -> RepairReport:
+def repair_ontology(db: OntologyDB, registry: OntologyRegistry, data_dir: Path | str | None = None) -> RepairReport:
     """Apply deterministic repairs to `db` in one transaction and report what changed."""
     if db.read_only:
         raise ValueError("repair_ontology requires a writable OntologyDB.")  # noqa: TRY003
     report = RepairReport()
     with db.transaction():
         _delete_orphan_artifacts(db, report)
+        _migrate_money_facets(db, registry, report, data_dir)
         # Before canonicalizing: an edge rewrite has to carry the required `basis`.
         _backfill_edge_basis(db, report)
         _canonicalize_facets(db, registry, report)
@@ -89,6 +96,57 @@ def _delete_orphan_artifacts(db: OntologyDB, report: RepairReport) -> None:
         db.delete_document_artifacts(doc_id)
         report.orphan_nodes_deleted += nodes
         report.orphan_edges_deleted += edges
+
+
+_MONEY_NUMBER_RE = re.compile(r"\$?\s*(?P<number>[0-9][0-9,]*(?:\.[0-9]+)?)(?P<plus>\+)?")
+_NOTE_CURRENCIES = {"$": "USD", "US$": "USD", "NT$": "TWD", "HK$": "HKD"}
+
+
+def _note_currency(node: Node, number: str, data_dir: Path | str | None) -> str | None:
+    """The one currency the view's source note writes next to `number`; None if absent or ambiguous."""
+    source = node.facets.get("source")
+    rel_path = source.get("file_path") if isinstance(source, dict) else None
+    if data_dir is None or not rel_path:
+        return None
+    root = Path(data_dir).resolve()
+    path = (root / str(rel_path)).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        return None
+    plain = number.replace(",", "")
+    forms = {plain}
+    if plain.isdigit():
+        forms.add(f"{int(plain):,}")
+    alternatives = "|".join(re.escape(form) for form in sorted(forms, key=len, reverse=True))
+    pattern = rf"(?<![A-Za-z])(US\$|NT\$|HK\$|\$)\s?(?:{alternatives})(?![0-9,])"
+    found = {_NOTE_CURRENCIES[m] for m in re.findall(pattern, path.read_text(encoding="utf-8"))}
+    return found.pop() if len(found) == 1 else None
+
+
+def _migrate_money_facets(
+    db: OntologyDB, registry: OntologyRegistry, report: RepairReport, data_dir: Path | str | None
+) -> None:
+    """Rewrite stored money as amount plus currency, reading a missing currency from the source note."""
+    for node in db.list_all_nodes():
+        changed = False
+        for key in registry.facet_keys_of_kind(node.node_type, "money"):
+            value = node.facets.get(key)
+            if value is None:
+                continue
+            try:
+                money = coerce_facet_value("money", value)
+            except ValueError:
+                match = _MONEY_NUMBER_RE.fullmatch(str(value).strip()) if not isinstance(value, bool) else None
+                currency = _note_currency(node, match["number"], data_dir) if match else None
+                if currency is None:
+                    report.money_facets_unresolved += 1
+                    continue
+                money = coerce_facet_value("money", f"{currency} {match['number']}{match['plus'] or ''}")
+            if money != value:
+                node.facets[key] = money
+                report.money_facets_migrated += 1
+                changed = True
+        if changed:
+            db.upsert_node(node)
 
 
 def _canonicalize_facets(db: OntologyDB, registry: OntologyRegistry, report: RepairReport) -> None:

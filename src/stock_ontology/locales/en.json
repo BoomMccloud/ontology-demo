@@ -392,6 +392,7 @@
   "cli.metric_edges": "Edges created/updated",
   "cli.metric_consensus": "Consensus updated for",
   "cli.metric_pending_relations": "Relations pending review",
+  "cli.metric_facets_dropped": "Invalid facets dropped",
   "cli.metric_errors": "Errors",
   "cli.per_item_errors": "Per-item errors (skipped cleanly):",
   "cli.none_value": "(none)",

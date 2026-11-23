@@ -1850,7 +1850,7 @@ def _kappa_note(tmp_path: Path) -> tuple[Path, str]:
     return data_dir, rel
 
 
-def test_pipeline_regenerates_out_of_vocabulary_subtype_but_drops_wrong_kind_date(tmp_path: Path) -> None:
+def test_pipeline_regenerates_out_of_vocabulary_subtype_and_wrong_kind_date(tmp_path: Path) -> None:
     from stock_ontology.registry import load_registry
 
     data_dir, rel = _kappa_note(tmp_path)
@@ -1860,11 +1860,12 @@ def test_pipeline_regenerates_out_of_vocabulary_subtype_but_drops_wrong_kind_dat
         reg = load_registry(SHIPPED_REGISTRY)
         report = IngestionPipeline(db, llm, data_dir, registry=reg).run()
         assert report.errors == []
-        # The unknown required subtype regenerates; the bad optional date is dropped, not regenerated.
-        assert llm.extract_calls == [rel, rel]
+        # The unknown required subtype and the bad date each regenerate; the third extraction is clean.
+        assert llm.extract_calls == [rel, rel, rel]
+        assert report.invalid_facets_dropped == {}
         events = [n for n in db.list_all_nodes() if n.node_type == "event"]
         assert [e.facets["event_type"] for e in events] == ["news"]
-        assert "event_date" not in events[0].facets
+        assert events[0].facets.get("event_date") != "sometime soon"
         assert db.get_metadata("registry_version") == reg.schema_stamp()
 
 

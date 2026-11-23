@@ -33,6 +33,9 @@ CATALOG_RECENT_BUDGET = 500
 # Extraction calls per note: the first plus 2 regenerations when the result breaks the registry
 # (a missing required facet, a wrong kind, or an over-length name or summary). After that the note fails.
 MAX_EXTRACTION_ATTEMPTS = 3
+# Bad values of these kinds regenerate the extraction; other optional facets are dropped at once.
+REGENERATE_KINDS = ("date", "money")
+DROP_WITHOUT_RETRY_KINDS = ("enum", "number", "text", "list")
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +53,8 @@ class IngestReport:
     edges_created_or_updated: int = 0
     # Extracted edges held in `pending_edges` because the registry does not map their relation: name -> count.
     unmapped_relations_pending: dict[str, int] = field(default_factory=dict)
+    # Date or money facets still invalid after the last extraction attempt, dropped: key -> count.
+    invalid_facets_dropped: dict[str, int] = field(default_factory=dict)
     consensus_updated_for: list[str] = field(default_factory=list)
     errors: list[tuple[str, str]] = field(default_factory=list)
 
@@ -360,6 +365,7 @@ class IngestionPipeline:
             )
             note_companies.clear()
             pending: dict[str, int] = {}
+            dropped: dict[str, int] = {}
             try:
                 # All writes for this note commit together or not at all, so a failure partway
                 # leaves no partial rows behind and no ingestion log entry.
@@ -373,6 +379,8 @@ class IngestionPipeline:
                         now=now,
                         affected_company_ids=note_companies,
                         pending_relations=pending,
+                        final_attempt=attempt == MAX_EXTRACTION_ATTEMPTS,
+                        dropped_facets=dropped,
                     )
                     note_companies.update(self.db.get_doc_affected_company_ids(doc_id))
                     self.db.upsert_ingestion_log(
@@ -389,6 +397,8 @@ class IngestionPipeline:
         report.edges_created_or_updated += edges_written
         for relation, count in pending.items():
             report.unmapped_relations_pending[relation] = report.unmapped_relations_pending.get(relation, 0) + count
+        for key, count in dropped.items():
+            report.invalid_facets_dropped[key] = report.invalid_facets_dropped.get(key, 0) + count
         report.files_processed += 1
 
     def _clear_prior_artifacts(
@@ -408,12 +418,26 @@ class IngestionPipeline:
         now: datetime,
         affected_company_ids: set[str],
         pending_relations: dict[str, int],
+        final_attempt: bool = True,
+        dropped_facets: dict[str, int] | None = None,
     ) -> tuple[int, int]:
         """Write resolved entities/themes, doc-scoped events/views, and edges; return counts.
 
         An edge whose relation the registry does not map is held in `pending_edges` with its raw
         relation, not written to `edges`; its name is counted in `pending_relations`.
         """
+
+        def clean(node_type: str | None, facets: dict[str, Any]) -> dict[str, Any]:
+            """Drop bad optional facets. A bad date or money value stays, to force a regeneration, until the last try."""
+            kept = self.registry.drop_uncoercible_optional(node_type, facets, kinds=DROP_WITHOUT_RETRY_KINDS)
+            if not final_attempt:
+                return kept
+            final = self.registry.drop_uncoercible_optional(node_type, kept, kinds=REGENERATE_KINDS)
+            for key in kept.keys() - final.keys():
+                logger.warning("Dropping invalid %s facet after %d attempts", key, MAX_EXTRACTION_ATTEMPTS)
+                if dropped_facets is not None:
+                    dropped_facets[key] = dropped_facets.get(key, 0) + 1
+            return final
         nodes_written = 0
         edges_written = 0
         ref_map: dict[str, str] = {}
@@ -424,7 +448,8 @@ class IngestionPipeline:
         for ent in extraction.entities:
             ent_facets = facets_list_to_dict(ent.facets)
             # A facet-list `entity_type` still wins over the field, but only as a member.
-            ent_facets["entity_type"] = ENTITY_TYPE.coerce(ent_facets.get("entity_type")) or self._required_subtype(ent, "entity_type"
+            ent_facets["entity_type"] = ENTITY_TYPE.coerce(ent_facets.get("entity_type")) or self._required_subtype(
+                ent, "entity_type"
             )
             node, updated = self._resolve_canonical_node(
                 node_type="entity",
@@ -432,7 +457,7 @@ class IngestionPipeline:
                 name=ent.name,
                 summary=ent.summary,
                 aliases=ent.aliases,
-                facets=self.registry.drop_uncoercible_optional("entity", ent_facets),
+                facets=clean("entity", ent_facets),
                 prefix="ent",
                 needs_embedding=needs_embedding,
             )
@@ -445,7 +470,8 @@ class IngestionPipeline:
 
         for thm in extraction.themes:
             thm_facets = facets_list_to_dict(thm.facets)
-            thm_facets["stage"] = STAGE.coerce(thm_facets.get("stage")) or self._required_subtype(thm, "stage"
+            thm_facets["stage"] = STAGE.coerce(thm_facets.get("stage")) or self._required_subtype(
+                thm, "stage"
             )
             node, updated = self._resolve_canonical_node(
                 node_type="theme",
@@ -453,7 +479,7 @@ class IngestionPipeline:
                 name=thm.name,
                 summary=thm.summary,
                 aliases=thm.aliases,
-                facets=self.registry.drop_uncoercible_optional("theme", thm_facets),
+                facets=clean("theme", thm_facets),
                 prefix="thm",
                 needs_embedding=needs_embedding,
             )
@@ -495,9 +521,9 @@ class IngestionPipeline:
             local_nodes[node.id] = node
             doc_nodes.append(node)
 
-        # An optional official facet that cannot be coerced to its kind is dropped; the note is kept.
+        # Bad optional facets are dropped, and the note is kept; see `clean` for date and money values.
         for node in doc_nodes:
-            node.facets = self.registry.drop_uncoercible_optional(node.node_type, node.facets)
+            node.facets = clean(node.node_type, node.facets)
 
         if doc_nodes:
             embeddings = self.llm.embed_texts([node_embedding_text(n) for n in doc_nodes])
@@ -533,7 +559,7 @@ class IngestionPipeline:
                     canon_facets.pop("sentiment", None)
             # `basis` is set by code, never taken from the LLM.
             canon_facets["basis"] = "extracted"
-            canon_facets = self.registry.drop_uncoercible_optional(None, canon_facets)
+            canon_facets = clean(None, canon_facets)
             if not canon.matched:
                 self.db.insert_pending_edge(
                     Edge(

@@ -54,9 +54,10 @@ type.
   optional facet. A facet the registry requires gets no fallback: a missing
   or out-of-vocabulary value fails the write, and the pipeline regenerates
   the note's extraction, up to 2 regenerations (`MAX_EXTRACTION_ATTEMPTS = 3`
-  calls in `pipeline.py`) before the note fails. An optional official facet
-  whose value cannot be coerced to its kind is dropped before the write, in
-  extraction and consensus synthesis, and the note is kept. A required subtype
+  calls in `pipeline.py`) before the note fails. A bad optional `date` or
+  `money` value also regenerates; if it is still bad on the last attempt, only
+  that facet is dropped and counted in `IngestReport.invalid_facets_dropped`.
+  Other bad optional facets, and any bad consensus facet, are dropped at once. A required subtype
   never takes a fallback. The extraction catalog lists each entity type's
   required facets from the registry (`entity_type_required_facets`), and the
   prompt tells the LLM to omit an entity whose required facet it cannot determine.
@@ -93,7 +94,10 @@ Code checks only a minimum (`facet_schema_problems`): each spec is
 facet must have a vocabulary in `facet_vocabularies`. `NODE_FACET_SCHEMA` and
 `EDGE_FACET_SCHEMA` in `vocab.py` are only the built-in registry's base schema.
 In the shipped registry, event `event_date` and view `as_of` are dates, view
-`target_price` is a number; the other vocabulary facets are optional enums.
+`target_price` is `money`; the other vocabulary facets are optional enums. A
+`money` value is `{amount, currency[, qualifier]}` with a 3-letter currency and
+`qualifier: at_least` for a target like `NT$3100+`. A bare number or a plain
+`$` names no currency and is refused.
 
 `metadata_max_length` declares the max length of node `name` (200) and
 `summary` (1,000); `check_metadata` refuses longer text on write.
