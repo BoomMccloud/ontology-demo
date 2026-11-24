@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -140,9 +141,18 @@ def client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(settings, llm=FakeWebLLM()))
 
 
+def _all_routes(routes: list[Any]) -> list[Any]:
+    """Flatten module routers: FastAPI keeps an included router as one node wrapping its own routes."""
+    flat: list[Any] = []
+    for route in routes:
+        included = getattr(route, "original_router", None)
+        flat.extend(_all_routes(included.routes) if included is not None else [route])
+    return flat
+
+
 def _html_get_routes(client: TestClient) -> set[str]:
     paths: set[str] = set()
-    for route in client.app.routes:
+    for route in _all_routes(client.app.routes):
         if isinstance(route, APIRoute) and "GET" in route.methods:
             response_class = getattr(route.response_class, "value", route.response_class)
             if isinstance(response_class, type) and issubclass(response_class, HTMLResponse):
@@ -310,7 +320,7 @@ def test_one_desktop_width_and_one_mobile_breakpoint() -> None:
 
 def test_navigation_registry_lookup() -> None:
     from stock_ontology.web.navigation import resolve_nav
-    from stock_ontology.web.viewmodels import EntityHeader
+    from stock_ontology.web.research.views import EntityHeader
 
     header = EntityHeader(
         id="ent_nvda", name="NVIDIA", summary="", aliases=(), ticker="NVDA", entity_type="company"

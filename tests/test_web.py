@@ -1396,7 +1396,7 @@ def test_web_clean_reader_pages_no_db_ids_plumbing_or_italic_markers(tmp_path: P
 def test_web_chat_endpoint_uses_only_agent_chat() -> None:
     import ast
 
-    import stock_ontology.web.app as web_app
+    import stock_ontology.web.clippy.routes as web_app
 
     tree = ast.parse(Path(web_app.__file__).read_text(encoding="utf-8"))
     handlers = [
@@ -1638,7 +1638,7 @@ def _seed_presentation_db(db_path: Path) -> None:
 
 def test_entity_page_templates_only_see_presentation_models(tmp_path: Path) -> None:
     """Entity pages render from typed presentation models, never raw ontology facets."""
-    from stock_ontology.web.viewmodels import build_entity_context
+    from stock_ontology.web.research.views import build_entity_context
 
     db_path = tmp_path / "presentation.db"
     _seed_presentation_db(db_path)
@@ -1942,7 +1942,7 @@ def test_web_search_note_links_jump_to_the_matching_line(tmp_path: Path) -> None
 
 def test_theme_page_templates_only_see_presentation_models(tmp_path: Path) -> None:
     """Theme pages render from typed presentation models, never raw ontology facets."""
-    from stock_ontology.web.viewmodels import build_theme_context
+    from stock_ontology.web.research.views import build_theme_context
 
     db_path = tmp_path / "presentation.db"
     _seed_presentation_db(db_path)
@@ -1987,7 +1987,7 @@ def test_theme_page_templates_only_see_presentation_models(tmp_path: Path) -> No
 
 
 def test_theme_page_separates_stated_exposure_from_evidence_mentions(tmp_path: Path) -> None:
-    from stock_ontology.web.viewmodels import build_theme_context
+    from stock_ontology.web.research.views import build_theme_context
 
     db_path = tmp_path / "theme_split.db"
     with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
@@ -2109,7 +2109,7 @@ def test_note_page_templates_only_see_presentation_models(tmp_path: Path) -> Non
     import jinja2
     from jinja2 import meta
 
-    from stock_ontology.web.catalog import build_catalog_context
+    from stock_ontology.web.notes.views import build_catalog_context
 
     db_path = tmp_path / "web.db"
     _seed_web_db(db_path)
@@ -2247,7 +2247,7 @@ def _seed_basis_theme_db(db_path: Path) -> None:
 
 
 def test_theme_readers_skip_synthesized_edges(tmp_path: Path) -> None:
-    from stock_ontology.web.viewmodels import build_entity_context, build_theme_context
+    from stock_ontology.web.research.views import build_entity_context, build_theme_context
 
     db_path = tmp_path / "basis_theme.db"
     _seed_basis_theme_db(db_path)

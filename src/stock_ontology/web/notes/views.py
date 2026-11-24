@@ -12,15 +12,19 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
 
-from stock_ontology.services import GraphStore
-from stock_ontology.services.notes import scan_notes
 from stock_ontology.i18n import DEFAULT_LANGUAGE, translate, translate_enum, translate_facet_label
 from stock_ontology.search import resolve_safe_note_path
+from stock_ontology.services import GraphStore
+from stock_ontology.services.notes import scan_notes
 from stock_ontology.vocab import ENTITY_TYPE
+from stock_ontology.web.shared import (
+    GENERAL_FOLDERS,
+    extract_title_and_excerpt,
+    strip_markdown_markers,
+)
 
 AUTHOR_FOLDER_ROOTS = {"authors", "analysts", "people", "persons"}
 PERSON_FOLDER_ROOTS = AUTHOR_FOLDER_ROOTS
-GENERAL_FOLDERS = {"_general", "(root)"}
 
 _ANALYST_ROLE_RE = re.compile(
     r"\b(?:analyst|research(?:er)?|strategist|portfolio\s+manager|fund\s+manager|author|economist|desk|pm)\b",
@@ -55,7 +59,7 @@ def _extract_note_date(filename: str, modified_at: str) -> str:
 
 
 def _clean_author_token(raw_token: str) -> str:
-    cleaned = _strip_markdown_markers(raw_token)
+    cleaned = strip_markdown_markers(raw_token)
     cleaned = re.sub(r"<br\s*/?>", " ", cleaned, flags=re.IGNORECASE)
     cleaned = cleaned.strip(" \t\r\n\"'[]")
     return re.sub(r"\s+", " ", cleaned).strip()
@@ -174,15 +178,6 @@ def _split_table_row(line: str) -> list[str]:
         stripped = stripped[:-1]
     return [cell.strip() for cell in stripped.split("|")]
 
-
-def _strip_markdown_markers(line: str) -> str:
-    cleaned = re.sub(r"^#{1,6}\s*", "", line.strip())
-    cleaned = re.sub(r"^\s*[-*+]\s+", "", cleaned)
-    cleaned = re.sub(r"^\s*\d+\.\s+", "", cleaned)
-    cleaned = cleaned.replace("**", "").replace("__", "").replace("`", "")
-    cleaned = re.sub(r"\*([^*\n]+)\*", r"\1", cleaned)
-    cleaned = re.sub(r"(?<!\w)_([^_\n]+)_(?!\w)", r"\1", cleaned)
-    return cleaned.strip()
 
 
 def render_markdown_safe(text: str) -> str:
@@ -308,82 +303,10 @@ def render_markdown_safe(text: str) -> str:
     return "\n".join(out)
 
 
-def _extract_title_and_excerpt(text: str, stem: str) -> tuple[str, str]:
-    lines = text.splitlines()
-    title = ""
-    excerpt = ""
-
-    for line in lines:
-        s = line.strip()
-        if not s:
-            continue
-        if s.startswith("# "):
-            title = _strip_markdown_markers(s)
-            break
-        if not title and s.startswith("## "):
-            title = _strip_markdown_markers(s)
-
-    if not title:
-        title = stem.replace("_", " ").replace("-", " ").title()
-
-    for line in lines:
-        s = line.strip()
-        if (
-            not s
-            or s.startswith("#")
-            or s.startswith("|")
-            or re.match(r"^[-*_]{3,}$", s)
-        ):
-            continue
-        cleaned = _strip_markdown_markers(s)
-        if cleaned and cleaned != title:
-            excerpt = cleaned[:177] + "..." if len(cleaned) > 180 else cleaned
-            break
-
-    return title, excerpt
-
-
 def _format_size(size_bytes: int) -> str:
     if size_bytes < 1024:
         return f"{size_bytes} B"
     return f"{size_bytes / 1024:.1f} KB"
-
-
-def format_source_citation(
-    file_path: str | None, data_dir: Path | None = None
-) -> tuple[str, bool]:
-    """Return `(human_label, note_exists_on_disk)` for a note's `file_path`."""
-    if not file_path or not str(file_path).strip():
-        return "", False
-
-    raw = str(file_path).strip()
-    if data_dir is not None:
-        candidate = resolve_safe_note_path(data_dir, raw)
-        if candidate is not None:
-            text = candidate.read_text(encoding="utf-8", errors="replace")
-            title, _ = _extract_title_and_excerpt(text, candidate.stem)
-            return title, True
-
-    parts = [p for p in raw.replace("\\", "/").split("/") if p]
-    filename = parts[-1] if parts else raw
-    stem = re.sub(r"\.(?:md|markdown|txt)$", "", filename, flags=re.IGNORECASE)
-    folder = parts[0] if len(parts) > 1 and parts[0] not in GENERAL_FOLDERS else ""
-
-    date_match = re.match(r"^(\d{4}-\d{2}-\d{2})[_\-\s]+(.+)$", stem)
-    if date_match:
-        date_str, rest = date_match.group(1), date_match.group(2)
-    else:
-        date_str, rest = "", stem
-
-    tokens = [tok for tok in re.split(r"[\s_-]+", rest) if tok]
-    title_part = " ".join(tok if tok.isupper() else tok.title() for tok in tokens)
-
-    if folder and title_part:
-        base = f"{folder} — {title_part}"
-    else:
-        base = title_part or folder or stem
-    label = f"{base} ({date_str})" if date_str else base
-    return label, False
 
 
 def _scan_raw_notes(
@@ -397,7 +320,7 @@ def _scan_raw_notes(
     for note in scan_notes(data_dir, db.get_ingestion_log()):
         rel = Path(note.rel_path)
         text = note.text
-        title, excerpt = _extract_title_and_excerpt(text, note.path.stem)
+        title, excerpt = extract_title_and_excerpt(text, note.path.stem)
         parts = rel.parts
         folder = parts[0] if len(parts) > 1 else "(root)"
         subdir = rel.parent.as_posix() if rel.parent.as_posix() != "." else "(root)"
@@ -1068,7 +991,7 @@ def build_catalog_context(
         raw_text = candidate.read_text(encoding="utf-8", errors="replace")
         note_meta = notes_by_path.get(canonical_rel)
         if note_meta is None:
-            title, excerpt = _extract_title_and_excerpt(raw_text, candidate.stem)
+            title, excerpt = extract_title_and_excerpt(raw_text, candidate.stem)
             stat = candidate.stat()
             rel_parts = candidate.relative_to(data_dir.resolve()).parts
             fallback_folder = rel_parts[0] if len(rel_parts) > 1 else "(root)"

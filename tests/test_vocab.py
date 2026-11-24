@@ -612,7 +612,7 @@ def test_money_refuses_values_without_a_clear_amount_and_currency(raw) -> None:
 
 
 def test_money_facet_displays_currency_and_qualifier() -> None:
-    from stock_ontology.web.viewmodels import format_facet_value
+    from stock_ontology.web.shared import format_facet_value
 
     assert format_facet_value({"amount": 1000, "currency": "USD"}) == "USD 1,000"
     assert format_facet_value({"amount": 3100, "currency": "TWD", "qualifier": "at_least"}) == "\u2265 TWD 3,100"

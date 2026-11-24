@@ -7,19 +7,39 @@ and it submits Process and corrections as worker jobs.
 
 ## Files
 
-- `src/stock_ontology/web/app.py`: `create_app(settings, llm=None, *, note_actions=False)`
-  and routes.
-- `src/stock_ontology/web/viewmodels.py`: turns `OntologyDB` results into
-  template contexts. `build_search_results` shapes the shared search
-  ([search.md](search.md)) into the search page's best-match card and sections.
-  The entity page context holds only frozen presentation models
+The web layer is a shell plus one package per user-facing module. Each module
+package holds `routes.py` (a `build_router(shell)` factory returning an
+`APIRouter`) and, where it builds pages, `views.py` (its view models). Modules
+render through the shell and share helpers only through `web/shared.py`, never
+by importing another module's private code. Research imports
+`build_search_filter_options` from Search because its overview embeds the
+search bar.
+
+- `src/stock_ontology/web/app.py`: `create_app(settings, llm=None, *, note_actions=False)`.
+  It builds the `WebShell`, includes the five module routers, and keeps the
+  shell-level routes: `/set-language`, `POST /api/language`, and `/api/health`.
+- `src/stock_ontology/web/shell.py`: `WebShell`, the per-app object every
+  router receives. It resolves the request language, opens the read-only graph,
+  loads the optional registry, and renders templates (`render` resolves
+  navigation for every page). It also holds `HTTP_STATUS` for typed service errors.
+- `src/stock_ontology/web/shared.py`: view helpers used by more than one module:
+  `build_rail_context`, `format_facet_value`, `format_facet_pairs`,
+  `resolve_result_href`, and `format_source_citation` (with the note title
+  extraction it needs).
+- `src/stock_ontology/web/research/`: `/`, `/companies`, `/themes`,
+  `/entity/{id}`, `/theme/{id}`. `views.py` turns graph results into template
+  contexts. The entity page context holds only frozen presentation models
   (`EntityHeader`, `ConsensusSummary`, `EventRow`, `ViewRow`, `ThemeLinkRow`,
   `RelatedEntityRow`, and so on) and prepared label/value pairs, so its
   templates never read `facets`. The theme page context does the same with
-  `ThemeHeader`, `FirstOrderRow` (with its `ExposureLink`s), `SecondOrderRow`
-  (with its `SecondOrderPath`s), `EventRow` and `ViewRow`.
-- `src/stock_ontology/web/catalog.py`: the raw notes browser, XSS-safe Markdown
-  rendering, and source citations. Note paths go through the search module's
+  `ThemeHeader`, `ThemeCompanyRow` (with its `ExposureNote`s and
+  `ThemeEvidenceItem`s), `EventRow` and `ViewRow`.
+- `src/stock_ontology/web/search/`: `/search`. `build_search_results` shapes the
+  shared search ([search.md](search.md)) into the search page's best-match card
+  and sections; `build_search_filter_options` builds the filter choices.
+- `src/stock_ontology/web/notes/`: `/catalog`, `/notes/new`, the `/api/notes*`
+  routes, and `/api/jobs/{job_id}`. `views.py` is the raw notes browser and
+  XSS-safe Markdown rendering. Note paths go through the search module's
   `resolve_safe_note_path`. The note page (`?file=`) hands its reader partial
   one frozen `NoteDetail` (with `NoteCompanyChip`, `NoteAuthorChip` and
   `NoteLink`s), built by `_note_detail`. The reader shows the current ontology
@@ -27,10 +47,15 @@ and it submits Process and corrections as worker jobs.
   entity attribution show **Not processed** and can be processed on demand.
   The reader also shows the state of the note's latest job (`data-job-state`).
   Note discovery and status come from `services.notes.scan_notes`.
+- `src/stock_ontology/web/ontology/`: `/ontology` and its model, registry, and
+  audit tabs.
+- `src/stock_ontology/web/clippy/`: the chat dock's `POST /api/chat` and
+  `/api/chat/reset`, and the `/ask` redirect. Chat history is kept per router,
+  capped at 50 sessions.
 - `src/stock_ontology/web/navigation.py`: the navigation registry. Every HTML
-  route maps to a workflow (top nav: Research, Ontology), an owning section
+  route maps to a workflow (top nav: Research, Notes, Ontology), an owning section
   (left nav), an archetype (`page` or `component`), and a breadcrumb trail.
-  `_render` resolves it for every page, so templates never set navigation
+  `WebShell.render` resolves it for every page, so templates never set navigation
   state themselves.
 - Pasted notes are saved by `services.notes.save_pasted_note` in `_general/`.
   It writes a hidden temp file and publishes it with a hard link, so a note is
