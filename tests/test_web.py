@@ -1924,12 +1924,20 @@ def test_web_search_note_links_jump_to_the_matching_line(tmp_path: Path) -> None
 
     page = client.get("/search", params={"q": "nvidia"}).text
     # A grepped passage, and the event folded onto its own note, both link to the raw note at that line.
-    assert f"/catalog?file={_SEARCH_NOTE_FILE}&amp;format=raw#L3" in page
-    assert f"/catalog?file={_SEARCH_EVENT_FILE}&amp;format=raw#L3" in page
+    # Each link also carries the search it came from, so the reader can return to the results.
+    back = "&amp;back=/search%3Fq%3Dnvidia"
+    assert f"/catalog?file={_SEARCH_NOTE_FILE}{back}&amp;format=raw#L3" in page
+    assert f"/catalog?file={_SEARCH_EVENT_FILE}{back}&amp;format=raw#L3" in page
 
     raw = client.get("/catalog", params={"file": _SEARCH_NOTE_FILE, "format": "raw"}).text
     assert '<span id="L3" class="note-line">Channel check: NVIDIA lead times shortened.' in raw
     assert '<span id="L1" class="note-line"># Channel check' in raw
+
+    from_search = client.get(
+        "/catalog", params={"file": _SEARCH_NOTE_FILE, "format": "raw", "back": "/search?q=nvidia"}
+    ).text
+    assert 'href="/search?q=nvidia" class="retro-link-btn">← Back to search results</a>' in from_search
+    assert '<span id="L3" class="note-line">' in from_search
 
 
 def test_theme_page_templates_only_see_presentation_models(tmp_path: Path) -> None:
@@ -2130,21 +2138,22 @@ def test_note_page_templates_only_see_presentation_models(tmp_path: Path) -> Non
     assert '<h1 class="u-m-0 u-fs-1p55rem"> NVDA Q3 Preview </h1>' in rendered
     assert 'Company: <a href="/entity/ent_nvda"> NVIDIA (NVDA) </a>' in rendered
     assert 'Author: <a href="/entity/ent_kenji">Kenji Sato</a> </span>' in rendered
-    assert '<a href="/catalog?view=company&amp;dir=NVDA" class="retro-link-btn">← Back to NVIDIA</a>' in rendered
+    # The breadcrumb is the one link to the catalog parent, so the reader adds no Back button.
+    assert "note-toolbar" not in rendered
     assert '<div class="note-rendered"><h1>NVDA Q3 Preview</h1>' in rendered
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered and "<script>" not in rendered
     assert '&laquo; <a href="/catalog?view=company&amp;dir=NVDA&amp;file=NVDA/2026-11-01_new.md"> NVDA Newer Note </a>' in rendered
     assert '<a href="/catalog?view=company&amp;dir=NVDA&amp;file=NVDA/2026-09-01_old.md"> NVDA Older Note </a> &raquo;' in rendered
 
     raw = reader({"view": "author", "author": "Kenji Sato", "file": note_file, "format": "raw"})
-    assert '<a href="/catalog?view=author&amp;author=ent_kenji" class="retro-link-btn">← Back to Kenji Sato</a>' in raw
+    assert "note-toolbar" not in raw
     assert '<span id="L3" class="note-line">Blackwell &lt;script&gt;alert(1)&lt;/script&gt; ramp. </span>' in raw
     assert '<span id="L5" class="note-line">Third &amp; last. </span></pre>' in raw
     assert "note-rendered" not in raw
     assert '<span class="source-cite">Start of list</span>' in raw and '<span class="source-cite">End of list</span>' in raw
 
     all_view = reader({"view": "all", "file": note_file})
-    assert '<a href="/catalog?view=all" class="retro-link-btn">← Back to All Notes</a>' in all_view
+    assert "note-toolbar" not in all_view
     assert '<a href="/catalog?view=all&amp;file=NVDA/2026-11-01_new.md">' in all_view
 
     # 2. The view model hands the note reader one frozen presentation model, with no raw dicts or lists.

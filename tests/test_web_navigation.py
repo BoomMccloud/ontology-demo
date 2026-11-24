@@ -325,3 +325,64 @@ def test_navigation_registry_lookup() -> None:
 
     with pytest.raises(KeyError):
         resolve_nav("/not-registered", {}, {})
+
+
+def test_other_entity_with_company_facets_keeps_its_other_entities_parent(tmp_path: Path) -> None:
+    from stock_ontology.db import OntologyDB
+    from stock_ontology.models import Node
+    from test_web import _unit_vec
+
+    db_path = tmp_path / "nav.db"
+    _seed_web_db(db_path)
+    bank = Node(
+        id="ent_bank", node_type="entity", name="Barclays", summary="Sell-side bank.",
+        facets={"entity_type": "institution", "ticker": "BCS", "sector": "Banks"},
+    )
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        db.upsert_node(bank, embedding=_unit_vec(20))
+    client = TestClient(create_app(Settings(db_path=db_path, embedding_dim=DIM, data_dir=tmp_path), llm=FakeWebLLM()))
+
+    assert "/entity/ent_bank" in client.get("/companies", params={"kind": "other"}).text
+    assert "/entity/ent_bank" not in client.get("/companies").text
+    page = client.get("/entity/ent_bank").text
+    assert '<li><a href="/companies?kind=other">' in page
+    assert '<li><a href="/companies">' not in page
+    assert "BCS" in page  # the company facets still render on the record
+
+
+_NOTE = "NVDA/2026-10-15_q3.md"
+
+
+def test_note_keeps_the_letter_filter_of_the_list_it_came_from(client: TestClient) -> None:
+    assert f'href="/catalog?view=all&amp;alpha=N&amp;file={_NOTE}"' in client.get(
+        "/catalog", params={"view": "all", "alpha": "N"}
+    ).text
+    page = client.get("/catalog", params={"view": "all", "alpha": "N", "file": _NOTE}).text
+    assert '<li><a href="/catalog?view=all&amp;alpha=N">' in page
+
+    assert 'href="/catalog?view=company&amp;dir=NVDA&amp;alpha=N"' in client.get(
+        "/catalog", params={"view": "company", "alpha": "N"}
+    ).text
+    page = client.get("/catalog", params={"view": "company", "dir": "NVDA", "alpha": "N", "file": _NOTE}).text
+    assert '<li><a href="/catalog?view=company&amp;alpha=N">' in page
+    assert '<li><a href="/catalog?view=company&amp;dir=NVDA&amp;alpha=N">' in page
+
+
+@pytest.mark.parametrize("back", ["//evil.example/x", "https://evil.example/", "/\\evil.example", "search"])
+def test_note_ignores_an_offsite_return_path(client: TestClient, back: str) -> None:
+    page = client.get("/catalog", params={"file": _NOTE, "back": back}).text
+    assert "note-toolbar" not in page
+    assert '<li><a href="/catalog?view=company&amp;dir=NVDA">' in page
+
+
+def test_note_opened_from_an_entity_page_returns_there(client: TestClient) -> None:
+    page = client.get("/catalog", params={"file": _NOTE, "back": "/entity/ent_nvda"}).text
+    assert 'href="/entity/ent_nvda" class="retro-link-btn">← Back</a>' in page
+    # The breadcrumb still names the note's predictable parent in the catalog.
+    assert '<li><a href="/catalog?view=company&amp;dir=NVDA">' in page
+
+
+def test_search_reset_links_keep_the_notes_workflow(client: TestClient) -> None:
+    page = client.get("/search", params={"in": "notes", "q": "nvidia", "node_type": "event"}).text
+    assert 'class="retro-link-btn" href="/search?in=notes"' in page
+    assert 'href="/search?in=notes" class="mono"' in page

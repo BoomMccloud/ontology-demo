@@ -545,6 +545,7 @@ def create_app(
         alpha: str = "",
         file: str = "",
         format: str = "rendered",
+        back: str = "",
     ) -> HTMLResponse:
         lang = _resolve_request_lang(request)
         with _open_ro_db(lang) as db:
@@ -559,6 +560,7 @@ def create_app(
                     selected_alpha=alpha,
                     selected_file=file,
                     note_format=format,
+                    return_to=back,
                     actions_enabled=note_actions,
                     note_job_state=_note_job_state if note_actions else None,
                     lang=lang,

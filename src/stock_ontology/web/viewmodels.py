@@ -166,6 +166,11 @@ def build_rail_context(db: GraphStore) -> dict[str, Any]:
     }
 
 
+def is_company_entity(entity_type: str) -> bool:
+    """The one rule for whether an entity belongs to Companies rather than Other Entities."""
+    return entity_type == "company"
+
+
 def _load_entities_split(
     db: GraphStore,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -176,7 +181,7 @@ def _load_entities_split(
 
     for ent in all_entities:
         etype = str(ent.facets.get("entity_type", "entity"))
-        if etype == "company":
+        if is_company_entity(etype):
             overview = db.get_entity_overview(ent.id)
             cons = overview["consensus"]
             companies.append(
@@ -769,7 +774,7 @@ def build_entity_context(
     return {
         "entity": _entity_header(entity, entity_type),
         "entity_type": entity_type,
-        "is_company": entity_type == "company" or bool(company_facets),
+        "is_company": is_company_entity(entity_type),
         "is_person": entity_type == "person" or bool(person_facets),
         "company_facets": company_facets,
         "person_facets": person_facets,

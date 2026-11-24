@@ -184,7 +184,7 @@
 
       <div class="advanced-search-actions">
         <button class="retro-btn" type="submit">{{ t('search.apply_filters_btn') }}</button>
-        <a class="retro-link-btn" href="/search">{{ t('search.reset_all_btn') }}</a>
+        <a class="retro-link-btn" href="{{ '/search?in=notes' if nav.workflow == 'notes' else '/search' }}">{{ t('search.reset_all_btn') }}</a>
       </div>
     </details>
   </form>

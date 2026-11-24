@@ -83,7 +83,7 @@
                         <span class="badge badge-{{ note.sentiment }}">{{ t_enum('sentiment', note.sentiment) }}</span>
                       {% endif %}
                       {% if note.source.label %}
-                        <span class="source-cite">{% if note.source.exists %}<a href="/catalog?file={{ note.source.file | urlencode }}">{{ note.source.label }}</a>{% else %}{{ note.source.label }}{% endif %}</span>
+                        <span class="source-cite">{% if note.source.exists %}<a href="/catalog?file={{ note.source.file | urlencode }}&amp;back={{ next_path | urlencode }}">{{ note.source.label }}</a>{% else %}{{ note.source.label }}{% endif %}</span>
                       {% endif %}
                     </li>
                   {% endfor %}

@@ -143,28 +143,32 @@ def _catalog(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
     group = ctx.get("active_group")
     note = ctx.get("active_note")
     notes_item = _NOTES_BY_VIEW.get(view_mode, _NOTES_BY_COMPANY)
+    # Keep the list's letter filter so each crumb returns to the list state the reader left.
+    alpha = str(ctx.get("selected_alpha") or "")
+    alpha_query = f"&alpha={quote(alpha)}" if alpha else ""
+    list_crumb = Crumb(label_key=notes_item.label_key, href=f"{notes_item.href}{alpha_query}")
 
     if note:
-        crumbs = [_NOTES_ROOT, _crumb(notes_item)]
+        crumbs = [_NOTES_ROOT, list_crumb]
         if view_mode == "author" and group:
             crumbs.append(
                 Crumb(
                     label=str(group.get("label", "")),
-                    href=f"/catalog?view=author&author={quote(str(group.get('id', '')))}",
+                    href=f"/catalog?view=author&author={quote(str(group.get('id', '')))}{alpha_query}",
                 )
             )
         elif view_mode == "company":
             crumbs.append(
                 Crumb(
                     label=str(getattr(note, "subject_label", "")),
-                    href=f"/catalog?view=company&dir={quote(str(getattr(note, 'folder', '')))}",
+                    href=f"/catalog?view=company&dir={quote(str(getattr(note, 'folder', '')))}{alpha_query}",
                 )
             )
         crumbs.append(Crumb(label=str(getattr(note, "title", ""))))
         return NavState("notes", notes_item.key, "component", crumbs)
 
     if group and view_mode in ("author", "company"):
-        crumbs = [_NOTES_ROOT, _crumb(notes_item), Crumb(label=str(group.get("label", "")))]
+        crumbs = [_NOTES_ROOT, list_crumb, Crumb(label=str(group.get("label", "")))]
         return NavState("notes", notes_item.key, "component", crumbs)
 
     return NavState("notes", notes_item.key, "component")

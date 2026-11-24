@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from stock_ontology.services import GraphStore
 from stock_ontology.services.notes import scan_notes
@@ -603,6 +603,15 @@ def _note_extraction(
     )
 
 
+def safe_return_path(raw: str) -> str:
+    """Accept only a same-site path for a note's return link; anything else becomes ``""``."""
+    value = raw.strip()
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc or not value.startswith("/") or value.startswith("//") or "\\" in value:
+        return ""
+    return value
+
+
 @dataclass(frozen=True)
 class NoteDetail:
     """Everything the note reader shows for one raw note."""
@@ -613,7 +622,9 @@ class NoteDetail:
     subject_label: str
     company: NoteCompanyChip | None
     authors: tuple[NoteAuthorChip, ...]
-    back_link: NoteLink
+    # Set only when the reader arrived from a page outside the catalog. The breadcrumb is the
+    # one link to the note's catalog parent, so there is never a second link to the same place.
+    return_link: NoteLink | None
     extraction: NoteExtraction
     show_raw: bool
     body_html: str
@@ -634,6 +645,8 @@ def _note_detail(
     author_groups: list[dict[str, Any]],
     extraction: NoteExtraction,
     lang: str,
+    alpha: str = "",
+    return_to: str = "",
 ) -> NoteDetail:
     """Map a resolved note and its catalog lookups to the note reader's model."""
     rel_path = str(note_meta["rel_path"])
@@ -658,26 +671,22 @@ def _note_detail(
         if any(n["rel_path"] == rel_path for n in grp["notes"])
     )
 
-    if view_mode == "author" and active_group:
-        author_query = f"view=author&author={quote(str(active_group['id']))}"
-        back_link = NoteLink(
-            label=translate("catalog.up_to_dir", lang=lang, label=active_group["label"]),
-            href=f"/catalog?{author_query}",
-        )
-    elif view_mode == "all":
-        back_link = NoteLink(label=translate("catalog.back_to_all_notes", lang=lang), href="/catalog?view=all")
-    else:
-        back_link = NoteLink(
-            label=translate("catalog.up_to_dir", lang=lang, label=subject_label),
-            href=f"/catalog?view=company&dir={quote(folder)}",
-        )
-
+    # The list letter filter rides along so Back and Prev/Next return to the same list state.
+    alpha_query = f"&alpha={quote(alpha)}" if alpha else ""
     if view_mode == "company":
-        list_query = f"view=company&dir={quote(folder)}"
+        list_query = f"view=company&dir={quote(folder)}{alpha_query}"
     elif view_mode == "author" and active_group:
-        list_query = author_query
+        list_query = f"view=author&author={quote(str(active_group['id']))}{alpha_query}"
     else:
-        list_query = f"view={view_mode}"
+        list_query = f"view={view_mode}{alpha_query}"
+
+    # A reader who arrived from Search or a research page gets a link back there; the breadcrumb
+    # still names the note's predictable parent in the catalog.
+    return_link = None
+    if return_to:
+        back_key = "catalog.back_to_search" if return_to.startswith("/search") else "catalog.back_to_previous"
+        return_link = NoteLink(label=translate(back_key, lang=lang), href=return_to)
+        list_query += f"&back={quote(return_to, safe='')}"
 
     def _sibling(sib: dict[str, Any]) -> NoteLink:
         return NoteLink(
@@ -702,7 +711,7 @@ def _note_detail(
         subject_label=subject_label,
         company=company,
         authors=authors,
-        back_link=back_link,
+        return_link=return_link,
         extraction=extraction,
         show_raw=show_raw,
         body_html="" if show_raw else render_markdown_safe(raw_text),
@@ -723,6 +732,7 @@ def build_catalog_context(
     selected_alpha: str = "",
     selected_file: str = "",
     note_format: str = "rendered",
+    return_to: str = "",
     actions_enabled: bool = False,
     note_job_state: Callable[[str], str] | None = None,
     lang: str = DEFAULT_LANGUAGE,
@@ -1087,7 +1097,7 @@ def build_catalog_context(
         if active_group is not None:
             sibling_list = active_group["notes"]
         elif view_mode == "all":
-            sibling_list = all_notes
+            sibling_list = filtered_all_notes
         else:
             for grp in company_groups + other_dir_groups:
                 if grp["key"] == note_meta["folder"]:
@@ -1110,6 +1120,8 @@ def build_catalog_context(
             author_groups=author_groups,
             extraction=extraction,
             lang=lang,
+            alpha=active_alpha,
+            return_to=safe_return_path(return_to),
         )
 
     ingested_notes = sum(1 for n in notes if n["status"] == "ingested")

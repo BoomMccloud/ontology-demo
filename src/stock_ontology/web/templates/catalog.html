@@ -86,7 +86,7 @@
         {% for note in visible_notes %}
           <tr>
             <td>
-              <a href="/catalog?view=company&amp;dir={{ active_group.key | urlencode }}&amp;file={{ note.rel_path | urlencode }}">
+              <a href="/catalog?view=company&amp;dir={{ active_group.key | urlencode }}{% if selected_alpha %}&amp;alpha={{ selected_alpha }}{% endif %}&amp;file={{ note.rel_path | urlencode }}">
                 <strong>{{ note.title }}</strong>
               </a>
               {% if note.excerpt %}
@@ -120,7 +120,7 @@
         {% for grp in filtered_company_groups %}
           <tr>
             <td>
-              <a href="/catalog?view=company&amp;dir={{ grp.key | urlencode }}"><strong>{{ grp.dir_label }}</strong></a>
+              <a href="/catalog?view=company&amp;dir={{ grp.key | urlencode }}{% if selected_alpha %}&amp;alpha={{ selected_alpha }}{% endif %}"><strong>{{ grp.dir_label }}</strong></a>
               {% if grp.entity and grp.entity.ticker %}
                 <span class="source-cite">({{ grp.entity.ticker }})</span>
               {% endif %}
@@ -164,7 +164,7 @@
           {% for grp in other_dir_groups %}
             <tr>
               <td>
-                <a href="/catalog?view=company&amp;dir={{ grp.key | urlencode }}"><strong>{{ grp.dir_label }}</strong></a>
+                <a href="/catalog?view=company&amp;dir={{ grp.key | urlencode }}{% if selected_alpha %}&amp;alpha={{ selected_alpha }}{% endif %}"><strong>{{ grp.dir_label }}</strong></a>
               </td>
               <td class="mono catalog-nowrap">{{ grp.note_count }}</td>
               <td class="mono catalog-nowrap">{{ grp.latest_date or t('common.none') }}</td>
@@ -202,7 +202,7 @@
           <tr>
             <td>{{ note.subject_label }}</td>
             <td>
-              <a href="/catalog?view=author&amp;author={{ active_group.id | urlencode }}&amp;file={{ note.rel_path | urlencode }}">
+              <a href="/catalog?view=author&amp;author={{ active_group.id | urlencode }}{% if selected_alpha %}&amp;alpha={{ selected_alpha }}{% endif %}&amp;file={{ note.rel_path | urlencode }}">
                 <strong>{{ note.title }}</strong>
               </a>
               {% if note.excerpt %}
@@ -236,7 +236,7 @@
           {% for grp in filtered_author_groups %}
             <tr>
               <td class="catalog-nowrap">
-                <a href="/catalog?view=author&amp;author={{ grp.id | urlencode }}"><strong>{{ grp.name }}</strong></a>
+                <a href="/catalog?view=author&amp;author={{ grp.id | urlencode }}{% if selected_alpha %}&amp;alpha={{ selected_alpha }}{% endif %}"><strong>{{ grp.name }}</strong></a>
               </td>
               <td>
                 {% if grp.role or grp.organization %}
@@ -283,7 +283,7 @@
               <a href="/catalog?view=company&amp;dir={{ note.folder | urlencode }}">{{ note.subject_label }}</a>
             </td>
             <td>
-              <a href="/catalog?view=all&amp;file={{ note.rel_path | urlencode }}">
+              <a href="/catalog?view=all{% if selected_alpha %}&amp;alpha={{ selected_alpha }}{% endif %}&amp;file={{ note.rel_path | urlencode }}">
                 <strong>{{ note.title }}</strong>
               </a>
               {% if note.excerpt %}

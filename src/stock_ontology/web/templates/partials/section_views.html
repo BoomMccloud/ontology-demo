@@ -46,7 +46,7 @@
                 {% if src.label %}
                   {{ t('common.source') }}
                   {% if src.exists %}
-                    <a href="/catalog?file={{ src.file | urlencode }}">{{ src.label }}</a>
+                    <a href="/catalog?file={{ src.file | urlencode }}&amp;back={{ next_path | urlencode }}">{{ src.label }}</a>
                   {% else %}
                     {{ src.label }}
                   {% endif %}

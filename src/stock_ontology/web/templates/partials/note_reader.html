@@ -29,9 +29,11 @@
       </div>
     {% endif %}
 
-    <div class="note-toolbar">
-      <a href="{{ active_note.back_link.href }}" class="retro-link-btn">{{ active_note.back_link.label }}</a>
-    </div>
+    {% if active_note.return_link %}
+      <div class="note-toolbar">
+        <a href="{{ active_note.return_link.href }}" class="retro-link-btn">{{ active_note.return_link.label }}</a>
+      </div>
+    {% endif %}
   </div>
 
   {% set extraction = active_note.extraction %}

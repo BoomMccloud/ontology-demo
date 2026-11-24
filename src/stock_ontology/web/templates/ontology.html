@@ -902,7 +902,7 @@
                   <div class="source-cite u-mt-3px">
                     {{ t('common.source') }}
                     {% if rec.source_exists %}
-                      <a href="/catalog?file={{ rec.source_file | urlencode }}">{{ rec.source_file }}</a>
+                      <a href="/catalog?file={{ rec.source_file | urlencode }}&amp;back={{ next_path | urlencode }}">{{ rec.source_file }}</a>
                     {% else %}
                       {{ rec.source_file }}
                     {% endif %}
