@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -1144,18 +1143,6 @@ class IngestionPipeline:
                 report.errors.append((f"consensus:{label}", str(exc)))
                 logger.warning("Could not refresh consensus for %s: %s", label, exc)
                 self.db.jobs.fail_consensus(company_id, str(exc), datetime.now(UTC))
-
-    def watch(self, interval_seconds: int = 60, on_tick: Any = None) -> None:
-        """Periodically run incremental ingestion until interrupted."""
-        while True:
-            try:
-                report = self.run()
-            except Exception:  # noqa: BLE001 - one failing tick must not stop the watcher
-                logger.exception("Ingestion tick failed; retrying after %s seconds", interval_seconds)
-            else:
-                if on_tick is not None:
-                    on_tick(report)
-            time.sleep(interval_seconds)
 
 
 def _merge_stages(results: list[ExtractionResult]) -> ExtractionResult:

@@ -767,3 +767,26 @@ def test_browser_registry_relationship_sources_include_theme_provenance(tmp_path
                         "facets": {"sentiment": "positive"}},
         })
         assert review.status_code == (200 if doc in {"direct", "evidence", "membership"} else 409), review.text
+
+
+class _StopWorker(BaseException):
+    pass
+
+
+def test_run_forever_continues_after_a_tick_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import stock_ontology.worker as worker_module
+
+    worker = Worker(_workspace(tmp_path), llm_factory=lambda _settings: _ScriptLLM())
+    calls: list[int] = []
+
+    def flaky_run_once(*_args: Any, **_kwargs: Any) -> int:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("transient failure in tick 1")  # noqa: TRY003
+        raise _StopWorker
+
+    monkeypatch.setattr(worker, "run_once", flaky_run_once)
+    monkeypatch.setattr(worker_module.time, "sleep", lambda _s: None)
+    with pytest.raises(_StopWorker):
+        worker.run_forever(0)
+    assert len(calls) == 2

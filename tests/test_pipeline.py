@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-import stock_ontology.pipeline as pipeline_module
 from stock_ontology.db import OntologyDB
 from stock_ontology.llm import AgentTurn
 from stock_ontology.models import (
@@ -1289,35 +1288,6 @@ def test_pipeline_reports_non_utf8_note_and_ingests_the_rest(tmp_path: Path) -> 
         assert [path for path, _ in report.errors] == ["_general/bad_encoding.md"]
         assert report.files_processed == 5
         assert len(db.get_ingestion_log()) == 5
-
-
-class _StopWatch(BaseException):
-    pass
-
-
-def test_pipeline_watch_continues_after_a_run_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    calls: list[int] = []
-
-    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, read_only=False) as db:
-        pipeline = IngestionPipeline(db, FakePipelineLLM(), data_dir)
-
-        def flaky_run(*args: Any, **kwargs: Any) -> Any:
-            calls.append(1)
-            if len(calls) == 1:
-                raise RuntimeError("transient failure in tick 1")  # noqa: TRY003
-            raise _StopWatch
-
-        monkeypatch.setattr(pipeline, "run", flaky_run)
-        monkeypatch.setattr(pipeline_module.time, "sleep", lambda _s: None)
-        try:
-            pipeline.watch(interval_seconds=0)
-        except _StopWatch:
-            pass
-        except RuntimeError as exc:
-            pytest.fail(f"watch() stopped after a failing tick: {exc}")
-        assert len(calls) == 2
 
 
 # ---------------------------------------------------------------------------
