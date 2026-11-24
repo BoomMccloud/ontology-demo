@@ -33,6 +33,9 @@ last 10 pre-deploy database backups in `/var/backups/stock-ontology`.
 
 ## What a deploy does not do
 
+- It does not restart the worker. Run `systemctl restart stock-ontology-worker`
+  after each deploy and rollback. The first worker setup is in
+  [worker.md](worker.md).
 - It never writes to the database or notes. A rollback restores code only.
 - It does not adopt registry changes. When it prints a registry notice, review the
   change and run `registry-apply` on the server.
