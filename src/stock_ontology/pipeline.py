@@ -7,13 +7,14 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from stock_ontology.config import SUPPORTED_EXTENSIONS
-from stock_ontology.db import OntologyDB, node_meta
+from stock_ontology.config import SUPPORTED_EXTENSIONS, NoteConflictError
+from stock_ontology.db import LeaseLostError, OntologyDB, RegistryChangedError, node_meta
 from stock_ontology.llm import EXTRACTION_STAGES, LLMClient
 from stock_ontology.registry import FacetSchemaError, OntologyRegistry
 from stock_ontology.models import (
@@ -39,6 +40,10 @@ REGENERATE_KINDS = ("date", "money")
 DROP_WITHOUT_RETRY_KINDS = ("enum", "number", "text", "list")
 
 logger = logging.getLogger(__name__)
+
+
+class StaleConsensusError(Exception):
+    """Newer evidence for the company committed while its consensus was being synthesized."""
 
 
 @dataclass
@@ -123,6 +128,18 @@ class IngestionPipeline:
         if registry is not None:
             db.use_registry(registry)
         self.registry = db.registry
+        # Called inside every commit that changes evidence or publishes consensus, with the
+        # consensus revisions that commit queued. The worker uses it to check its job claim.
+        self.commit_check: Callable[[dict[str, int]], None] | None = None
+
+    def _check_commit(self, revisions: dict[str, int]) -> None:
+        if self.commit_check is not None:
+            self.commit_check(revisions)
+
+    def _evidence_changed(self, company_ids: set[str] | list[str]) -> None:
+        """Queue consensus refreshes in the current transaction, so a rollback queues none."""
+        revisions = self.db.jobs.mark_consensus_pending(company_ids, datetime.now(UTC))
+        self._check_commit(revisions)
 
     @staticmethod
     def _required_subtype(item: Any, field: str) -> str | None:
@@ -340,6 +357,7 @@ class IngestionPipeline:
         report: IngestReport,
         size: int | None = None,
         mtime_ns: int | None = None,
+        verify_current: Callable[[], None],
     ) -> None:
         now = datetime.now(UTC)
         now_iso = now.isoformat()
@@ -357,9 +375,11 @@ class IngestionPipeline:
         note_companies: set[str] = set()
         if not text.strip():
             with self.db.transaction():
+                verify_current()
                 self._clear_prior_artifacts(doc_id, replace_old_doc_id, note_companies)
+                self._evidence_changed(note_companies)
                 self.db.upsert_ingestion_log(
-                    rel_path, doc_id, content_hash, now_iso, size=size, mtime_ns=mtime_ns
+                    rel_path, doc_id, content_hash, now_iso, size=size, mtime_ns=mtime_ns, entity_ids=()
                 )
             affected_company_ids.update(note_companies)
             report.files_processed += 1
@@ -378,9 +398,10 @@ class IngestionPipeline:
                 # All writes for this note commit together or not at all, so a failure partway
                 # leaves no partial rows behind and no ingestion log entry.
                 with self.db.transaction():
+                    verify_current()
                     # Always clear this note's prior artifacts (including leftovers from a failed run).
                     self._clear_prior_artifacts(doc_id, replace_old_doc_id, note_companies)
-                    nodes_written, edges_written = self._write_extraction(
+                    nodes_written, edges_written, entity_ids = self._write_extraction(
                         extraction=extraction,
                         doc_id=doc_id,
                         source_meta=source_meta,
@@ -394,9 +415,14 @@ class IngestionPipeline:
                         unresolved_refs=unresolved,
                     )
                     note_companies.update(self.db.get_doc_affected_company_ids(doc_id))
+                    verify_current()
+                    self._evidence_changed(note_companies)
                     self.db.upsert_ingestion_log(
-                        rel_path, doc_id, content_hash, now_iso, size=size, mtime_ns=mtime_ns
+                        rel_path, doc_id, content_hash, now_iso, size=size, mtime_ns=mtime_ns,
+                        entity_ids=tuple(entity_ids),
                     )
+            except RegistryChangedError:
+                raise
             except FacetSchemaError as exc:
                 if attempt == MAX_EXTRACTION_ATTEMPTS:
                     raise
@@ -509,7 +535,7 @@ class IngestionPipeline:
         edge_stages: dict[int, str] | None = None,
         stage_cursor: dict[str, str | None] | None = None,
         unresolved_refs: list[str] | None = None,
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, set[str]]:
         """Write resolved entities/themes, doc-scoped events/views, and edges; return counts.
 
         An edge whose relation the registry does not map is held in `pending_edges` with its raw
@@ -538,6 +564,7 @@ class IngestionPipeline:
         ref_map: dict[str, str] = {}
         local_nodes: dict[str, Node] = {}
         needs_embedding: list[Node] = []
+        entity_ids: set[str] = set()
 
         # 1. Resolve canonical entities & themes.
         for ent in extraction.entities:
@@ -558,6 +585,7 @@ class IngestionPipeline:
             )
             ref_map[ent.temp_id] = node.id
             local_nodes[node.id] = node
+            entity_ids.add(node.id)
             if updated:
                 nodes_written += 1
             if node.facets.get("entity_type") == "company":
@@ -658,6 +686,10 @@ class IngestionPipeline:
                     canon_facets["sentiment"] = norm_edge_sent
                 else:
                     canon_facets.pop("sentiment", None)
+            if from_type == "entity":
+                entity_ids.add(from_id)
+            if to_type == "entity":
+                entity_ids.add(to_id)
             # `basis` is set by code, never taken from the LLM.
             canon_facets["basis"] = "extracted"
             canon_facets = clean(None, canon_facets, canon.relation if canon.matched else None)
@@ -689,12 +721,25 @@ class IngestionPipeline:
             )
             edges_written += 1
 
-        return nodes_written, edges_written
+        return nodes_written, edges_written, entity_ids
 
     def _rebuild_company_consensus(self, company_id: str) -> bool:
+        """Synthesize from an evidence snapshot outside any write transaction, then publish it only
+        if the company's refresh revision is unchanged. Raises StaleConsensusError otherwise."""
+        revision = self.db.jobs.consensus_target(company_id)
+
+        def publish(write: Callable[[], bool]) -> bool:
+            with self.db.transaction():
+                self._check_commit({})
+                if self.db.jobs.consensus_target(company_id) != revision:
+                    raise StaleConsensusError(f"Newer evidence arrived for {company_id}.")  # noqa: TRY003
+                changed = write()
+                self.db.jobs.complete_consensus(company_id, revision, datetime.now(UTC))
+            return changed
+
         company = self.db.get_node(company_id)
         if company is None:
-            return False
+            return publish(lambda: False)
 
         overview = self.db.get_entity_overview(company_id)
         event_nodes = self.db.get_nodes([item["id"] for item in overview["events"]])
@@ -703,12 +748,15 @@ class IngestionPipeline:
         prior = self.db.get_entity_consensus(company_id)
 
         if not event_nodes and not view_nodes:
-            if prior is not None:
+            def retire() -> bool:
+                if prior is None:
+                    return False
                 prior.facets["status"] = "superseded"
                 prior.updated_at = datetime.now(UTC)
                 self.db.upsert_node(prior)
                 return True
-            return False
+
+            return publish(retire)
 
         syn = self.llm.synthesize_consensus(
             company=company,
@@ -743,14 +791,236 @@ class IngestionPipeline:
             updated_at=now,
         )
         vec = self.llm.embed_texts([node_embedding_text(cons_node)])[0]
-        self.db.upsert_consensus_view(
-            company_id=company_id,
-            view_node=cons_node,
-            embedding=vec,
-            supporting_ids=syn.supporting_node_ids,
-            contradicting_ids=syn.contradicting_node_ids,
+
+        def store() -> bool:
+            self.db.upsert_consensus_view(
+                company_id=company_id,
+                view_node=cons_node,
+                embedding=vec,
+                supporting_ids=syn.supporting_node_ids,
+                contradicting_ids=syn.contradicting_node_ids,
+            )
+            return True
+
+        return publish(store)
+
+    def _check_note_state(self, rel_path: str, previous: dict[str, Any] | None) -> None:
+        current = self.db.get_note_state(rel_path)
+        keys = ("doc_id", "content_hash", "ingested_at")
+        if any((current or {}).get(key) != (previous or {}).get(key) for key in keys):
+            raise NoteConflictError
+
+    def process_note(self, path: Path) -> None:
+        """Extract a selected source using the same replacement transaction as batch ingestion."""
+        rel_path = path.relative_to(self.data_dir.resolve()).as_posix()
+        previous = self.db.get_note_state(rel_path)
+        stat = path.stat()
+        text = path.read_text(encoding="utf-8")
+        content_hash = _sha256_text(text)
+        if previous and previous["entities_recorded"] and previous["content_hash"] == content_hash:
+            return
+
+        def check_source() -> None:
+            self._check_note_state(rel_path, previous)
+            if _sha256_text(path.read_text(encoding="utf-8")) != content_hash:
+                raise NoteConflictError
+
+        old_doc_id = previous["doc_id"] if previous else None
+        doc_id = old_doc_id or _new_doc_id(
+            rel_path, {row["doc_id"] for row in self.db.get_ingestion_log().values()}
         )
-        return True
+        affected: set[str] = set()
+        report = IngestReport()
+        self._process_document(
+            rel_path=rel_path, doc_id=doc_id, text=text, content_hash=content_hash,
+            replace_old_doc_id=old_doc_id, affected_company_ids=affected, report=report,
+            size=stat.st_size, mtime_ns=stat.st_mtime_ns, verify_current=check_source,
+        )
+        self._refresh_consensus(affected, report)
+
+    def _current_note_doc(self, path: Path, expected_hash: str | None) -> str:
+        rel_path = path.relative_to(self.data_dir.resolve()).as_posix()
+        entry = self.db.get_note_state(rel_path)
+        written_hash = _sha256_text(path.read_text(encoding="utf-8"))
+        if (
+            not entry or not entry["entities_recorded"] or entry["content_hash"] != written_hash
+            or (expected_hash is not None and expected_hash != written_hash)
+        ):
+            raise NoteConflictError
+        return entry["doc_id"]
+
+    def add_note_entity(self, path: Path, entity_id: str, expected_hash: str | None) -> None:
+        """Attach an existing canonical entity to the current note."""
+        with self.db.transaction():
+            doc_id = self._current_note_doc(path, expected_hash)
+            node = self.db.get_node(entity_id)
+            if node is None or node.node_type != "entity":
+                raise ValueError("Select an existing entity.")  # noqa: TRY003
+            self.db.add_note_entities(doc_id, (node.id,))
+            self._current_note_doc(path, expected_hash)
+            self._evidence_changed(set())
+
+    def delete_note_entity(self, path: Path, entity_id: str, expected_hash: str | None) -> None:
+        """Remove the note's attribution and its incident edges for one entity."""
+        with self.db.transaction():
+            doc_id = self._current_note_doc(path, expected_hash)
+            if not self.db.remove_note_entity(doc_id, entity_id):
+                raise ValueError("That entity is not in this note's extraction.")  # noqa: TRY003
+            incident = list(self._incident_note_edges(doc_id, entity_id))
+            affected = self.db.get_doc_affected_company_ids(doc_id) if incident else set()
+            for row, pending in incident:
+                self._delete_note_edge(row["edge_id"], pending)
+            self._current_note_doc(path, expected_hash)
+            self._evidence_changed(affected)
+        self._refresh_consensus(affected, IngestReport())
+
+    def _incident_note_edges(self, doc_id: str, entity_id: str) -> Iterator[tuple[dict[str, Any], bool]]:
+        for pending in (False, True):
+            for row in self.db.list_note_edges(doc_id, pending=pending):
+                if entity_id in (row["from_id"], row["to_id"]):
+                    yield row, pending
+
+    def relink_note_entity(
+        self, path: Path, entity_id: str, replacement_id: str | None,
+        new_entity: dict[str, Any] | None, expected_hash: str | None,
+    ) -> None:
+        """Correct this note's mentions and relationship endpoints in the shared ontology."""
+        with self.db.transaction():
+            doc_id = self._current_note_doc(path, expected_hash)
+            if entity_id not in {node.id for node in self.db.list_note_entities(doc_id)}:
+                raise ValueError("That entity is not in this note's extraction.")  # noqa: TRY003
+            if (replacement_id is None) == (new_entity is None):
+                raise ValueError("Select an existing entity or create a new one.")  # noqa: TRY003
+            if new_entity is not None:
+                name = new_entity["name"].strip()
+                if not name:
+                    raise ValueError("Enter a name for the new entity.")  # noqa: TRY003
+                if self.db.find_by_name_or_alias(name, node_type="entity"):
+                    raise ValueError("An entity with that name already exists. Select it instead.")  # noqa: TRY003
+                node = Node(id=f"ent_{uuid.uuid4().hex}", node_type="entity", name=name,
+                            summary="", facets=new_entity["facets"])
+                self.registry.check_metadata(node.name, node.summary)
+                node.facets = self.registry.check_facets(node.node_type, node.facets)
+                self.db.upsert_node(node, self.llm.embed_texts([node_embedding_text(node)])[0])
+                replacement_id = node.id
+            else:
+                assert replacement_id is not None
+                node = self.db.get_node(replacement_id)
+                if node is None or node.node_type != "entity":
+                    raise ValueError("Select an existing entity.")  # noqa: TRY003
+            if replacement_id == entity_id:
+                return
+            affected = self.db.get_doc_affected_company_ids(doc_id)
+            for row, pending in self._incident_note_edges(doc_id, entity_id):
+                start = replacement_id if row["from_id"] == entity_id else row["from_id"]
+                end = replacement_id if row["to_id"] == entity_id else row["to_id"]
+                if start == end:
+                    self._delete_note_edge(row["edge_id"], pending)
+                    continue
+                self._replace_note_edge(row, row["relation"], start, end, pending=pending, keep_pending=pending)
+            self.db.relink_note_entity(doc_id, entity_id, replacement_id)
+            self._current_note_doc(path, expected_hash)
+            affected.update(self.db.get_doc_affected_company_ids(doc_id))
+            self._evidence_changed(affected)
+        self._refresh_consensus(affected, IngestReport())
+
+    def add_note_relationship(
+        self, path: Path, from_id: str, relation: str, to_id: str, expected_hash: str | None,
+        *, facets: dict[str, Any] | None = None,
+    ) -> None:
+        """Add a source-attributed relationship to the current extraction."""
+        with self.db.transaction():
+            doc_id = self._current_note_doc(path, expected_hash)
+            edge, entity_ids = self._canonical_note_edge(Edge(
+                id=f"edge_{uuid.uuid4().hex}", from_id=from_id, to_id=to_id, relation=relation,
+                facets={**(facets or {}), "basis": "extracted"}, source_doc_id=doc_id,
+            ))
+            self.db.upsert_edge(edge)
+            self.db.add_note_entities(doc_id, entity_ids)
+            self._current_note_doc(path, expected_hash)
+            affected = self.db.get_doc_affected_company_ids(doc_id)
+            self._evidence_changed(affected)
+        self._refresh_consensus(affected, IngestReport())
+
+    def delete_note_relationship(self, path: Path, edge_id: str, expected_hash: str | None) -> None:
+        """Delete the selected edge after verifying its ownership and source."""
+        with self.db.transaction():
+            doc_id = self._current_note_doc(path, expected_hash)
+            _, pending = self._find_note_edge(doc_id, edge_id)
+            affected = self.db.get_doc_affected_company_ids(doc_id)
+            self._delete_note_edge(edge_id, pending)
+            self._current_note_doc(path, expected_hash)
+            self._evidence_changed(affected)
+        self._refresh_consensus(affected, IngestReport())
+
+    def correct_note_relationship(
+        self, path: Path, edge_id: str, relation: str, reverse: bool, expected_hash: str | None,
+        *, from_id: str | None = None, to_id: str | None = None,
+    ) -> None:
+        """Change a relationship belonging to the selected extraction."""
+        with self.db.transaction():
+            doc_id = self._current_note_doc(path, expected_hash)
+            affected = self.db.get_doc_affected_company_ids(doc_id)
+            row, pending = self._find_note_edge(doc_id, edge_id)
+            start = row["from_id"] if from_id is None else from_id
+            end = row["to_id"] if to_id is None else to_id
+            if reverse:
+                start, end = end, start
+            entity_ids = self._replace_note_edge(row, relation, start, end, pending=pending)
+            self.db.add_note_entities(doc_id, entity_ids)
+            self._current_note_doc(path, expected_hash)
+            affected.update(self.db.get_doc_affected_company_ids(doc_id))
+            self._evidence_changed(affected)
+        self._refresh_consensus(affected, IngestReport())
+
+    def _find_note_edge(self, doc_id: str, edge_id: str) -> tuple[dict[str, Any], bool]:
+        for pending in (False, True):
+            for row in self.db.list_note_edges(doc_id, pending=pending):
+                if row["edge_id"] == edge_id:
+                    return row, pending
+        raise ValueError("That relationship is not in this note's extraction.")  # noqa: TRY003
+
+    def _delete_note_edge(self, edge_id: str, pending: bool) -> None:
+        delete = self.db.delete_pending_edges if pending else self.db.delete_edges
+        delete([edge_id])
+
+    def _canonical_note_edge(self, edge: Edge) -> tuple[Edge, tuple[str, ...]]:
+        if edge.from_id == edge.to_id:
+            raise ValueError("A relationship must connect two different nodes.")  # noqa: TRY003
+        endpoints = self.db.get_nodes([edge.from_id, edge.to_id])
+        if len(endpoints) != 2:
+            raise ValueError("Select existing ontology nodes for both endpoints.")  # noqa: TRY003
+        from_node, to_node = endpoints
+        _, from_type, from_entity_type = node_meta(from_node)
+        _, to_type, to_entity_type = node_meta(to_node)
+        canonical = self.registry.canonicalize_edge(
+            edge.relation, from_id=edge.from_id, from_type=from_type, from_entity_type=from_entity_type,
+            to_id=edge.to_id, to_type=to_type, to_entity_type=to_entity_type, facets=edge.facets,
+        )
+        if not canonical.matched or not canonical.endpoints_ok:
+            raise ValueError("The registry does not allow that relationship between these nodes.")  # noqa: TRY003
+        return edge.model_copy(update={
+            "from_id": canonical.from_id, "to_id": canonical.to_id,
+            "relation": canonical.relation, "facets": canonical.facets,
+        }), tuple(node.id for node in endpoints if node.node_type == "entity")
+
+    def _replace_note_edge(
+        self, row: dict[str, Any], relation: str, from_id: str, to_id: str, *,
+        pending: bool, keep_pending: bool = False,
+    ) -> tuple[str, ...]:
+        prefix = "pedge" if keep_pending else "edge"
+        # Replacing the ID invalidates relationship forms opened before the correction.
+        edge = Edge(id=f"{prefix}_{uuid.uuid4().hex}", from_id=from_id, to_id=to_id, relation=relation,
+                    facets=row["facets"], source_doc_id=row["source_doc_id"], created_at=row["created_at"])
+        entity_ids = ()
+        if not keep_pending:
+            edge, entity_ids = self._canonical_note_edge(edge)
+        self._delete_note_edge(row["edge_id"], pending)
+        if keep_pending:
+            self.db.insert_pending_edge(edge)
+        else:
+            self.db.upsert_edge(edge)
+        return entity_ids
 
     def run(self, force: bool = False, rebuild_consensus: bool = False) -> IngestReport:
         """Scan `data_dir`, incrementally extract changed files, and update consensus."""
@@ -812,6 +1082,7 @@ class IngestionPipeline:
             with self.db.transaction():
                 self.db.delete_document_artifacts(doc_id)
                 self.db.delete_ingestion_log(deleted_rel)
+                self._evidence_changed(deleted_companies)
             affected_company_ids.update(deleted_companies)
             report.files_deleted += 1
 
@@ -839,7 +1110,10 @@ class IngestionPipeline:
                     report=report,
                     size=size,
                     mtime_ns=mtime_ns,
+                    verify_current=lambda: self._check_note_state(rel_path, existing_entry),
                 )
+            except (LeaseLostError, RegistryChangedError):
+                raise
             except Exception as exc:  # noqa: BLE001
                 report.errors.append((rel_path, str(exc)))
 
@@ -850,21 +1124,30 @@ class IngestionPipeline:
                 for n in self.db.list_nodes(node_type="entity", limit=5000)
                 if n.facets.get("entity_type") == "company"
             )
+            with self.db.transaction():
+                self._evidence_changed(target_company_ids)
         else:
             target_company_ids = sorted(affected_company_ids)
 
-        for company_id in target_company_ids:
+        self._refresh_consensus(target_company_ids, report)
+        return report
+
+    def _refresh_consensus(self, company_ids: list[str] | set[str], report: IngestReport) -> None:
+        for company_id in sorted(company_ids):
             company = self.db.get_node(company_id)
             label = company.name if company else company_id
             try:
-                with self.db.transaction():
-                    updated = self._rebuild_company_consensus(company_id)
+                updated = self._rebuild_company_consensus(company_id)
                 if updated:
                     report.consensus_updated_for.append(label)
+            except (LeaseLostError, RegistryChangedError):
+                raise
+            except StaleConsensusError as exc:
+                report.errors.append((f"consensus:{label}", str(exc)))
             except Exception as exc:  # noqa: BLE001
                 report.errors.append((f"consensus:{label}", str(exc)))
-
-        return report
+                logger.warning("Could not refresh consensus for %s: %s", label, exc)
+                self.db.jobs.fail_consensus(company_id, str(exc), datetime.now(UTC))
 
     def watch(self, interval_seconds: int = 60, on_tick: Any = None) -> None:
         """Periodically run incremental ingestion until interrupted."""

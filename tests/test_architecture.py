@@ -28,6 +28,8 @@ MODULE_OF: dict[str, str] = {
     "agent": "agent",
     "audit": "governance",
     "repair": "governance",
+    "services": "services",
+    "worker": "worker",
     "web": "web",
     "cli": "cli",
 }
@@ -41,7 +43,9 @@ ALLOWED: dict[str, set[str]] = {
     "pipeline": {"shared", "ontology", "storage", "llm"},
     "agent": {"shared", "ontology", "storage", "llm", "search"},
     "governance": {"shared", "ontology", "storage"},
-    "web": {"shared", "ontology", "storage", "llm", "search", "agent", "governance"},
+    "services": {"shared", "ontology", "storage", "search"},
+    "worker": {"shared", "ontology", "storage", "llm", "pipeline", "governance", "services"},
+    "web": {"shared", "ontology", "llm", "search", "agent", "governance", "services"},
     "cli": set(MODULE_OF.values()),
 }
 
@@ -98,5 +102,32 @@ def test_only_storage_touches_sqlite() -> None:
         str(p.relative_to(SRC))
         for p in _source_files()
         if _module_for(p) != "storage" and pattern.search(p.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], offenders
+
+
+def _writable_db_opens(path: Path) -> list[int]:
+    """Line numbers of `OntologyDB(...)` calls that do not pass `read_only=True`."""
+    lines: list[int] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
+        if name != "OntologyDB":
+            continue
+        read_only = next((kw.value for kw in node.keywords if kw.arg == "read_only"), None)
+        if not (isinstance(read_only, ast.Constant) and read_only.value is True):
+            lines.append(node.lineno)
+    return lines
+
+
+def test_only_worker_job_executors_open_a_writable_database() -> None:
+    """The worker is the only writer: every other module opens ontology.db with query_only."""
+    offenders = [
+        f"{p.relative_to(SRC)}:{line}"
+        for p in _source_files()
+        if _module_for(p) not in {"worker", "storage"}
+        for line in _writable_db_opens(p)
     ]
     assert offenders == [], offenders

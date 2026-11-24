@@ -2120,12 +2120,14 @@ def test_note_page_templates_only_see_presentation_models(tmp_path: Path) -> Non
         """The note reader section, with whitespace runs squashed so markup layout does not matter."""
         page = client.get("/catalog", params=params)
         assert page.status_code == 200
+        assert 'class="portal-jumpbar"' not in page.text
+        assert translate("catalog.page_desc", lang="en") not in page.text
         section = page.text.split('<section aria-label="Raw Note Reader">', 1)[1].split("</section>", 1)[0]
         return re.sub(r"\s+>", ">", re.sub(r"[ \t\n]+", " ", section))
 
     # 1. The rendered note page still shows the note, its chips and its navigation.
     rendered = reader({"file": note_file})
-    assert "<h2 class=\"u-bd-none u-m-0 u-p-0 u-fs-1p25rem\"> NVDA Q3 Preview </h2>" in rendered
+    assert '<h1 class="u-m-0 u-fs-1p55rem"> NVDA Q3 Preview </h1>' in rendered
     assert 'Company: <a href="/entity/ent_nvda"> NVIDIA (NVDA) </a>' in rendered
     assert 'Author: <a href="/entity/ent_kenji">Kenji Sato</a> </span>' in rendered
     assert '<a href="/catalog?view=company&amp;dir=NVDA" class="retro-link-btn">← Back to NVIDIA</a>' in rendered
@@ -2289,6 +2291,208 @@ class _PasteIngestLLM(FakeWebLLM):
         return ExtractionResult()
 
 
+class _NoteReaderLLM(FakeWebLLM):
+    def extract_document(self, **kwargs: Any) -> ExtractionResult:
+        source = kwargs["text"]
+        if "Extraction fails here" in source:
+            raise RuntimeError("Extraction fails here")
+        replacement = "Latest source marker" in source
+        names = ["Northstar Cloud", "Latest Supplier" if replacement else "Arbor Energy"]
+        if kwargs["source_meta"]["file_path"] == "focus.md" and not replacement:
+            names.append("Isolated Observer")
+        return ExtractionResult.model_validate({
+            "entities": [
+                {
+                    "temp_id": f"e{index}",
+                    "name": name,
+                    "summary": "",
+                    "entity_type": "company",
+                    "facets": [{"key": "sector", "value": "Industrial"}],
+                }
+                for index, name in enumerate(names)
+            ],
+            "edges": [{"from_ref": "e0", "to_ref": "e1", "relation": "BUY"}],
+        })
+
+
+@dataclasses.dataclass(frozen=True)
+class _Outcome:
+    status_code: int
+    text: str
+
+
+def _note_action(client: TestClient, settings: Settings, llm: Any, url: str, payload: dict[str, Any]) -> _Outcome:
+    """POST a note action. A job reference is applied by one worker run; its outcome maps to a status."""
+    response = client.post(url, json=payload)
+    assert response.status_code == 202 or response.status_code >= 400, "a note action must return a job reference"
+    if response.status_code != 202:
+        return _Outcome(response.status_code, response.text)
+    job_id = response.json()["job_id"]
+    assert job_id, response.text
+    from stock_ontology.worker import Worker
+
+    Worker(settings, llm_factory=lambda _settings: llm).run_once(scan=False)
+    status = client.get(f"/api/jobs/{job_id}")
+    assert status.status_code == 200, status.text
+    job = status.json()
+    if job["state"] == "succeeded":
+        return _Outcome(200, status.text)
+    codes = {"invalid": 422, "conflict": 409, "not_found": 404}
+    return _Outcome(codes.get(job.get("error_code") or "", 500), status.text)
+
+
+def test_note_reader_extraction_workflow(tmp_path: Path) -> None:
+    from stock_ontology import cli
+
+    data_dir = tmp_path / "notes"
+    data_dir.mkdir()
+    focus = data_dir / "focus.md"
+    focus.write_text("# Source reference\n\nFirst source marker.\n", encoding="utf-8")
+    (data_dir / "peer.txt").write_text("Peer source marker.\n", encoding="utf-8")
+    db_path = tmp_path / "reader.db"
+    registry = create_minimal_registry()
+    registry_path = tmp_path / "registry.json"
+    save_registry(registry, registry_path)
+    buyer_id, wrong_id, existing_id = "ent_northstar", "ent_arbor_energy", "ent_arbor_cooling"
+    with OntologyDB(db_path, embedding_dim=DIM, registry=registry) as db:
+        for entity_id, name in (
+            (buyer_id, "Northstar Cloud"),
+            (wrong_id, "Arbor Energy"),
+            (existing_id, "Arbor Cooling"),
+        ):
+            db.upsert_node(Node(
+                id=entity_id,
+                name=name,
+                summary="",
+                node_type="entity",
+                facets={"entity_type": "company", "sector": "Industrial"},
+            ))
+    settings = Settings(db_path=db_path, data_dir=data_dir, registry_path=registry_path, embedding_dim=DIM)
+    llm = _NoteReaderLLM()
+    client = TestClient(cli._create_library_app(settings, llm=llm))
+
+    def act(url: str, payload: dict[str, Any]) -> _Outcome:
+        return _note_action(client, settings, llm, url, payload)
+
+    def read_note(file: str = "focus.md") -> str:
+        response = client.get("/catalog", params={"file": file, "format": "raw", "lang": "en"})
+        assert response.status_code == 200, response.text
+        return response.text
+
+    def process(file: str = "focus.md") -> Any:
+        return act("/api/notes/process", {"file": file})
+
+    def relationships(file: str = "focus.md") -> list[dict[str, Any]]:
+        with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+            entry = db.get_ingestion_log().get(file)
+            if entry is None:
+                return []
+            return [edge for edge in db.list_edges_with_endpoints() if edge["source_doc_id"] == entry["doc_id"]]
+
+    def entity_id(name: str) -> str:
+        with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+            node = db.find_by_name_or_alias(name, node_type="entity")
+            assert node is not None, name
+            return node.id
+
+    def shows_entity(page: str, node_id: str, name: str) -> bool:
+        pattern = rf'<a\b[^>]*href="/entity/{re.escape(node_id)}"[^>]*>\s*(?:<strong>\s*)?{re.escape(name)}'
+        return re.search(pattern, page) is not None
+
+    original_sources = _note_tree(data_dir)
+    reader = read_note()
+    assert 'data-note-status="not-processed"' in reader
+    assert re.search(r">\s*Process\s*</button>", reader)
+    assert reader.index('data-note-status="not-processed"') < reader.index('id="L1"')
+    assert "First source marker." in reader
+    response = process()
+    assert response.status_code == 200, response.text
+    assert relationships("peer.txt") == []
+    assert 'data-note-status="not-processed"' in read_note("peer.txt")
+
+    reader = read_note()
+    assert 'data-note-status="extracted"' in reader
+    assert reader.index('data-note-status="extracted"') < reader.index('id="L1"')
+    assert shows_entity(reader, entity_id("Isolated Observer"), "Isolated Observer")
+    initial, = relationships()
+    assert (initial["from_id"], initial["relation"], initial["to_id"]) == (buyer_id, "BUY", wrong_id)
+
+    response = process("peer.txt")
+    assert response.status_code == 200, response.text
+    peer_edges = relationships("peer.txt")
+    assert len(peer_edges) == 1
+
+    response = act("/api/notes/relink", {
+        "file": "focus.md", "entity_id": wrong_id, "replacement_id": existing_id,
+    })
+    assert response.status_code == 200, response.text
+    assert shows_entity(read_note(), existing_id, "Arbor Cooling")
+    assert not shows_entity(read_note(), wrong_id, "Arbor Energy")
+    assert shows_entity(client.get(f"/entity/{buyer_id}").text, existing_id, "Arbor Cooling")
+    after_match, = relationships()
+    assert (after_match["from_id"], after_match["relation"], after_match["to_id"]) == (buyer_id, "BUY", existing_id)
+    assert relationships("peer.txt") == peer_edges
+
+    response = act("/api/notes/relink", {
+        "file": "focus.md",
+        "entity_id": existing_id,
+        "new_entity": {"name": "Arbor Systems", "facets": {"entity_type": "company", "sector": "Industrial"}},
+    })
+    assert response.status_code == 200, response.text
+    new_id = entity_id("Arbor Systems")
+    assert shows_entity(read_note(), new_id, "Arbor Systems")
+    assert shows_entity(client.get(f"/entity/{buyer_id}").text, new_id, "Arbor Systems")
+    after_create, = relationships()
+    assert after_create["to_id"] == new_id
+
+    response = act("/api/notes/relationship", {
+        "file": "focus.md", "edge_id": after_create["edge_id"], "relation": "OWNS", "reverse": True,
+    })
+    assert response.status_code == 200, response.text
+    corrected, = relationships()
+    assert (corrected["from_id"], corrected["relation"], corrected["to_id"]) == (new_id, "OWNS", buyer_id)
+    assert relationships("peer.txt") == peer_edges
+    assert _note_tree(data_dir) == original_sources
+
+    for edge_id, relation in ((corrected["edge_id"], "NONEXISTENT_RELATION"), (peer_edges[0]["edge_id"], "COMPETE")):
+        invalid = act("/api/notes/relationship", {
+            "file": "focus.md", "edge_id": edge_id, "relation": relation,
+        })
+        assert 400 <= invalid.status_code < 500, invalid.text
+    assert relationships() == [corrected]
+    assert relationships("peer.txt") == peer_edges
+    assert 'data-job-state="failed"' in read_note(), "the reader must show the failed correction"
+
+    focus.write_text("Extraction fails here.\n", encoding="utf-8")
+    reader = read_note()
+    assert 'data-note-status="not-processed"' in reader
+    assert re.search(r">\s*Process\s*</button>", reader)
+    assert "Extraction fails here." in reader
+    assert not shows_entity(reader, new_id, "Arbor Systems")
+    stale = act("/api/notes/relationship", {
+        "file": "focus.md", "edge_id": corrected["edge_id"], "relation": "BUY",
+    })
+    assert 400 <= stale.status_code < 500, stale.text
+    assert process().status_code >= 400
+    assert 'data-note-status="not-processed"' in read_note()
+    assert relationships() == [corrected]
+
+    focus.write_text("Latest source marker.\n", encoding="utf-8")
+    latest_sources = _note_tree(data_dir)
+    response = process()
+    assert response.status_code == 200, response.text
+    latest, = relationships()
+    supplier_id = entity_id("Latest Supplier")
+    assert (latest["from_id"], latest["relation"], latest["to_id"]) == (buyer_id, "BUY", supplier_id)
+    assert latest["edge_id"] != corrected["edge_id"]
+    reader = read_note()
+    assert 'data-note-status="extracted"' in reader and "Latest source marker." in reader
+    assert shows_entity(reader, supplier_id, "Latest Supplier")
+    assert not shows_entity(reader, new_id, "Arbor Systems")
+    assert relationships("peer.txt") == peer_edges
+    assert _note_tree(data_dir) == latest_sources
+
+
 def _note_tree(root: Path) -> dict[str, bytes]:
     """Every regular file under `root`, hidden ones included, without following links."""
     return {
@@ -2443,18 +2647,28 @@ def test_paste_note_refuses_general_symlink_that_leaves_the_folder(
 def test_paste_note_hostile_title_stays_a_visible_file_in_general(
     tmp_path: Path, title: str
 ) -> None:
-    client, _, data_dir = _search_client(tmp_path, FakeWebLLM())
-    before_outside = {p for p in tmp_path.rglob("*") if data_dir not in p.parents and p != data_dir}
+    client, db_path, data_dir = _search_client(tmp_path, FakeWebLLM())
+    # Saving queues a processing job: the command spool beside the database may change too.
+    spool = Path(f"{db_path}.commands")
+
+    def outside_notes() -> set[Path]:
+        return {
+            p for p in tmp_path.rglob("*")
+            if data_dir not in p.parents and p != data_dir and p != spool and spool not in p.parents
+        }
+
+    before_outside = outside_notes()
 
     resp = client.post("/api/notes", json={"title": title, "content": _PASTE_BODY})
     assert resp.status_code == 201, resp.text
+    assert resp.json()["job_id"], "saving must queue a processing job"
     rel = Path(resp.json()["file"])
     assert rel.parent.as_posix() == "_general"
     assert rel.suffix == ".md" and not rel.name.startswith(".")
     target = (data_dir / rel).resolve()
     assert target.parent == (data_dir / "_general").resolve()
     assert target.read_text(encoding="utf-8") == _PASTE_BODY
-    assert {p for p in tmp_path.rglob("*") if data_dir not in p.parents and p != data_dir} == before_outside
+    assert outside_notes() == before_outside
 
 
 def test_paste_note_is_never_visible_to_ingestion_partially_written(tmp_path: Path) -> None:
@@ -2498,3 +2712,274 @@ def test_paste_note_is_never_visible_to_ingestion_partially_written(tmp_path: Pa
     files = {r.json()["file"] for r in saved}
     assert all(Path(file).parent.as_posix() == "_general" for file in files)
     assert set(_note_tree(data_dir)) - before == files, "no temp files left"
+
+
+def test_note_reader_can_correct_both_relationship_endpoints(tmp_path: Path) -> None:
+    from stock_ontology.cli import _create_library_app
+
+    data_dir = tmp_path / "notes"
+    data_dir.mkdir()
+    source = data_dir / "note.md"
+    source.write_text("Source reference.", encoding="utf-8")
+    db_path = tmp_path / "reader.db"
+    registry = create_minimal_registry()
+    registry_path = tmp_path / "registry.json"
+    save_registry(registry, registry_path)
+    with OntologyDB(db_path, embedding_dim=DIM, registry=registry) as db:
+        for node_id, name in (("a", "Alpha"), ("b", "Beta"), ("c", "Cedar"), ("d", "Delta")):
+            db.upsert_node(Node(
+                id=node_id, name=name, summary="", node_type="entity",
+                facets={"entity_type": "company", "sector": "Industrial"},
+            ))
+        db.upsert_node(Node(
+            id="fact", name="An announcement", summary="", node_type="event",
+            facets={"event_type": "fact"},
+        ))
+        db.upsert_ingestion_log("note.md", "note", hashlib.sha256(source.read_bytes()).hexdigest(),
+                                entity_ids=("a", "b"))
+        for edge_id, doc_id in (("original", "note"), ("peer", "different-note")):
+            db.upsert_edge(Edge(
+                id=edge_id, from_id="a", to_id="b", relation="BUY",
+                source_doc_id=doc_id, facets={"basis": "extracted"},
+            ))
+
+    settings = Settings(db_path=db_path, data_dir=data_dir, registry_path=registry_path, embedding_dim=DIM)
+    llm = FakeWebLLM()
+    client = TestClient(_create_library_app(settings, llm=llm))
+    payload = {"file": "note.md", "edge_id": "original", "relation": "BUY"}
+    for endpoints in ({"from_id": "missing"}, {"from_id": "fact"}, {"from_id": "b"}):
+        response = _note_action(client, settings, llm, "/api/notes/relationship", {**payload, **endpoints})
+        assert response.status_code == 422, response.text
+
+    response = _note_action(client, settings, llm, "/api/notes/relationship", {**payload, "from_id": "c", "to_id": "d"})
+    assert response.status_code == 200, response.text
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        edited, = db.list_note_edges("note")
+        assert (edited["from_id"], edited["relation"], edited["to_id"]) == ("c", "BUY", "d")
+        assert {node.id for node in db.list_note_entities("note")} == {"a", "b", "c", "d"}
+        peer, = db.list_note_edges("different-note")
+        assert (peer["edge_id"], peer["from_id"], peer["to_id"]) == ("peer", "a", "b")
+    assert source.read_text(encoding="utf-8") == "Source reference."
+    assert 'href="/entity/d"' in client.get("/entity/c").text
+
+
+def test_note_reader_adds_and_deletes_relationships(tmp_path: Path) -> None:
+    from stock_ontology.cli import _create_library_app
+
+    data_dir = tmp_path / "notes"
+    data_dir.mkdir()
+    source = data_dir / "note.md"
+    source.write_text("Source reference.", encoding="utf-8")
+    (data_dir / "unprocessed.md").write_text("Unprocessed source.", encoding="utf-8")
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    db_path = tmp_path / "reader.db"
+    registry = create_minimal_registry()
+    registry_path = tmp_path / "registry.json"
+    save_registry(registry, registry_path)
+    with OntologyDB(db_path, embedding_dim=DIM, registry=registry) as db:
+        for node_id, name in (("alpha", "Alpha"), ("beta", "Beta"), ("cedar", "Cedar")):
+            db.upsert_node(Node(
+                id=node_id, name=name, summary="", node_type="entity",
+                facets={"entity_type": "company", "sector": "Industrial"},
+            ))
+        db.upsert_ingestion_log("note.md", "note", source_hash, entity_ids=())
+        db.upsert_edge(Edge(
+            id="peer-edge", from_id="cedar", to_id="alpha", relation="BUY",
+            source_doc_id="peer", facets={"basis": "extracted"},
+        ))
+
+    settings = Settings(db_path=db_path, data_dir=data_dir, registry_path=registry_path, embedding_dim=DIM)
+    llm = FakeWebLLM()
+    client = TestClient(_create_library_app(settings, llm=llm))
+
+    def reader_table() -> str:
+        response = client.get("/catalog", params={"file": "note.md", "lang": "en"})
+        assert response.status_code == 200
+        assert 'data-note-status="extracted"' in response.text
+        assert "Source reference." in response.text
+        table = re.search(r'<table\b[^>]*class="catalog-table note-relationships"[^>]*>(.*?)</table>', response.text, re.S)
+        assert table is not None, "Processed notes need a relationship table even while empty."
+        return table.group(1)
+
+    def note_edges() -> list[dict[str, Any]]:
+        with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+            return db.list_note_edges("note")
+
+    assert "Add relationship" in reader_table()
+    assert 'href="/entity/beta"' not in client.get("/entity/alpha").text
+
+    add_url = "/api/notes/relationship/add"
+    delete_url = "/api/notes/relationship/delete"
+    add = {"file": "note.md", "from_id": "alpha", "relation": "BUY", "to_id": "beta"}
+    for invalid in ({"to_id": "missing"}, {"to_id": "alpha"}, {"file": "unprocessed.md"},
+                    {"expected_hash": "stale"}):
+        response = _note_action(client, settings, llm, add_url, {**add, **invalid})
+        assert 400 <= response.status_code < 500, response.text
+    assert note_edges() == []
+
+    for _ in range(2):
+        response = _note_action(client, settings, llm, add_url, {**add, "expected_hash": source_hash})
+        assert response.status_code == 200, response.text
+    edge, = note_edges()
+    assert (edge["from_id"], edge["relation"], edge["to_id"]) == ("alpha", "BUY", "beta")
+    assert re.search(r"<tr\b[^>]*>\s*<td>Alpha</td>\s*<td>BUY\s*</td>\s*<td>Beta</td>",
+                     reader_table())
+    assert "Delete" in reader_table()
+    assert 'href="/entity/beta"' in client.get("/entity/alpha").text
+
+    delete = {"file": "note.md", "edge_id": edge["edge_id"]}
+    for invalid in ({"edge_id": "peer-edge"}, {"expected_hash": "stale"}):
+        response = _note_action(client, settings, llm, delete_url, {**delete, **invalid})
+        assert 400 <= response.status_code < 500, response.text
+    assert note_edges() == [edge]
+
+    response = _note_action(client, settings, llm, delete_url, {**delete, "expected_hash": source_hash})
+    assert response.status_code == 200, response.text
+    assert note_edges() == []
+    assert "Add relationship" in reader_table()
+    assert 'href="/entity/beta"' not in client.get("/entity/alpha").text
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        peer, = db.list_note_edges("peer")
+        assert (peer["edge_id"], peer["from_id"], peer["to_id"]) == ("peer-edge", "cedar", "alpha")
+    assert source.read_text(encoding="utf-8") == "Source reference."
+
+
+def test_note_reader_adds_and_deletes_entities(tmp_path: Path) -> None:
+    from stock_ontology.cli import _create_library_app
+
+    data_dir = tmp_path / "notes"
+    data_dir.mkdir()
+    source = data_dir / "note.md"
+    source.write_text("Source reference.", encoding="utf-8")
+    (data_dir / "unprocessed.md").write_text("Unprocessed source.", encoding="utf-8")
+    content_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    db_path = tmp_path / "reader.db"
+    registry = create_minimal_registry()
+    registry_path = tmp_path / "registry.json"
+    save_registry(registry, registry_path)
+    with OntologyDB(db_path, embedding_dim=DIM, registry=registry) as db:
+        for node_id, name in (("alpha", "Alpha"), ("beta", "Beta"), ("cedar", "Cedar")):
+            db.upsert_node(Node(
+                id=node_id, name=name, summary="", node_type="entity",
+                facets={"entity_type": "company", "sector": "Industrial"},
+            ))
+        db.upsert_node(Node(
+            id="announcement", name="Announcement", summary="", node_type="event",
+            facets={"event_type": "fact"},
+        ))
+        db.upsert_ingestion_log("note.md", "note", content_hash, entity_ids=())
+        db.upsert_ingestion_log("peer.md", "peer", "peer-hash", entity_ids=("alpha", "beta"))
+        db.upsert_edge(Edge(
+            id="peer-edge", from_id="alpha", to_id="beta", relation="BUY",
+            source_doc_id="peer", facets={"basis": "extracted"},
+        ))
+
+    settings = Settings(db_path=db_path, data_dir=data_dir, registry_path=registry_path, embedding_dim=DIM)
+    llm = FakeWebLLM()
+    client = TestClient(_create_library_app(settings, llm=llm))
+
+    def read_note() -> str:
+        response = client.get("/catalog", params={"file": "note.md", "lang": "en"})
+        assert response.status_code == 200
+        assert 'data-note-status="extracted"' in response.text
+        assert "Source reference." in response.text
+        return response.text
+
+    def entity_list() -> str:
+        result = re.search(r'<ul class="note-extraction-entities">(.*?)</ul>', read_note(), re.S)
+        assert result is not None
+        return result.group(1)
+
+    add_url = "/api/notes/entity/add"
+    delete_url = "/api/notes/entity/delete"
+    alpha = {"file": "note.md", "entity_id": "alpha"}
+    assert "Add entity" in read_note(), "A processed note with no entities must offer Add entity."
+    for invalid in ({"entity_id": "missing"}, {"entity_id": "announcement"},
+                    {"file": "unprocessed.md"}, {"expected_hash": "stale"}):
+        response = _note_action(client, settings, llm, add_url, {**alpha, **invalid})
+        assert 400 <= response.status_code < 500, response.text
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        assert db.list_note_entities("note") == []
+
+    for _ in range(2):
+        response = _note_action(client, settings, llm, add_url, {**alpha, "expected_hash": content_hash})
+        assert response.status_code == 200, response.text
+    entities = entity_list()
+    assert entities.count('href="/entity/alpha"') == 1
+    assert "Edit" in entities and "Delete" in entities
+
+    for invalid in ({"entity_id": "beta"}, {"expected_hash": "stale"}):
+        response = _note_action(client, settings, llm, delete_url, {**alpha, **invalid})
+        assert 400 <= response.status_code < 500, response.text
+    assert 'href="/entity/alpha"' in entity_list()
+
+    for from_id, to_id in (("alpha", "beta"), ("beta", "cedar")):
+        response = _note_action(client, settings, llm, "/api/notes/relationship/add", {
+            "file": "note.md", "from_id": from_id, "to_id": to_id, "relation": "BUY",
+        })
+        assert response.status_code == 200, response.text
+    with OntologyDB(db_path, embedding_dim=DIM, registry=registry) as db:
+        for edge_id, doc_id in (("pending-note", "note"), ("pending-peer", "peer")):
+            db.insert_pending_edge(Edge(
+                id=edge_id, from_id="beta", to_id="alpha", relation="UNREVIEWED",
+                source_doc_id=doc_id, facets={"basis": "extracted"},
+            ))
+
+    response = _note_action(client, settings, llm, delete_url, {**alpha, "expected_hash": content_hash})
+    assert response.status_code == 200, response.text
+    entities = entity_list()
+    assert 'href="/entity/alpha"' not in entities
+    assert 'href="/entity/beta"' in entities
+    assert client.get("/entity/alpha").status_code == 200
+    assert source.read_text(encoding="utf-8") == "Source reference."
+
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        assert {node.id for node in db.list_note_entities("note")} == {"beta", "cedar"}
+        assert {node.id for node in db.list_note_entities("peer")} == {"alpha", "beta"}
+        remaining, = db.list_note_edges("note")
+        assert (remaining["from_id"], remaining["to_id"]) == ("beta", "cedar")
+        assert db.list_note_edges("note", pending=True) == []
+        assert [edge["edge_id"] for edge in db.list_note_edges("peer")] == ["peer-edge"]
+        assert [edge["edge_id"] for edge in db.list_note_edges("peer", pending=True)] == ["pending-peer"]
+
+
+def test_web_note_actions_return_job_references_and_open_the_db_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from stock_ontology import cli
+    from stock_ontology.worker import Worker
+
+    data_dir = tmp_path / "notes"
+    data_dir.mkdir()
+    (data_dir / "focus.md").write_text("First source marker.\n", encoding="utf-8")
+    db_path = tmp_path / "reader.db"
+    registry = create_minimal_registry()
+    with OntologyDB(db_path, embedding_dim=DIM, registry=registry):
+        pass
+    settings = Settings(db_path=db_path, data_dir=data_dir, registry_path=tmp_path / "missing.json", embedding_dim=DIM)
+    llm = _NoteReaderLLM()
+    opens: list[bool] = []
+    original = OntologyDB.__init__
+
+    def record(self: OntologyDB, *args: Any, **kwargs: Any) -> None:
+        opens.append(bool(kwargs.get("read_only", False)))
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(OntologyDB, "__init__", record)
+    client = TestClient(cli._create_library_app(settings, llm=llm))
+    response = client.post("/api/notes/process", json={"file": "focus.md"})
+    assert response.status_code == 202, response.text
+    job_id = response.json()["job_id"]
+    assert client.post("/api/notes/process", json={"file": "focus.md"}).json()["job_id"] == job_id
+    assert client.get(f"/api/jobs/{job_id}").json()["state"] == "queued"
+    reader = client.get("/catalog", params={"file": "focus.md", "lang": "en"}).text
+    assert 'data-job-state="queued"' in reader and 'data-note-status="not-processed"' in reader
+    assert client.get("/api/jobs/job_missing").status_code == 404
+    assert opens and all(opens), "the web app opened ontology.db for writing"
+    monkeypatch.undo()
+
+    Worker(settings, llm_factory=lambda _settings: llm).run_once(scan=False)
+    assert client.get(f"/api/jobs/{job_id}").json()["state"] == "succeeded"
+    reader = client.get("/catalog", params={"file": "focus.md", "lang": "en"}).text
+    assert 'data-job-state="succeeded"' in reader and 'data-note-status="extracted"' in reader

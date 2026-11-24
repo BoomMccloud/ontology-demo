@@ -1,0 +1,214 @@
+"""Job submission and status: the command spool and the job rows the worker writes.
+
+Adapters never write `ontology.db`. A submission is a small JSON file in the command spool
+next to the database (`<db>.commands/`), published with an atomic rename. The worker moves
+each one into the `jobs` table and is the only process that changes job state. A note's
+processing job ID is derived from the note path and content revision, so duplicate requests
+for one revision share a job.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import tempfile
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from stock_ontology.config import Settings
+from stock_ontology.db import Job, OntologyDB
+from stock_ontology.search import resolve_safe_note_path
+from stock_ontology.services.errors import ServiceError
+
+# Attempts per job revision, and the first retry delay; each later retry doubles it.
+MAX_ATTEMPTS = 3
+BACKOFF_SECONDS = 60
+
+CORRECTION_KINDS = frozenset({
+    "note.relink", "note.entity.add", "note.entity.delete",
+    "note.relationship", "note.relationship.add", "note.relationship.delete",
+})
+OPERATOR_KINDS = frozenset({"ingest", "reembed", "repair", "registry.publish", "registry.apply"})
+PROCESS_KIND = "process"
+
+
+def job_priority(kind: str) -> int:
+    """Lower runs first: reader corrections, then operator commands, then note extraction."""
+    if kind in CORRECTION_KINDS:
+        return 0
+    if kind in OPERATOR_KINDS:
+        return 10
+    return 20
+
+
+def spool_dir(db_path: Path | str) -> Path:
+    return Path(f"{db_path}.commands")
+
+
+@dataclass(frozen=True)
+class JobRef:
+    job_id: str
+    state: str
+
+
+@dataclass(frozen=True)
+class Submission:
+    """One spooled command: `enqueue` a job, or `retry` a failed one."""
+
+    path: Path
+    op: str
+    job_id: str
+    kind: str = ""
+    target: str = ""
+    revision: str = ""
+    payload: dict[str, Any] | None = None
+    created_at: str = ""
+
+
+def process_job_id(file: str, revision: str) -> str:
+    return "job_" + hashlib.sha256(f"{PROCESS_KIND}\0{file}\0{revision}".encode()).hexdigest()[:24]
+
+
+class ProcessingService:
+    """Submit jobs, report their status, and reopen failed ones."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.spool = spool_dir(settings.db_path)
+
+    # --- submission
+
+    def _write(self, op: str, job_id: str, record: dict[str, Any]) -> None:
+        self.spool.mkdir(parents=True, exist_ok=True)
+        name = f"{time.time_ns():020d}-{op}-{job_id}.json"
+        fd, tmp = tempfile.mkstemp(prefix=".submit-", suffix=".tmp", dir=self.spool)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump({"op": op, "job_id": job_id, **record}, handle)
+            os.replace(tmp, self.spool / name)
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+    def _submit(self, job_id: str, kind: str, target: str, revision: str, payload: dict[str, Any]) -> JobRef:
+        self._write("enqueue", job_id, {
+            "kind": kind, "target": target, "revision": revision, "payload": payload,
+            "created_at": datetime.now(UTC).isoformat(),
+        })
+        return JobRef(job_id, "queued")
+
+    def _note_revision(self, file: str) -> str:
+        path = resolve_safe_note_path(Path(self.settings.data_dir), file)
+        if path is None or not path.is_file():
+            raise ServiceError("not_found", f"Note not found: {file}")
+        return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+
+    def request_processing(self, file: str) -> JobRef:
+        """Queue extraction and consensus for the note's current revision."""
+        revision = self._note_revision(file)
+        job_id = process_job_id(file, revision)
+        existing = self._find(job_id)
+        if existing is not None:
+            return JobRef(job_id, existing["state"])
+        return self._submit(job_id, PROCESS_KIND, file, revision, {"file": file})
+
+    def submit_correction(self, kind: str, file: str, params: dict[str, Any]) -> JobRef:
+        """Queue a note-reader correction; the worker checks the note revision at commit."""
+        if kind not in CORRECTION_KINDS:
+            raise ServiceError("invalid", f"Unknown correction: {kind}")
+        self._note_revision(file)
+        return self._submit(
+            f"job_{uuid.uuid4().hex}", kind, file, str(params.get("expected_hash") or ""), {"file": file, **params}
+        )
+
+    def submit_operator(self, kind: str, params: dict[str, Any]) -> JobRef:
+        if kind not in OPERATOR_KINDS:
+            raise ServiceError("invalid", f"Unknown operator job: {kind}")
+        return self._submit(f"job_{uuid.uuid4().hex}", kind, "", "", params)
+
+    def retry(self, job_id: str) -> JobRef:
+        status = self.get_status(job_id)
+        if status["state"] != "failed":
+            raise ServiceError("conflict", f"Only a failed job can be retried; this one is {status['state']}.")
+        self._write("retry", job_id, {})
+        return JobRef(job_id, "queued")
+
+    # --- status
+
+    def _open(self) -> OntologyDB | None:
+        if not Path(self.settings.db_path).exists():
+            return None
+        return OntologyDB(self.settings.db_path, embedding_dim=self.settings.embedding_dim, read_only=True)
+
+    def _job(self, job_id: str) -> Job | None:
+        db = self._open()
+        if db is None:
+            return None
+        with db:
+            return db.jobs.get(job_id)
+
+    def _spooled(self, job_id: str) -> list[Submission]:
+        return [s for s in self.read_spool() if s.job_id == job_id]
+
+    def _find(self, job_id: str) -> dict[str, Any] | None:
+        job = self._job(job_id)
+        spooled = self._spooled(job_id)
+        if job is not None:
+            status = job.to_status()
+            if status["state"] == "failed" and any(s.op == "retry" for s in spooled):
+                status["state"] = "queued"
+            return status
+        enqueued = next((s for s in spooled if s.op == "enqueue"), None)
+        if enqueued is None:
+            return None
+        return {
+            "job_id": job_id, "kind": enqueued.kind, "target": enqueued.target, "revision": enqueued.revision,
+            "state": "queued", "stage": "write", "attempts": 0, "next_attempt_at": enqueued.created_at,
+            "error_code": None, "error": None, "companies": [], "result": None,
+            "created_at": enqueued.created_at, "updated_at": enqueued.created_at,
+        }
+
+    def get_status(self, job_id: str) -> dict[str, Any]:
+        status = self._find(job_id)
+        if status is None:
+            raise ServiceError("not_found", f"Job not found: {job_id}")
+        return status
+
+    def latest_for_note(self, file: str) -> dict[str, Any] | None:
+        """The most recent job for a note, spooled or recorded."""
+        candidates: list[dict[str, Any]] = []
+        db = self._open()
+        if db is not None:
+            with db:
+                jobs = db.jobs.list(target=file)
+            if jobs:
+                candidates.append(jobs[-1].to_status())
+        spooled = [s for s in self.read_spool() if s.op == "enqueue" and s.target == file]
+        if spooled:
+            found = self._find(spooled[-1].job_id)
+            if found is not None:
+                candidates.append(found)
+        return max(candidates, key=lambda status: status["created_at"]) if candidates else None
+
+    # --- spool access for the worker
+
+    def read_spool(self) -> list[Submission]:
+        if not self.spool.is_dir():
+            return []
+        found: list[Submission] = []
+        for path in sorted(self.spool.glob("*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            found.append(Submission(
+                path=path, op=record.get("op", ""), job_id=record.get("job_id", ""),
+                kind=record.get("kind", ""), target=record.get("target", ""),
+                revision=record.get("revision", ""), payload=record.get("payload") or {},
+                created_at=record.get("created_at", ""),
+            ))
+        return found

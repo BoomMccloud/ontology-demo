@@ -35,6 +35,13 @@ DEFAULT_PROVIDER_ORDER: tuple[ProviderName, ...] = (
 # Research note file types read by ingestion and shown by the web catalog.
 SUPPORTED_EXTENSIONS = frozenset({".md", ".txt"})
 
+
+class NoteConflictError(Exception):
+    """The note or its extraction changed while a reader action was pending."""
+
+    def __init__(self) -> None:
+        super().__init__("The source note or its extraction changed. Retry the operation.")
+
 DEFAULT_DASHSCOPE_INTL_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 DEFAULT_OPENAI_URL = "https://api.openai.com/v1"
 DEFAULT_ANTHROPIC_URL = "https://api.anthropic.com/v1"

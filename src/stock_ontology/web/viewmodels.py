@@ -1,4 +1,4 @@
-"""ViewModels transforming read-only OntologyDB records into template contexts."""
+"""ViewModels transforming read-only GraphStore records into template contexts."""
 
 from __future__ import annotations
 
@@ -15,8 +15,7 @@ from stock_ontology.audit import (
     node_type_label,
     run_ontology_audit,
 )
-from stock_ontology.db import OntologyDB, node_to_dict
-from stock_ontology.db.schema import reconcile_sentiment
+from stock_ontology.services import GraphStore, node_to_dict, reconcile_sentiment
 from stock_ontology.i18n import (
     DEFAULT_LANGUAGE,
     translate,
@@ -147,8 +146,8 @@ def _format_facet_pairs(
     return pairs
 
 
-def build_rail_context(db: OntologyDB) -> dict[str, Any]:
-    """Compute lightweight sidebar navigation counts from read-only OntologyDB."""
+def build_rail_context(db: GraphStore) -> dict[str, Any]:
+    """Compute lightweight sidebar navigation counts from read-only GraphStore."""
     stats = db.get_stats()
     all_entities = db.list_nodes(node_type="entity", limit=1000)
     company_count = sum(
@@ -168,7 +167,7 @@ def build_rail_context(db: OntologyDB) -> dict[str, Any]:
 
 
 def _load_entities_split(
-    db: OntologyDB,
+    db: GraphStore,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Load and sort company entities separately from non-company entities."""
     all_entities = db.list_nodes(node_type="entity", limit=1000)
@@ -227,7 +226,7 @@ def _load_entities_split(
     return companies, other_entities
 
 
-def _load_themes_list(db: OntologyDB) -> list[dict[str, Any]]:
+def _load_themes_list(db: GraphStore) -> list[dict[str, Any]]:
     """Load and sort investment themes with their affected-company counts."""
     themes: list[dict[str, Any]] = []
     for thm in db.list_nodes(node_type="theme", limit=500):
@@ -258,7 +257,7 @@ def _load_themes_list(db: OntologyDB) -> list[dict[str, Any]]:
     return themes
 
 
-def build_home_context(db: OntologyDB, lang: str = DEFAULT_LANGUAGE) -> dict[str, Any]:
+def build_home_context(db: GraphStore, lang: str = DEFAULT_LANGUAGE) -> dict[str, Any]:
     """Prepare curated 1997 Reading Room home page data."""
     stats = db.get_stats()
     companies, other_entities = _load_entities_split(db)
@@ -280,7 +279,7 @@ def build_home_context(db: OntologyDB, lang: str = DEFAULT_LANGUAGE) -> dict[str
 
 
 def build_companies_context(
-    db: OntologyDB, kind: str = "companies", lang: str = DEFAULT_LANGUAGE
+    db: GraphStore, kind: str = "companies", lang: str = DEFAULT_LANGUAGE
 ) -> dict[str, Any]:
     """Prepare the full Companies & Catalogued Entities directory context."""
     active_kind = "other" if kind.strip().lower() == "other" else "companies"
@@ -294,7 +293,7 @@ def build_companies_context(
 
 
 def build_themes_context(
-    db: OntologyDB, lang: str = DEFAULT_LANGUAGE
+    db: GraphStore, lang: str = DEFAULT_LANGUAGE
 ) -> dict[str, Any]:
     """Prepare the full Investment Themes directory context."""
     themes = _load_themes_list(db)
@@ -627,13 +626,13 @@ def _theme_header(theme: dict[str, Any]) -> ThemeHeader:
     )
 
 
-def _canonical_relation(db: OntologyDB, relation: Any) -> str:
+def _canonical_relation(db: GraphStore, relation: Any) -> str:
     match = db.registry.resolve_relation(str(relation))
     return match.canonical if match is not None else str(relation)
 
 
 def _exposure_notes(
-    db: OntologyDB,
+    db: GraphStore,
     theme_edges: list[dict[str, Any]],
     company_id: str,
     file_by_doc: dict[str, str],
@@ -661,7 +660,7 @@ def _exposure_notes(
 
 
 def _theme_evidence(
-    db: OntologyDB,
+    db: GraphStore,
     row: dict[str, Any],
     edges_by_node: dict[str, list[dict[str, Any]]],
 ) -> tuple[ThemeEvidenceItem, ...]:
@@ -694,7 +693,7 @@ def _theme_evidence(
 
 
 def _theme_company_rows(
-    db: OntologyDB,
+    db: GraphStore,
     theme_id: str,
     rows: list[dict[str, Any]],
     data_dir: Path | None,
@@ -731,7 +730,7 @@ def _theme_company_rows(
 
 
 def build_entity_context(
-    db: OntologyDB,
+    db: GraphStore,
     entity_id: str,
     *,
     data_dir: Path | None = None,
@@ -791,7 +790,7 @@ def build_entity_context(
 
 
 def build_theme_context(
-    db: OntologyDB,
+    db: GraphStore,
     theme_id: str,
     *,
     data_dir: Path | None = None,
@@ -853,7 +852,7 @@ def build_theme_context(
     }
 
 
-def build_search_filter_options(db: OntologyDB, registry: OntologyRegistry | None = None) -> dict[str, Any]:
+def build_search_filter_options(db: GraphStore, registry: OntologyRegistry | None = None) -> dict[str, Any]:
     """Collect dropdown filter options for the integrated Advanced Search bar.
 
     Every enum option comes from `vocab.py` and relations from `registry`, never from
@@ -912,7 +911,7 @@ def build_search_filter_options(db: OntologyDB, registry: OntologyRegistry | Non
     }
 
 
-def _resolve_result_href(db: OntologyDB, node: Node) -> str:
+def _resolve_result_href(db: GraphStore, node: Node) -> str:
     if node.node_type == "entity":
         return f"/entity/{node.id}"
     if node.node_type == "theme":
@@ -928,7 +927,7 @@ def _resolve_result_href(db: OntologyDB, node: Node) -> str:
     return "/"
 
 
-def _format_search_hit(db: OntologyDB, hit: SearchHit, data_dir: Path) -> dict[str, Any]:
+def _format_search_hit(db: GraphStore, hit: SearchHit, data_dir: Path) -> dict[str, Any]:
     node = hit.node
     eff_sent, sent_src = resolve_item_sentiment(node.facets, hit.edge_facets)
     source_file = node_source_file(node) or None
@@ -953,7 +952,7 @@ def _format_search_hit(db: OntologyDB, hit: SearchHit, data_dir: Path) -> dict[s
 
 
 def build_search_results(
-    db: OntologyDB,
+    db: GraphStore,
     llm: LLMClient | None,
     query: str,
     filters: SearchFilters,
@@ -1233,7 +1232,7 @@ def _build_audit_view(
 
 
 def build_ontology_context(
-    db: OntologyDB,
+    db: GraphStore,
     *,
     tab: str = "entity",
     subtype: str = "",

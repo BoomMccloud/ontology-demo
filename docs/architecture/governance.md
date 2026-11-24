@@ -30,20 +30,25 @@ longer reports is dropped.
 
 `registry-publish` shows the diff for a proposed full registry JSON and writes
 the new official version after operator confirmation and retains publication
-receipts. If the database has no
+receipts. Confirmation queues a `registry.publish` job. The worker rechecks the
+published and proposed revisions under a database write transaction and writes
+the registry file; the database changes only in its job bookkeeping. If the database has no
 recorded applied registry, the operator first reviews and confirms the current
 version with `registry-apply`.
 
-`registry-apply` runs repair against a temporary SQLite copy, validates the
-active graph, shows the row changes, and prompts separately. Confirmation
-rechecks the source and target under a database write transaction. The pending
+`registry-apply` runs repair against a temporary SQLite copy
+(`worker.plan_rollout`), validates the active graph, shows the row changes, and
+prompts separately. Confirmation queues a `registry.apply` job carrying digests
+of the reviewed rows; the worker rechecks the source and target under a
+database write transaction. The pending
 changes, applied version, and a new rollout receipt commit together. If the result differs
 from the preview or fails validation, the transaction rolls back. The local
 workflow records confirmations under the shared account.
 
 ## Repair
 
-The CLI `repair` previews changes on a copy and asks for confirmation.
+The CLI `repair` previews changes on a copy and asks for confirmation, then
+queues a `repair` job that the worker applies the same way.
 `repair_ontology(db, registry)` performs the database changes. It deletes rows from notes
 no longer in the ingestion log, canonicalizes stored enum facets on nodes and
 edges through `vocab.py` (case and aliases, so legacy `stale` becomes
@@ -78,8 +83,8 @@ This covers node facets and relation facets such as `OWNS.transaction_value`.
 Pending edges are promoted only when their relation is mapped and their
 endpoints are allowed.
 
-`repair` is the second writer to `ontology.db` besides ingestion. It issues
-no SQL itself. Its writes go through `OntologyDB` methods made for it:
+`repair` runs only inside the worker's `repair` and `registry.apply` jobs. It
+issues no SQL itself. Its writes go through `OntologyDB` methods made for it:
 `list_artifact_doc_ids`, `count_document_artifacts`, `update_edge`,
 `merge_node_into`, and `delete_edges`.
 

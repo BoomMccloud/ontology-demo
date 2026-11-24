@@ -11,8 +11,13 @@ See `README.md` for architecture, setup, and CLI usage.
 ## Invariants
 
 - Data flows one way: notes under `ONTOLOGY_DATA_DIR` are ingested into
-  `ontology.db`, and the query agent, web UI, and `audit` open it read-only
-  (`PRAGMA query_only = ON`). Only ingestion writes to the DB.
+  `ontology.db`. Only the worker's job executors (`src/stock_ontology/worker.py`)
+  open it for writing. The web app (Process and note corrections included), CLI
+  read commands, the query agent, and `audit` open it read-only
+  (`PRAGMA query_only = ON`) and submit writes as jobs through
+  `services.ProcessingService`. Operator commands (`ingest`, `reembed`,
+  `repair`, `registry-publish`, `registry-apply`) queue their job and run the
+  worker in their own process until it finishes.
 - Tests run offline with fake LLM clients. Never call a live LLM provider from
   a test.
 - Never commit `.env`, `ontology.db`, or other files listed in `.gitignore`.

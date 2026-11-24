@@ -26,6 +26,9 @@
 {% endmacro %}
 
 {% block content %}
+{% if active_note %}
+  {% include "partials/note_reader.html" %}
+{% else %}
 <h1>{{ t('catalog.heading') }}</h1>
 <p class="portal-intro">{{ t('catalog.page_desc') }}</p>
 
@@ -35,19 +38,19 @@
 {% else %}
   <div class="portal-jumpbar" role="tablist" aria-label="{{ t('catalog.view_mode_aria') }}">
     [
-    {% if view_mode == 'company' and not active_group and not active_note and not selected_alpha %}
+    {% if view_mode == 'company' and not active_group and not selected_alpha %}
       <strong>{{ t('catalog.by_company', count=company_groups | length) }}</strong>
     {% else %}
       <a href="/catalog?view=company">{{ t('catalog.by_company', count=company_groups | length) }}</a>
     {% endif %}
     |
-    {% if view_mode == 'author' and not active_group and not active_note and not selected_alpha %}
+    {% if view_mode == 'author' and not active_group and not selected_alpha %}
       <strong>{{ t('catalog.by_author', count=author_groups | length) }}</strong>
     {% else %}
       <a href="/catalog?view=author">{{ t('catalog.by_author', count=author_groups | length) }}</a>
     {% endif %}
     |
-    {% if view_mode == 'all' and not active_note and not selected_alpha %}
+    {% if view_mode == 'all' and not selected_alpha %}
       <strong>{{ t('catalog.all_notes', count=total_notes) }}</strong>
     {% else %}
       <a href="/catalog?view=all">{{ t('catalog.all_notes', count=total_notes) }}</a>
@@ -55,10 +58,7 @@
     ]
   </div>
 
-  {% if active_note %}
-    {% include "partials/note_reader.html" %}
-
-  {% elif view_mode == 'company' and active_group %}
+  {% if view_mode == 'company' and active_group %}
     {% if active_group.entity %}
       <div class="catalog-context-bar">
         <div>
@@ -300,5 +300,6 @@
       </tbody>
     </table>
   {% endif %}
+{% endif %}
 {% endif %}
 {% endblock %}

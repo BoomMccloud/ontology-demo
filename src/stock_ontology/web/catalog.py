@@ -5,16 +5,18 @@ from __future__ import annotations
 import hashlib
 import html
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from stock_ontology.config import SUPPORTED_EXTENSIONS
-from stock_ontology.db import OntologyDB
-from stock_ontology.i18n import DEFAULT_LANGUAGE, translate
+from stock_ontology.services import GraphStore
+from stock_ontology.services.notes import scan_notes
+from stock_ontology.i18n import DEFAULT_LANGUAGE, translate, translate_enum, translate_facet_label
 from stock_ontology.search import resolve_safe_note_path
+from stock_ontology.vocab import ENTITY_TYPE
 
 AUTHOR_FOLDER_ROOTS = {"authors", "analysts", "people", "persons"}
 PERSON_FOLDER_ROOTS = AUTHOR_FOLDER_ROOTS
@@ -385,73 +387,45 @@ def format_source_citation(
 
 
 def _scan_raw_notes(
-    data_dir: Path, db: OntologyDB
+    data_dir: Path, db: GraphStore
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """Scan supported raw notes under `data_dir` and cross-reference DB ingestion metadata."""
-    if not data_dir.exists() or not data_dir.is_dir():
-        return [], {}
-
-    log = db.get_ingestion_log()
+    """Notes and their extraction status from `NotesService`, with catalog presentation fields."""
     doc_counts = db.get_doc_node_counts()
     notes: list[dict[str, Any]] = []
     note_texts_lower: dict[str, str] = {}
 
-    for path in sorted(data_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(data_dir)
-        if any(part.startswith(".") for part in rel.parts):
-            continue
-        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-            continue
-
-        rel_posix = rel.as_posix()
-        text = path.read_text(encoding="utf-8", errors="replace")
-        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        stat = path.stat()
-        title, excerpt = _extract_title_and_excerpt(text, path.stem)
-
+    for note in scan_notes(data_dir, db.get_ingestion_log()):
+        rel = Path(note.rel_path)
+        text = note.text
+        title, excerpt = _extract_title_and_excerpt(text, note.path.stem)
         parts = rel.parts
         folder = parts[0] if len(parts) > 1 else "(root)"
         subdir = rel.parent.as_posix() if rel.parent.as_posix() != "." else "(root)"
-
-        log_entry = log.get(rel_posix)
-        if log_entry is not None:
-            doc_id: str | None = log_entry["doc_id"]
-            ingested_at: str | None = log_entry["ingested_at"]
-            status = "ingested" if log_entry["content_hash"] == content_hash else "modified"
-        else:
-            doc_id = None
-            ingested_at = None
-            status = "not_ingested"
-
-        counts = doc_counts.get(doc_id, {}) if doc_id else {}
-        modified_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC).strftime(
-            "%Y-%m-%d %H:%M UTC"
-        )
+        counts = doc_counts.get(note.doc_id, {}) if note.doc_id else {}
+        modified_at = datetime.fromtimestamp(note.mtime, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
         notes.append(
             {
-                "rel_path": rel_posix,
+                "rel_path": note.rel_path,
                 "folder": folder,
                 "subdir": subdir,
-                "filename": path.name,
+                "filename": note.path.name,
                 "title": title,
                 "excerpt": excerpt,
-                "note_date": _extract_note_date(path.name, modified_at),
+                "note_date": _extract_note_date(note.path.name, modified_at),
                 "header_authors": _extract_note_authors(text),
-                "size_bytes": stat.st_size,
-                "size_label": _format_size(stat.st_size),
+                "size_bytes": note.size,
+                "size_label": _format_size(note.size),
                 "line_count": len(text.splitlines()),
                 "modified_at": modified_at,
-                "status": status,
-                "doc_id": doc_id,
-                "ingested_at": ingested_at,
+                "status": note.status,
+                "doc_id": note.doc_id,
+                "ingested_at": note.ingested_at,
                 "extracted_events": int(counts.get("event", 0)),
                 "extracted_views": int(counts.get("view", 0)),
                 "extracted_total": int(counts.get("total", 0)),
             }
         )
-        note_texts_lower[rel_posix] = text.casefold()
+        note_texts_lower[note.rel_path] = text.casefold()
 
     return notes, note_texts_lower
 
@@ -490,6 +464,146 @@ class NoteAuthorChip:
 
 
 @dataclass(frozen=True)
+class NoteEntity:
+    id: str
+    name: str
+    kind: str
+    href: str
+
+
+@dataclass(frozen=True)
+class NoteRelationship:
+    id: str
+    start: str
+    relation: str
+    end: str
+    pending: bool
+    start_id: str
+    end_id: str
+
+
+@dataclass(frozen=True)
+class NoteEndpoint:
+    id: str
+    label: str
+
+
+@dataclass(frozen=True)
+class NoteEntityType:
+    key: str
+    fields: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class NoteRelationshipField:
+    key: str
+    label: str
+    options: tuple[tuple[str, str], ...]
+    is_list: bool
+
+
+@dataclass(frozen=True)
+class NoteExtraction:
+    status: str
+    actions_enabled: bool
+    # State of the note's latest job (`queued`, `running`, `succeeded`, `failed`, ...), or "".
+    job_state: str = ""
+    content_hash: str = ""
+    entities: tuple[NoteEntity, ...] = ()
+    relationships: tuple[NoteRelationship, ...] = ()
+    choices: tuple[NoteEntity, ...] = ()
+    entity_types: tuple[NoteEntityType, ...] = ()
+    relations: tuple[str, ...] = ()
+    endpoint_choices: tuple[NoteEndpoint, ...] = ()
+    required_relationship_fields: tuple[tuple[str, tuple[NoteRelationshipField, ...]], ...] = ()
+
+
+def _relationship_fields(
+    db: GraphStore, relations: tuple[str, ...], lang: str,
+) -> tuple[tuple[str, tuple[NoteRelationshipField, ...]], ...]:
+    if not relations:
+        return ()
+    registry = db.registry
+    common = registry.required_facets(None) - {"basis"}
+    by_relation = registry.relation_required_facets()
+    vocabularies = registry.facet_vocabularies.get("edge", {})
+    required = []
+    for relation in relations:
+        keys = sorted(common.union(by_relation.get(relation, ())))
+        if not keys:
+            continue
+        list_fields = registry.facet_keys_of_kind(None, "list", relation=relation)
+        fields = tuple(
+            NoteRelationshipField(
+                key, translate_facet_label(key, lang=lang),
+                tuple((value, translate_enum(key, value, lang=lang))
+                      for value in vocabularies.get(key, {}).get("members", {})),
+                key in list_fields,
+            )
+            for key in keys
+        )
+        required.append((relation, fields))
+    return tuple(required)
+
+
+def _note_extraction(
+    db: GraphStore, file: str, raw_text: str, actions_enabled: bool, lang: str, job_state: str = "",
+) -> NoteExtraction:
+    entry = db.get_note_state(file)
+    content_hash = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+    if not entry or not entry["entities_recorded"] or entry["content_hash"] != content_hash:
+        return NoteExtraction("not-processed", actions_enabled, job_state)
+
+    doc_id = entry["doc_id"]
+    entities = tuple(
+        NoteEntity(node.id, node.name, node.facets["entity_type"], f"/entity/{quote(node.id, safe='')}")
+        for node in db.list_note_entities(doc_id)
+    )
+    relationships = tuple(
+        NoteRelationship(
+            id=edge["edge_id"], start=edge["from_name"], relation=edge["relation"], end=edge["to_name"],
+            pending=pending, start_id=edge["from_id"], end_id=edge["to_id"],
+        )
+        for pending in (False, True) for edge in db.list_note_edges(doc_id, pending=pending)
+    )
+    relations = tuple(sorted(spec.name for spec in db.registry.relations)) if actions_enabled else ()
+    available_nodes = []
+    if relations:
+        available_nodes = db.list_all_nodes()
+    elif actions_enabled:
+        available_nodes = db.list_nodes(node_type="entity", limit=-1)
+    available_nodes.sort(key=lambda node: node.name.casefold())
+
+    choices = ()
+    entity_types = ()
+    if actions_enabled:
+        choices = tuple(
+            NoteEntity(node.id, node.name, node.facets["entity_type"], "")
+            for node in available_nodes if node.node_type == "entity"
+        )
+        entity_types = tuple(
+            NoteEntityType(kind, tuple(
+                (key, translate_facet_label(key, lang=lang))
+                for key in sorted(db.registry.required_facets("entity", kind) - {"entity_type"})
+            ))
+            for kind in ENTITY_TYPE.members
+        )
+    endpoint_choices = []
+    if relations:
+        for node in available_nodes:
+            entity_type = node.facets.get("entity_type") if node.node_type == "entity" else None
+            kind = (
+                translate_enum("entity_type", entity_type, lang=lang) if entity_type
+                else translate_enum("node_type", node.node_type, lang=lang)
+            )
+            endpoint_choices.append(NoteEndpoint(node.id, f"{node.name} ({kind})"))
+    return NoteExtraction(
+        "extracted", actions_enabled, job_state, content_hash, entities, relationships, choices, entity_types,
+        relations, tuple(endpoint_choices), _relationship_fields(db, relations, lang),
+    )
+
+
+@dataclass(frozen=True)
 class NoteDetail:
     """Everything the note reader shows for one raw note."""
 
@@ -500,6 +614,7 @@ class NoteDetail:
     company: NoteCompanyChip | None
     authors: tuple[NoteAuthorChip, ...]
     back_link: NoteLink
+    extraction: NoteExtraction
     show_raw: bool
     body_html: str
     raw_lines: tuple[str, ...]
@@ -517,6 +632,7 @@ def _note_detail(
     sibling_list: list[dict[str, Any]],
     matched_company: dict[str, Any] | None,
     author_groups: list[dict[str, Any]],
+    extraction: NoteExtraction,
     lang: str,
 ) -> NoteDetail:
     """Map a resolved note and its catalog lookups to the note reader's model."""
@@ -587,6 +703,7 @@ def _note_detail(
         company=company,
         authors=authors,
         back_link=back_link,
+        extraction=extraction,
         show_raw=show_raw,
         body_html="" if show_raw else render_markdown_safe(raw_text),
         raw_lines=tuple(raw_text.splitlines()) if show_raw else (),
@@ -596,7 +713,7 @@ def _note_detail(
 
 
 def build_catalog_context(
-    db: OntologyDB,
+    db: GraphStore,
     data_dir: Path,
     *,
     view: str = "company",
@@ -606,6 +723,8 @@ def build_catalog_context(
     selected_alpha: str = "",
     selected_file: str = "",
     note_format: str = "rendered",
+    actions_enabled: bool = False,
+    note_job_state: Callable[[str], str] | None = None,
     lang: str = DEFAULT_LANGUAGE,
 ) -> dict[str, Any]:
     """Build single-pane directory catalog context (By Company, By Author, or All Notes)."""
@@ -975,6 +1094,11 @@ def build_catalog_context(
                     sibling_list = grp["notes"]
                     break
 
+        with db.transaction():
+            extraction = _note_extraction(
+                db, canonical_rel, raw_text, actions_enabled, lang,
+                note_job_state(canonical_rel) if note_job_state is not None else "",
+            )
         active_note = _note_detail(
             note_meta,
             raw_text,
@@ -984,6 +1108,7 @@ def build_catalog_context(
             sibling_list=sibling_list,
             matched_company=company_lookup.get(_slug_key(note_meta["folder"])),
             author_groups=author_groups,
+            extraction=extraction,
             lang=lang,
         )
 

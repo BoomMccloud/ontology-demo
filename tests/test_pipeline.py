@@ -2034,3 +2034,148 @@ def test_reingesting_one_note_clears_only_its_own_pending_edges(tmp_path: Path) 
         IngestionPipeline(db, _UnmappedEdgesFakeLLM([]), data_dir, registry=reg).run()
         log = db.get_ingestion_log()
         assert pending_by_doc() == {log[notes[0]]["doc_id"]: 3, log[notes[1]]["doc_id"]: 3}
+
+
+def test_selected_note_cannot_replace_a_newer_batch_extraction(tmp_path: Path) -> None:
+    from stock_ontology.config import NoteConflictError
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    path = data_dir / "note.md"
+    path.write_text("A source note.", encoding="utf-8")
+    db_path = tmp_path / "ontology.db"
+
+    class OverlappingLLM(FakePipelineLLM):
+        def extract_document(self, **kwargs: Any) -> ExtractionResult:
+            with OntologyDB(db_path, embedding_dim=DIM) as concurrent:
+                report = IngestionPipeline(concurrent, FakePipelineLLM(), data_dir).run()
+                assert report.files_processed == 1
+            return ExtractionResult()
+
+    with OntologyDB(db_path, embedding_dim=DIM) as db:
+        pipeline = IngestionPipeline(db, OverlappingLLM(), data_dir)
+        with pytest.raises(NoteConflictError):
+            pipeline.process_note(path)
+        assert db.get_note_state("note.md")["entities_recorded"]
+        pipeline.process_note(path)
+
+
+def test_selected_note_rejects_source_change_while_writing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from stock_ontology.config import NoteConflictError
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    path = data_dir / "note.md"
+    path.write_text("A source note.", encoding="utf-8")
+
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM) as db:
+        pipeline = IngestionPipeline(db, FakePipelineLLM(), data_dir)
+        write_extraction = pipeline._write_extraction
+
+        def change_source(**kwargs: Any) -> tuple[int, int, set[str]]:
+            result = write_extraction(**kwargs)
+            path.write_text("Updated while processing.", encoding="utf-8")
+            return result
+
+        monkeypatch.setattr(pipeline, "_write_extraction", change_source)
+        with pytest.raises(NoteConflictError):
+            pipeline.process_note(path)
+        assert db.get_note_state("note.md") is None
+
+
+@pytest.mark.parametrize("action", ["relink", "reverse"])
+def test_note_correction_updates_only_current_note_edges(tmp_path: Path, action: str) -> None:
+    from stock_ontology.models import Edge
+
+    path = tmp_path / "note.md"
+    path.write_text("Source", encoding="utf-8")
+    content_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM) as db:
+        for entity_id in ("company_a", "company_b", "company_c"):
+            db.upsert_node(Node(id=entity_id, name=entity_id, node_type="entity", summary="",
+                                facets={"entity_type": "company", "sector": "Industrial"}))
+        db.upsert_ingestion_log("note.md", "note", content_hash,
+                                entity_ids=("company_a", "company_b", "company_c"))
+        db.upsert_edge(Edge(id="focus_edge", from_id="company_a", to_id="company_b", relation="OWNS",
+                            facets={"basis": "extracted"}, source_doc_id="note"))
+        db.upsert_edge(Edge(id="other_edge", from_id="company_a", to_id="company_c", relation="OWNS",
+                            facets={"basis": "extracted"}, source_doc_id="note"))
+        db.upsert_edge(Edge(id="peer_edge", from_id="company_a", to_id="company_b", relation="OWNS",
+                            facets={"basis": "extracted"}, source_doc_id="peer"))
+        peer = db.list_note_edges("peer")
+        pipeline = IngestionPipeline(db, FakePipelineLLM(), tmp_path)
+
+        if action == "relink":
+            pipeline.relink_note_entity(path, "company_a", "company_b", None, content_hash)
+            remaining, = db.list_note_edges("note")
+            assert (remaining["from_id"], remaining["to_id"]) == ("company_b", "company_c")
+            assert {node.id for node in db.list_note_entities("note")} == {"company_b", "company_c"}
+        else:
+            pipeline.correct_note_relationship(path, "focus_edge", "OWNS", True, content_hash)
+            with pytest.raises(ValueError, match="not in this note's extraction"):
+                pipeline.correct_note_relationship(path, "focus_edge", "OWNS", True, content_hash)
+            assert {(edge["from_id"], edge["to_id"]) for edge in db.list_note_edges("note")} == {
+                ("company_b", "company_a"), ("company_a", "company_c"),
+            }
+        assert db.list_note_edges("peer") == peer
+
+
+def test_delete_note_relationship_removes_only_its_pending_edge(tmp_path: Path) -> None:
+    from stock_ontology.models import Edge
+
+    path = tmp_path / "note.md"
+    path.write_text("Source", encoding="utf-8")
+    content_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM) as db:
+        for entity_id in ("left", "right"):
+            db.upsert_node(Node(
+                id=entity_id, name=entity_id, node_type="entity", summary="",
+                facets={"entity_type": "company", "sector": "Industrial"},
+            ))
+        db.upsert_ingestion_log("note.md", "note", content_hash, entity_ids=("left", "right"))
+        for doc_id, edge_id in (("note", "pending"), ("peer", "peer-pending")):
+            db.insert_pending_edge(Edge(
+                id=edge_id, from_id="left", to_id="right", relation="UNREVIEWED_RELATION",
+                facets={"basis": "extracted"}, source_doc_id=doc_id,
+            ))
+
+        pipeline = IngestionPipeline(db, FakePipelineLLM(), tmp_path)
+        with pytest.raises(ValueError, match="not in this note's extraction"):
+            pipeline.delete_note_relationship(path, "peer-pending", content_hash)
+        pipeline.delete_note_relationship(path, "pending", content_hash)
+
+        assert db.list_note_edges("note", pending=True) == []
+        assert [edge["edge_id"] for edge in db.list_note_edges("peer", pending=True)] == ["peer-pending"]
+
+
+def test_add_note_relationship_accepts_required_fields_from_shipped_registry(tmp_path: Path) -> None:
+    from stock_ontology.registry import FacetSchemaError, load_registry
+
+    registry_path = Path(__file__).resolve().parents[1] / "ontology_registry.json"
+    registry = load_registry(registry_path)
+    path = tmp_path / "note.md"
+    path.write_text("Source", encoding="utf-8")
+    content_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, registry=registry) as db:
+        db.upsert_node(Node(
+            id="company", name="Sample company", node_type="entity", summary="",
+            facets={"entity_type": "company", "sector": "Industrials"},
+        ))
+        db.upsert_node(Node(
+            id="theme", name="Sample theme", node_type="theme", summary="",
+            facets={"stage": "emerging"},
+        ))
+        db.upsert_ingestion_log("note.md", "note", content_hash, entity_ids=())
+        pipeline = IngestionPipeline(db, FakePipelineLLM(), tmp_path)
+
+        with pytest.raises(FacetSchemaError, match="sentiment"):
+            pipeline.add_note_relationship(path, "company", "EXPOSED_TO", "theme", content_hash)
+        with pytest.raises(FacetSchemaError, match="sentiment"):
+            pipeline.add_note_relationship(path, "company", "EXPOSED_TO", "theme", content_hash,
+                                           facets={"sentiment": "invalid"})
+        assert db.list_note_edges("note") == []
+
+        pipeline.add_note_relationship(path, "company", "EXPOSED_TO", "theme", content_hash,
+                                       facets={"sentiment": "positive"})
+        edge, = db.list_note_edges("note")
+        assert (edge["relation"], edge["facets"]["sentiment"]) == ("EXPOSED_TO", "positive")

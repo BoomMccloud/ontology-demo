@@ -1,9 +1,9 @@
 <section aria-label="{{ t('catalog.reader_aria') }}">
   <div class="note-reader-header">
     <div class="entry-title-row">
-      <h2 class="u-bd-none u-m-0 u-p-0 u-fs-1p25rem">
+      <h1 class="u-m-0 u-fs-1p55rem">
         {{ active_note.title }}
-      </h2>
+      </h1>
     </div>
 
     {% if active_note.company or active_note.authors %}
@@ -34,6 +34,210 @@
     </div>
   </div>
 
+  {% set extraction = active_note.extraction %}
+  {% set can_add_entity = extraction.actions_enabled and extraction.choices | length > extraction.entities | length %}
+  {% set note_entity_ids = extraction.entities | map(attribute='id') | list %}
+  {% set can_correct_relationship = extraction.actions_enabled and extraction.relations %}
+  {% set can_add_relationship = can_correct_relationship and extraction.endpoint_choices | length > 1 %}
+  <div class="section-block note-extraction" data-note-reader data-file="{{ active_note.rel_path }}" data-hash="{{ extraction.content_hash }}"
+       data-failed-label="{{ t('note_reader.action_failed') }}" data-queued-label="{{ t('note_reader.job_queued') }}">
+    <h2>{{ t('note_reader.extraction') }}</h2>
+    <p class="note-status" data-note-status="{{ extraction.status }}">
+      <span class="note-status-icon" aria-hidden="true"></span>
+      {{ t('note_reader.extracted' if extraction.status == 'extracted' else 'note_reader.not_processed') }}
+    </p>
+    {% if extraction.job_state %}
+      <p class="note-job-status" role="status" data-job-state="{{ extraction.job_state }}">{{ t('note_reader.job_' ~ extraction.job_state) }}</p>
+    {% endif %}
+    {% if extraction.status == 'not-processed' %}
+      {% if extraction.actions_enabled %}
+        <form data-note-action="process">
+          <button class="retro-btn" type="submit">{{ t('note_reader.process') }}</button>
+        </form>
+      {% endif %}
+    {% else %}
+      <div class="note-entity-heading">
+        <h3>{{ t('note_reader.entities') }}</h3>
+        {% if can_add_entity %}
+          <button class="retro-btn" type="button" data-note-entity-add aria-expanded="false" aria-controls="note-entity-editor">
+            {{ t('note_reader.add_entity') }}
+          </button>
+        {% endif %}
+      </div>
+      <div data-note-entity-list>
+        {% if extraction.entities %}
+          <ul class="note-extraction-entities">
+            {% for entity in extraction.entities %}
+              <li>
+                <div class="note-entity-row">
+                  <span><a href="{{ entity.href }}">{{ entity.name }}</a> <span class="source-cite">{{ t_enum('entity_type', entity.kind) }}</span></span>
+                  {% if extraction.actions_enabled %}
+                    <div class="note-row-actions">
+                      <button class="retro-btn" type="button" data-note-match="{{ entity.id }}" aria-expanded="false"
+                              aria-controls="note-entity-editor" aria-label="{{ t('note_reader.edit_row') }} · {{ entity.name }}">
+                        {{ t('note_reader.edit_row') }}
+                      </button>
+                      <form data-note-action="entity/delete" data-delete-confirm="{{ t('note_reader.confirm_delete_entity') }}">
+                        <input type="hidden" name="entity_id" value="{{ entity.id }}">
+                        <button class="retro-btn" type="submit" aria-label="{{ t('note_reader.delete_row') }} · {{ entity.name }}">
+                          {{ t('note_reader.delete_row') }}
+                        </button>
+                      </form>
+                    </div>
+                  {% endif %}
+                </div>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p>{{ t('note_reader.no_entities') }}</p>
+        {% endif %}
+        {% if can_add_entity or (extraction.actions_enabled and extraction.entities) %}
+          <form class="note-correction note-inline-editor" id="note-entity-editor" data-note-action="relink" hidden>
+            <input type="hidden" name="entity_id">
+            <label><span data-note-entity-picker-label data-edit-label="{{ t('note_reader.match_entity') }}"
+                         data-add-label="{{ t('note_reader.select_entity') }}">{{ t('note_reader.match_entity') }}</span>
+              <select name="replacement_id" required>
+                <option value="" selected disabled>{{ t('note_reader.select_entity') }}</option>
+                <option value="__new__" data-edit-only>{{ t('note_reader.create_entity') }}</option>
+                {% for entity in extraction.choices %}
+                  <option value="{{ entity.id }}" {% if entity.id in note_entity_ids %}data-edit-only{% endif %}>
+                    {{ entity.name }} ({{ t_enum('entity_type', entity.kind) }})
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+            <fieldset data-new-entity hidden disabled>
+              <label>{{ t('note_reader.entity_name') }} <input name="new_name" required></label>
+              <label>{{ t('note_reader.entity_type') }}
+                <select name="entity_type" required>
+                  {% for kind in extraction.entity_types %}<option value="{{ kind.key }}">{{ t_enum('entity_type', kind.key) }}</option>{% endfor %}
+                </select>
+              </label>
+              <div data-entity-fields></div>
+              {% for kind in extraction.entity_types %}
+                <template data-entity-type="{{ kind.key }}">
+                  {% for key, label in kind.fields %}<label>{{ label }} <input name="{{ key }}" required></label>{% endfor %}
+                </template>
+              {% endfor %}
+            </fieldset>
+            <button class="retro-btn" type="submit" data-edit-label="{{ t('note_reader.save') }}"
+                    data-add-label="{{ t('note_reader.add_entity') }}">{{ t('note_reader.save') }}</button>
+          </form>
+        {% endif %}
+      </div>
+
+      <h3>{{ t('note_reader.relationships') }}</h3>
+      {% if extraction.relationships or can_add_relationship %}
+        <table class="catalog-table note-relationships">
+          <thead>
+            <tr>
+              <th scope="col">{{ t('note_reader.from') }}</th>
+              <th scope="col">{{ t('note_reader.relationship') }}</th>
+              <th scope="col">{{ t('note_reader.to') }}</th>
+              {% if extraction.actions_enabled %}
+                <th scope="col">
+                  {% if can_add_relationship %}
+                    <button class="retro-btn" type="button" data-note-add aria-expanded="false" aria-controls="note-relationship-editor">
+                      {{ t('note_reader.add_relationship') }}
+                    </button>
+                  {% endif %}
+                </th>
+              {% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for edge in extraction.relationships %}
+              <tr>
+                <td>{{ edge.start }}</td>
+                <td>{{ t_enum('relation', edge.relation) }}
+                  {% if edge.pending %}<span class="source-cite">({{ t('note_reader.pending') }})</span>{% endif %}
+                </td>
+                <td>{{ edge.end }}</td>
+                {% if extraction.actions_enabled %}
+                  <td>
+                    <div class="note-row-actions">
+                      {% if can_correct_relationship %}
+                        <button class="retro-btn" type="button" data-note-edge="{{ edge.id }}" data-note-relation="{{ edge.relation }}"
+                                data-note-from="{{ edge.start_id }}" data-note-to="{{ edge.end_id }}"
+                                aria-expanded="false" aria-controls="note-relationship-editor"
+                                aria-label="{{ t('note_reader.edit_row') }} · {{ edge.start }} → {{ t_enum('relation', edge.relation) }} → {{ edge.end }}">
+                          {{ t('note_reader.edit_row') }}
+                        </button>
+                      {% endif %}
+                      <form data-note-action="relationship/delete" data-delete-confirm="{{ t('note_reader.confirm_delete_relationship') }}">
+                        <input type="hidden" name="edge_id" value="{{ edge.id }}">
+                        <button class="retro-btn" type="submit"
+                                aria-label="{{ t('note_reader.delete_row') }} · {{ edge.start }} → {{ t_enum('relation', edge.relation) }} → {{ edge.end }}">
+                          {{ t('note_reader.delete_row') }}
+                        </button>
+                      </form>
+                    </div>
+                  </td>
+                {% endif %}
+              </tr>
+            {% else %}
+              <tr><td colspan="4">{{ t('note_reader.no_relationships') }}</td></tr>
+            {% endfor %}
+            {% if can_correct_relationship %}
+              <tr id="note-relationship-editor" hidden>
+                <td class="note-inline-editor" colspan="4">
+                  <form class="note-correction" data-note-action="relationship">
+                    <input type="hidden" name="edge_id">
+                    <div class="note-relationship-fields">
+                      <label>{{ t('note_reader.from') }}
+                        <select name="from_id" required>
+                          <option value="" disabled selected>{{ t('note_reader.select_node') }}</option>
+                          {% for endpoint in extraction.endpoint_choices %}<option value="{{ endpoint.id }}">{{ endpoint.label }}</option>{% endfor %}
+                        </select>
+                      </label>
+                      <label>{{ t('note_reader.relationship') }}
+                        <select name="relation" required>
+                          <option value="" disabled selected>{{ t('note_reader.select_relationship') }}</option>
+                          {% for relation in extraction.relations %}<option value="{{ relation }}">{{ t_enum('relation', relation) }}</option>{% endfor %}
+                        </select>
+                      </label>
+                      <label>{{ t('note_reader.to') }}
+                        <select name="to_id" required>
+                          <option value="" disabled selected>{{ t('note_reader.select_node') }}</option>
+                          {% for endpoint in extraction.endpoint_choices %}<option value="{{ endpoint.id }}">{{ endpoint.label }}</option>{% endfor %}
+                        </select>
+                      </label>
+                    </div>
+                    <div class="note-relationship-fields" data-note-required-fields></div>
+                    {% for relation, fields in extraction.required_relationship_fields %}
+                      <template data-note-relation-fields="{{ relation }}">
+                        {% for field in fields %}
+                          <label>{{ field.label }}
+                            {% if field.options %}
+                              <select data-note-relationship-field="{{ field.key }}" required>
+                                <option value="" disabled selected>{{ t('common.none') }}</option>
+                                {% for value, label in field.options %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                              </select>
+                            {% else %}
+                              <input data-note-relationship-field="{{ field.key }}" {% if field.is_list %}data-list{% endif %} required>
+                            {% endif %}
+                          </label>
+                        {% endfor %}
+                      </template>
+                    {% endfor %}
+                    <button class="retro-btn" type="button" data-swap-endpoints>{{ t('note_reader.reverse') }}</button>
+                    <button class="retro-btn" type="submit" data-edit-label="{{ t('note_reader.save') }}"
+                            data-add-label="{{ t('note_reader.add_relationship') }}">{{ t('note_reader.save') }}</button>
+                  </form>
+                </td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      {% else %}
+        <p>{{ t('note_reader.no_relationships') }}</p>
+      {% endif %}
+    {% endif %}
+    <p class="note-action-status" role="status" data-note-feedback data-busy-label="{{ t('note_reader.working') }}" hidden></p>
+  </div>
+
+  <h2>{{ t('note_reader.original') }}</h2>
   {% if active_note.show_raw %}
     <pre class="note-raw-pre">{% for line in active_note.raw_lines %}<span id="L{{ loop.index }}" class="note-line">{{ line }}
 </span>{% endfor %}</pre>
@@ -63,4 +267,5 @@
       {% endif %}
     </div>
   </div>
+  {% if active_note.extraction.actions_enabled %}<script src="/static/note_reader.js" defer></script>{% endif %}
 </section>

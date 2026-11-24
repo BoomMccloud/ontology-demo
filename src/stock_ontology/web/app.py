@@ -1,10 +1,13 @@
 """FastAPI web application for the 1990s Library UI and Clippy PM chat.
 
-It reads `ontology.db` strictly read-only. Its only write is adding a pasted note file.
+It opens `ontology.db` only read-only. Saving a note, **Process**, and every note-reader
+correction submit a job through `services.ProcessingService` and return its reference with
+202; the background worker applies it, and the reader polls `/api/jobs/{job_id}`.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
@@ -18,7 +21,6 @@ from pydantic import BaseModel
 
 from stock_ontology.agent import OntologyAgent
 from stock_ontology.config import Settings
-from stock_ontology.db import OntologyDB
 from stock_ontology.i18n import (
     DEFAULT_LANGUAGE,
     LANG_COOKIE_NAME,
@@ -37,9 +39,17 @@ from stock_ontology.i18n import (
 from stock_ontology.llm import LLMClient, create_llm_client
 from stock_ontology.registry import OntologyRegistry, load_registry
 from stock_ontology.search import SearchFilters, split_qualified_value
+from stock_ontology.services import (
+    GraphQueries,
+    GraphStore,
+    NoteSaveError,
+    NotesService,
+    ProcessingService,
+    ServiceError,
+    open_graph,
+)
 from stock_ontology.web.catalog import build_catalog_context
 from stock_ontology.web.navigation import LEFT_NAV, WORKFLOWS, resolve_nav
-from stock_ontology.web.note_intake import NoteSaveError, save_pasted_note
 from stock_ontology.web.viewmodels import (
     build_companies_context,
     build_entity_context,
@@ -56,6 +66,7 @@ WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
 MAX_CHAT_SESSIONS = 50
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -76,6 +87,47 @@ class LanguageRequest(BaseModel):
 class NoteCreateRequest(BaseModel):
     title: str
     content: str
+
+
+class NoteProcessRequest(BaseModel):
+    file: str
+
+
+class NewNoteEntity(BaseModel):
+    name: str
+    facets: dict[str, Any]
+
+
+class NoteEntityRequest(NoteProcessRequest):
+    entity_id: str
+    expected_hash: str | None = None
+
+
+class NoteRelinkRequest(NoteEntityRequest):
+    replacement_id: str | None = None
+    new_entity: NewNoteEntity | None = None
+
+
+class NoteRelationshipRequest(NoteProcessRequest):
+    edge_id: str
+    relation: str
+    from_id: str | None = None
+    to_id: str | None = None
+    reverse: bool = False
+    expected_hash: str | None = None
+
+
+class NoteRelationshipAddRequest(NoteProcessRequest):
+    from_id: str
+    relation: str
+    to_id: str
+    expected_hash: str | None = None
+    facets: dict[str, Any] | None = None
+
+
+class NoteRelationshipDeleteRequest(NoteProcessRequest):
+    edge_id: str
+    expected_hash: str | None = None
 
 
 def _sanitize_next_path(raw_next: str | None) -> str:
@@ -106,8 +158,14 @@ def _build_next_path(request: Request) -> str:
     return f"{request.url.path}?{query_str}" if query_str else request.url.path
 
 
-def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
-    """Create the FastAPI app, wired strictly read-only to `settings.db_path`."""
+# HTTP status for each typed service error.
+_HTTP_STATUS = {"not_found": 404, "conflict": 409, "invalid": 422, "unavailable": 503}
+
+
+def create_app(
+    settings: Settings, llm: LLMClient | None = None, *, note_actions: bool = False,
+) -> FastAPI:
+    """Create the library. `note_actions` enables Process and corrections, which queue worker jobs."""
     app = FastAPI(title="Stock Ontology Library", version="0.1.0")
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -115,6 +173,8 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
     active_llm: LLMClient = llm if llm is not None else create_llm_client(settings)
     # Opaque per-session history from `ChatTurn.history`, passed back unchanged.
     sessions: dict[str, tuple[Any, ...]] = {}
+    processing = ProcessingService(settings)
+    notes = NotesService(settings, processing)
 
     def _resolve_request_lang(
         request: Request, explicit_lang: str | None = None
@@ -126,15 +186,10 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
             default=settings.default_language,
         )
 
-    def _open_ro_db(lang: str = DEFAULT_LANGUAGE) -> OntologyDB:
+    def _open_ro_db(lang: str = DEFAULT_LANGUAGE) -> GraphStore:
         reg, _ = _load_optional_registry()
         try:
-            return OntologyDB(
-                settings.db_path,
-                embedding_dim=settings.embedding_dim,
-                read_only=True,
-                registry=reg,
-            )
+            return open_graph(settings, reg)
         except FileNotFoundError as exc:
             raise HTTPException(
                 status_code=503,
@@ -295,6 +350,7 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
                     status_code=404,
                     detail=translate("api.entity_not_found", lang=lang, entity_id=entity_id),
                 ) from exc
+            ctx["consensus_stale"] = GraphQueries(db).consensus_status(entity_id)["stale"]
             ctx["rail"] = build_rail_context(db)
         return _render(request, "entity.html", ctx, lang)
 
@@ -503,6 +559,8 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
                     selected_alpha=alpha,
                     selected_file=file,
                     note_format=format,
+                    actions_enabled=note_actions,
+                    note_job_state=_note_job_state if note_actions else None,
                     lang=lang,
                 )
             except FileNotFoundError as exc:
@@ -520,20 +578,75 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
             ctx = {"rail": build_rail_context(db)}
         return _render(request, "note_new.html", ctx, lang)
 
+    def _note_job_state(file: str) -> str:
+        latest = processing.latest_for_note(file)
+        return str(latest["state"]) if latest else ""
+
     @app.post("/api/notes", status_code=201)
     def create_note(request: Request, payload: NoteCreateRequest) -> dict[str, str]:
-        """Save pasted text as a note. The demo has only a root user, so there is no auth."""
+        """Save pasted text as a note and queue its processing job. The demo has only a root user."""
         lang = _resolve_request_lang(request)
         try:
-            rel_path = save_pasted_note(
-                settings.data_dir, title=payload.title, content=payload.content
-            )
+            ref = notes.save(payload.title, payload.content)
         except NoteSaveError as exc:
             raise HTTPException(
                 status_code=400,
                 detail=translate(f"notes_new.error_{exc.code}", lang=lang),
             ) from exc
-        return {"file": rel_path}
+        return {"file": ref.file, "job_id": ref.job_id}
+
+    def _submitted(request: Request, file: str, submit: Any) -> JSONResponse:
+        lang = _resolve_request_lang(request)
+        if not note_actions or not settings.db_path.exists():
+            raise HTTPException(503, translate("note_reader.action_failed", lang=lang))
+        try:
+            ref = submit()
+        except ServiceError as exc:
+            detail = (
+                translate("api.raw_note_not_found", lang=lang, file=file) if exc.code == "not_found" else exc.message
+            )
+            raise HTTPException(_HTTP_STATUS.get(exc.code, 500), detail) from exc
+        return JSONResponse({"file": file, "job_id": ref.job_id, "state": ref.state}, status_code=202)
+
+    def _correction(request: Request, kind: str, payload: BaseModel) -> JSONResponse:
+        params = payload.model_dump(exclude={"file"})
+        file = getattr(payload, "file")
+        return _submitted(request, file, lambda: processing.submit_correction(kind, file, params))
+
+    @app.post("/api/notes/process", status_code=202)
+    def process_note(request: Request, payload: NoteProcessRequest) -> JSONResponse:
+        return _submitted(request, payload.file, lambda: processing.request_processing(payload.file))
+
+    @app.post("/api/notes/relink", status_code=202)
+    def relink_note(request: Request, payload: NoteRelinkRequest) -> JSONResponse:
+        return _correction(request, "note.relink", payload)
+
+    @app.post("/api/notes/entity/add", status_code=202)
+    def add_note_entity(request: Request, payload: NoteEntityRequest) -> JSONResponse:
+        return _correction(request, "note.entity.add", payload)
+
+    @app.post("/api/notes/entity/delete", status_code=202)
+    def delete_note_entity(request: Request, payload: NoteEntityRequest) -> JSONResponse:
+        return _correction(request, "note.entity.delete", payload)
+
+    @app.post("/api/notes/relationship", status_code=202)
+    def correct_note_relationship(request: Request, payload: NoteRelationshipRequest) -> JSONResponse:
+        return _correction(request, "note.relationship", payload)
+
+    @app.post("/api/notes/relationship/add", status_code=202)
+    def add_note_relationship(request: Request, payload: NoteRelationshipAddRequest) -> JSONResponse:
+        return _correction(request, "note.relationship.add", payload)
+
+    @app.post("/api/notes/relationship/delete", status_code=202)
+    def delete_note_relationship(request: Request, payload: NoteRelationshipDeleteRequest) -> JSONResponse:
+        return _correction(request, "note.relationship.delete", payload)
+
+    @app.get("/api/jobs/{job_id}")
+    def job_status(request: Request, job_id: str) -> JSONResponse:
+        try:
+            return JSONResponse(processing.get_status(job_id))
+        except ServiceError as exc:
+            raise HTTPException(_HTTP_STATUS.get(exc.code, 500), exc.message) from exc
 
     @app.get("/ontology", response_class=HTMLResponse)
     def ontology_page(

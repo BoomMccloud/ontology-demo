@@ -70,9 +70,52 @@ def init_schema(conn: sqlite3.Connection, embedding_dim: int) -> None:
                 ingested_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS note_entities (
+                doc_id TEXT NOT NULL REFERENCES ingestion_log(doc_id) ON DELETE CASCADE,
+                entity_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                PRIMARY KEY (doc_id, entity_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_note_entities_entity ON note_entities(entity_id);
+
             CREATE TABLE IF NOT EXISTS db_metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+
+            -- Background work. Only the worker writes these rows: callers submit jobs as files
+            -- in the command spool next to the database, and the worker inserts them here.
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                target TEXT NOT NULL DEFAULT '',
+                revision TEXT NOT NULL DEFAULT '',
+                priority INTEGER NOT NULL,
+                state TEXT NOT NULL CHECK(state IN ('queued', 'running', 'succeeded', 'failed', 'superseded')),
+                stage TEXT NOT NULL DEFAULT 'write',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at TEXT NOT NULL,
+                claim_id TEXT,
+                lease_expires_at TEXT,
+                payload_json TEXT NOT NULL DEFAULT '{{}}',
+                companies_json TEXT NOT NULL DEFAULT '{{}}',
+                result_json TEXT,
+                error_code TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(state, priority, created_at);
+            CREATE INDEX IF NOT EXISTS idx_jobs_target ON jobs(target, created_at);
+
+            -- One row per company: evidence changes advance `target_revision`, and a published
+            -- consensus records the revision it read as `completed_revision`.
+            CREATE TABLE IF NOT EXISTS consensus_refresh (
+                company_id TEXT PRIMARY KEY,
+                target_revision INTEGER NOT NULL DEFAULT 0,
+                completed_revision INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL CHECK(state IN ('pending', 'failed', 'current')),
+                error TEXT,
+                updated_at TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(node_type);
@@ -102,6 +145,7 @@ def init_schema(conn: sqlite3.Connection, embedding_dim: int) -> None:
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("ingestion_log", "size", "INTEGER"),
     ("ingestion_log", "mtime_ns", "INTEGER"),
+    ("ingestion_log", "entities_recorded", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
