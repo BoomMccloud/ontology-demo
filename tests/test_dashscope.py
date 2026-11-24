@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 
 from stock_ontology.agent import OntologyAgent
 from stock_ontology.config import Settings
@@ -63,7 +64,7 @@ def test_settings_resolve_provider_auto_and_overrides() -> None:
     assert isinstance(r_forced.primary_provider, DashScopeProvider)
 
 
-def test_dashscope_embeddings_structured_and_agent_tools(tmp_path: Path) -> None:
+def test_dashscope_embeddings_structured_and_agent_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     seen_requests: list[tuple[str, dict[str, Any]]] = []
     agent_bodies: list[dict[str, Any]] = []
 
@@ -87,9 +88,9 @@ def test_dashscope_embeddings_structured_and_agent_tools(tmp_path: Path) -> None
             schema_name = (resp_fmt.get("json_schema") or {}).get("name")
             msgs = body["messages"]
 
-            if schema_name:
-                assert body["enable_thinking"] is False
-            else:
+            # Structured calls and agent turns both turn DashScope thinking off.
+            assert body["enable_thinking"] is False
+            if not schema_name:
                 # Agent turns go through Pydantic AI's OpenAI model, which sends the agent's model settings.
                 agent_bodies.append(body)
                 assert body.get("max_tokens", body.get("max_completion_tokens")) == 77, sorted(body)
@@ -233,22 +234,25 @@ def test_dashscope_embeddings_structured_and_agent_tools(tmp_path: Path) -> None
 
     with OntologyDB(db_path, embedding_dim=8, read_only=True) as ro_db:
         import httpx2
-        from pydantic_ai.models.openai import OpenAIChatModel
+        import pydantic_ai.providers.openai as pai_openai
+
+        from stock_ontology.llm.agent_model import build_native_model
 
         def agent_handler(request: httpx2.Request) -> httpx2.Response:
             resp = handler(httpx.Request(request.method, str(request.url), content=request.content))
             return httpx2.Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
 
-        from pydantic_ai.providers.openai import OpenAIProvider
+        real_provider = pai_openai.OpenAIProvider
 
-        model = OpenAIChatModel(
-            settings.dashscope_model,
-            provider=OpenAIProvider(
-                base_url=settings.dashscope_api_url,
-                api_key=settings.dashscope_api_key,
-                http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(agent_handler)),
-            ),
-        )
+        def mock_transport_provider(**kwargs: Any) -> Any:
+            # The production builder's provider, with its HTTP routed to the mock handler.
+            return real_provider(
+                **kwargs, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(agent_handler))
+            )
+
+        monkeypatch.setattr(pai_openai, "OpenAIProvider", mock_transport_provider)
+        model = build_native_model("dashscope", settings)
+        assert model.base_url == "https://mock.dashscope.local/compatible-mode/v1/"
         agent = OntologyAgent(ro_db, client, model=model, model_settings={"max_tokens": 77})
         reply = agent.ask("What is our view on NVDA?")
         assert "Confirmed consensus for NVIDIA" in reply

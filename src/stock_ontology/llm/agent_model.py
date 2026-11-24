@@ -20,6 +20,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.settings import ModelSettings
 
 from stock_ontology.config import ProviderName, Settings
 from stock_ontology.llm.base import ProviderConfigError, classify_error
@@ -67,7 +68,9 @@ def build_native_model(name: ProviderName, settings: Settings) -> Model:
         )
     else:
         raise ValueError(f"Unknown chat provider {name!r}.")
-    return OpenAIChatModel(model, provider=OpenAIProvider(base_url=base_url, api_key=api_key))
+    # DashScope's Qwen models think by default; the router turned that off, so the agent does too.
+    defaults: ModelSettings | None = {"extra_body": {"enable_thinking": False}} if name == "dashscope" else None
+    return OpenAIChatModel(model, provider=OpenAIProvider(base_url=base_url, api_key=api_key), settings=defaults)
 
 
 class AgentModelChain:
