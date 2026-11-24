@@ -1481,3 +1481,44 @@ def test_read_only_db_without_pending_table_lists_no_pending_edges(tmp_path: Pat
         db.conn.commit()
     with OntologyDB(path, embedding_dim=8, read_only=True) as ro:
         assert ro.list_pending_edges_with_endpoints() == []
+
+
+def test_note_entity_membership_follows_canonical_merge_and_document_removal() -> None:
+    with OntologyDB(":memory:", embedding_dim=8) as db:
+        for node_id in ("old", "canonical"):
+            db.upsert_node(Node(id=node_id, name=node_id, node_type="entity", summary="",
+                                facets={"entity_type": "institution"}))
+        db.upsert_ingestion_log("note.md", "doc", "content", entity_ids=("old", "canonical"))
+        db.upsert_ingestion_log("empty.txt", "empty", "empty", entity_ids=())
+        db.upsert_ingestion_log("legacy.txt", "legacy", "legacy")
+
+        assert db.get_note_state("empty.txt")["entities_recorded"]
+        assert not db.get_note_state("legacy.txt")["entities_recorded"]
+        db.merge_node_into("old", "canonical")
+        assert [node.id for node in db.list_note_entities("doc")] == ["canonical"]
+        db.delete_document_artifacts("doc")
+        assert db.list_note_entities("doc") == []
+        assert db.get_node("canonical") is not None
+
+
+def test_job_tables_are_added_to_a_database_created_before_them(tmp_path: Path) -> None:
+    import sqlite3
+
+    db_path = tmp_path / "old.db"
+    with OntologyDB(db_path, embedding_dim=WIRING_DIM) as db:
+        db.upsert_node(_company("ent_old", "Old Corp"), embedding=_wiring_vec(0))
+        db.upsert_ingestion_log("old.md", "old", "hash", entity_ids=("ent_old",))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP TABLE jobs")
+        conn.execute("DROP TABLE consensus_refresh")
+
+    with OntologyDB(db_path, embedding_dim=WIRING_DIM, read_only=True) as db:
+        assert db.jobs.get("job_any") is None, "an old read-only database has no jobs yet"
+        assert db.jobs.consensus_state("ent_old") is None
+    with OntologyDB(db_path, embedding_dim=WIRING_DIM) as db:
+        assert db.get_node("ent_old") is not None
+        assert db.get_note_state("old.md") is not None
+        assert db.jobs.list() == [] and db.jobs.list_consensus_refresh() == []
+    with sqlite3.connect(db_path) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert {"jobs", "consensus_refresh", "nodes", "ingestion_log"} <= tables

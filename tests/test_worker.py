@@ -1,0 +1,643 @@
+"""Offline worker integration tests: an agent drives notes, jobs, and reads through CLI JSON."""
+
+from __future__ import annotations
+
+import json
+import time
+from html import unescape
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+from typer.testing import CliRunner
+
+import stock_ontology.cli as cli_module
+from stock_ontology.config import Settings
+from stock_ontology.models import (
+    ConsensusSynthesis,
+    ExtractedEdge,
+    ExtractedEntity,
+    ExtractedEvent,
+    ExtractionResult,
+    Node,
+)
+from stock_ontology.web import create_app
+
+DIM = 8
+COMPANY = "Acme Robotics"
+EVENT = "Acme Q3 orders up 40%"
+CONSENSUS_SUMMARY = "Acme demand is accelerating on Q3 orders."
+LIVE_KEY_VARS = (
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "DASHSCOPE_API_KEY",
+    "DASHSCOPE_AP_SOUTHEAST_1_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_COMPAT_API_KEY",
+)
+
+
+class _WorkerKilled(BaseException):
+    """Stands in for the worker process dying; nothing in the worker may catch it."""
+
+
+class _JourneyLLM:
+    """Offline fake: one company and event per note; the first consensus call kills the worker."""
+
+    def __init__(self) -> None:
+        self.extract_calls: list[str] = []
+        self.consensus_calls: list[str] = []
+
+    def format_chain_summary(self) -> str:
+        return "fake"
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0] + [0.0] * (DIM - 1) for _ in texts]
+
+    def extract_document(self, *, source_meta: dict[str, Any], **_: Any) -> ExtractionResult:
+        self.extract_calls.append(str(source_meta["file_path"]))
+        return ExtractionResult(
+            entities=[
+                ExtractedEntity(
+                    temp_id="e_acme", name=COMPANY, summary="Warehouse robots.", entity_type="company"
+                )
+            ],
+            events=[
+                ExtractedEvent(
+                    temp_id="ev_q3",
+                    name=EVENT,
+                    summary="Acme reported Q3 orders up 40% year over year.",
+                    event_type="fact",
+                    event_date="2026-11-20",
+                )
+            ],
+            edges=[ExtractedEdge(from_ref="ev_q3", to_ref="e_acme", relation="ABOUT")],
+        )
+
+    def synthesize_consensus(self, *, company: Node, events: list[Node], **_: Any) -> ConsensusSynthesis:
+        self.consensus_calls.append(company.name)
+        if len(self.consensus_calls) == 1:
+            raise _WorkerKilled
+        return ConsensusSynthesis(
+            stance="buy",
+            support_strength="strong",
+            conviction="high",
+            summary=CONSENSUS_SUMMARY,
+            pillars=["Orders growth"],
+            supporting_node_ids=[ev.id for ev in events],
+        )
+
+
+def _json(result: Any) -> dict[str, Any]:
+    assert result.exit_code == 0, result.output
+    return json.loads(result.stdout)
+
+
+def test_agent_journey_through_cli_json_survives_worker_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    db_path = tmp_path / "ontology.db"
+    for var in LIVE_KEY_VARS:
+        monkeypatch.setenv(var, "")
+    monkeypatch.setenv("EMBEDDING_DIM", str(DIM))
+    monkeypatch.setenv("ONTOLOGY_DB", str(db_path))
+    monkeypatch.setenv("ONTOLOGY_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("ONTOLOGY_REGISTRY", str(tmp_path / "missing_registry.json"))
+    llm = _JourneyLLM()
+    monkeypatch.setattr(cli_module, "create_llm_client", lambda _settings: llm)
+    runner = CliRunner()
+
+    saved = _json(
+        runner.invoke(
+            cli_module.app,
+            ["note", "save", "--title", "Acme Q3 check", "--text", "Acme Q3 orders rose 40%.", "--json"],
+        )
+    )
+    note_file = saved["file"]
+    assert (data_dir / note_file).is_file()
+
+    job_id = _json(runner.invoke(cli_module.app, ["process", note_file, "--json"]))["job_id"]
+    assert job_id
+
+    # First worker run extracts, then dies inside consensus while holding its claim.
+    with pytest.raises(_WorkerKilled):
+        runner.invoke(
+            cli_module.app, ["worker", "--once", "--lease-seconds", "2"], catch_exceptions=False
+        )
+    time.sleep(2.5)  # Let the dead worker's lease expire.
+
+    restarted = runner.invoke(cli_module.app, ["worker", "--once", "--lease-seconds", "60"])
+    assert restarted.exit_code == 0, restarted.output
+
+    status = _json(runner.invoke(cli_module.app, ["status", job_id, "--json"]))
+    assert status["state"] == "succeeded"
+    assert llm.extract_calls == [note_file]
+    assert llm.consensus_calls == [COMPANY, COMPANY]
+
+    overview = _json(runner.invoke(cli_module.app, ["entity", COMPANY, "--json"]))
+    assert overview["entity"]["name"] == COMPANY
+    assert overview["consensus"]["summary"] == CONSENSUS_SUMMARY
+    assert overview["consensus"]["stale"] is False
+    cited = {(ev["name"], ev["source"]["file"]) for ev in overview["events"]}
+    assert cited == {(EVENT, note_file)}
+
+    settings = Settings(
+        db_path=db_path, embedding_dim=DIM, data_dir=data_dir, registry_path=tmp_path / "missing_registry.json"
+    )
+    page = TestClient(create_app(settings, llm=llm)).get(f"/entity/{overview['entity']['id']}")
+    assert page.status_code == 200
+    html = unescape(page.text)
+    assert CONSENSUS_SUMMARY in html
+    assert EVENT in html
+    assert note_file in html
+
+
+# ---------------------------------------------------------------------------
+# Builder-owned supporting tests (proposal `modular-worker`). The protected witness above
+# is unchanged; everything below exercises the job store, worker, and CLI contract directly.
+# ---------------------------------------------------------------------------
+
+import sys  # noqa: E402
+from collections.abc import Callable, Iterator  # noqa: E402
+from contextlib import contextmanager  # noqa: E402
+from datetime import UTC, datetime, timedelta  # noqa: E402
+
+from stock_ontology.db import LeaseLostError, OntologyDB  # noqa: E402
+from stock_ontology.registry import create_minimal_registry, save_registry  # noqa: E402
+from stock_ontology.services import ProcessingService  # noqa: E402
+from stock_ontology.worker import Worker  # noqa: E402
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = datetime(2026, 11, 24, 9, 0, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += timedelta(seconds=seconds)
+
+
+class _ScriptLLM:
+    """Offline fake whose extraction and synthesis can run a hook first."""
+
+    def __init__(
+        self,
+        *,
+        on_extract: Callable[[int], None] | None = None,
+        on_consensus: Callable[[int, Node], None] | None = None,
+        summary: str = CONSENSUS_SUMMARY,
+    ) -> None:
+        self.on_extract = on_extract
+        self.on_consensus = on_consensus
+        self.summary = summary
+        self.extract_calls: list[str] = []
+        self.consensus_calls: list[str] = []
+
+    def format_chain_summary(self) -> str:
+        return "fake"
+
+    def close(self) -> None:
+        return None
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0] + [0.0] * (DIM - 1) for _ in texts]
+
+    def extract_document(self, *, source_meta: dict[str, Any], text: str, **_: Any) -> ExtractionResult:
+        self.extract_calls.append(str(source_meta["file_path"]))
+        if self.on_extract is not None:
+            self.on_extract(len(self.extract_calls))
+        return ExtractionResult(
+            entities=[ExtractedEntity(temp_id="e_acme", name=COMPANY, summary="Robots.", entity_type="company")],
+            events=[
+                ExtractedEvent(
+                    temp_id="ev", name=text.strip().splitlines()[0][:80], summary="Evidence.",
+                    event_type="fact", event_date="2026-11-20",
+                )
+            ],
+            edges=[ExtractedEdge(from_ref="ev", to_ref="e_acme", relation="ABOUT")],
+        )
+
+    def synthesize_consensus(self, *, company: Node, events: list[Node], **_: Any) -> ConsensusSynthesis:
+        self.consensus_calls.append(company.name)
+        if self.on_consensus is not None:
+            self.on_consensus(len(self.consensus_calls), company)
+        return ConsensusSynthesis(
+            stance="buy", support_strength="strong", conviction="high", summary=self.summary,
+            pillars=["Orders growth"], supporting_node_ids=[ev.id for ev in events],
+        )
+
+
+def _workspace(tmp_path: Path) -> Settings:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    return Settings(
+        db_path=tmp_path / "ontology.db", embedding_dim=DIM, data_dir=data_dir,
+        registry_path=tmp_path / "missing_registry.json",
+    )
+
+
+def _note(settings: Settings, name: str, text: str) -> Path:
+    path = settings.data_dir / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _worker(settings: Settings, llm: Any, clock: _Clock, lease: int = 30) -> Worker:
+    return Worker(settings, llm_factory=lambda _settings: llm, lease_seconds=lease, clock=clock)
+
+
+def _read(settings: Settings) -> OntologyDB:
+    return OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True)
+
+
+def test_job_claim_holds_a_lease_and_is_reclaimed_after_expiry(tmp_path: Path) -> None:
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    clock = _Clock()
+    ref = ProcessingService(settings).request_processing("a.md")
+    worker = _worker(settings, _ScriptLLM(), clock)
+    with worker.open_store() as db:
+        worker.intake(db)
+        first = db.jobs.claim(clock(), 30)
+        assert first is not None and first.job_id == ref.job_id and first.claim_id
+        assert db.jobs.claim(clock(), 30) is None, "a live lease must not be claimed twice"
+        db.jobs.check_claim(first.job_id, first.claim_id, clock(), 30)
+
+        clock.advance(31)
+        with pytest.raises(LeaseLostError):
+            db.jobs.check_claim(first.job_id, first.claim_id, clock(), 30)
+        second = db.jobs.claim(clock(), 30)
+        assert second is not None and second.job_id == ref.job_id
+        assert second.claim_id != first.claim_id and second.attempts == 2
+        with pytest.raises(LeaseLostError):
+            db.jobs.check_claim(first.job_id, first.claim_id, clock(), 30)
+        db.jobs.check_claim(second.job_id, second.claim_id, clock(), 30)
+
+
+def test_attempt_whose_lease_expired_cannot_commit_extraction(tmp_path: Path) -> None:
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    clock = _Clock()
+    llm = _ScriptLLM(on_extract=lambda _n: clock.advance(31))
+    ref = ProcessingService(settings).request_processing("a.md")
+
+    _worker(settings, llm, clock).run_once(scan=False)
+
+    with _read(settings) as db:
+        assert db.get_note_state("a.md") is None, "an expired attempt committed its extraction"
+        assert db.jobs.list_consensus_refresh() == []
+    assert llm.extract_calls == ["a.md"] * 3
+    assert ProcessingService(settings).get_status(ref.job_id)["state"] == "failed"
+
+
+def test_late_consensus_attempt_cannot_publish_over_newer_evidence(tmp_path: Path) -> None:
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    clock = _Clock()
+
+    def newer_evidence(call: int, company: Node) -> None:
+        if call == 1:
+            with OntologyDB(settings.db_path, embedding_dim=DIM) as other, other.transaction():
+                other.jobs.mark_consensus_pending([company.id])
+
+    llm = _ScriptLLM(on_consensus=newer_evidence)
+    ref = ProcessingService(settings).request_processing("a.md")
+    _worker(settings, llm, clock).run_once(scan=False)
+
+    with _read(settings) as db:
+        company = db.find_by_name_or_alias(COMPANY, node_type="entity")
+        assert company is not None
+        assert db.get_entity_consensus(company.id) is None, "a late attempt published consensus"
+        refresh = db.jobs.consensus_state(company.id)
+        assert refresh is not None
+        assert (refresh["target_revision"], refresh["completed_revision"], refresh["state"]) == (2, 0, "pending")
+    assert ProcessingService(settings).get_status(ref.job_id)["state"] == "queued"
+
+    clock.advance(61)
+    _worker(settings, llm, clock).run_once(scan=False)
+    with _read(settings) as db:
+        assert db.get_entity_consensus(company.id) is not None
+        refresh = db.jobs.consensus_state(company.id)
+        assert (refresh["completed_revision"], refresh["state"]) == (2, "current")
+    assert llm.extract_calls == ["a.md"]
+    assert ProcessingService(settings).get_status(ref.job_id)["state"] == "succeeded"
+
+
+def test_registry_change_during_a_job_reopens_and_retries(tmp_path: Path) -> None:
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    clock = _Clock()
+    adopted = create_minimal_registry()
+    adopted.version += 1
+
+    def adopt_registry(call: int) -> None:
+        if call == 1:
+            with OntologyDB(settings.db_path, embedding_dim=DIM) as other:
+                other.record_registry_adoption(adopted, None, "test")
+
+    llm = _ScriptLLM(on_extract=adopt_registry)
+    ref = ProcessingService(settings).request_processing("a.md")
+    _worker(settings, llm, clock).run_once(scan=False)
+
+    status = ProcessingService(settings).get_status(ref.job_id)
+    assert status["state"] == "succeeded", status
+    assert status["attempts"] == 1, "a registry change must not consume the retry budget"
+    with _read(settings) as db:
+        assert db.get_note_state("a.md") is not None
+        assert db.registry.revision() == adopted.revision()
+
+
+def test_consensus_refresh_rows_commit_with_extraction_and_roll_back_with_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    clock = _Clock()
+    original = OntologyDB.upsert_ingestion_log
+    calls: list[int] = []
+
+    def fail_once(self: OntologyDB, *args: Any, **kwargs: Any) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("disk full")
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(OntologyDB, "upsert_ingestion_log", fail_once)
+    llm = _ScriptLLM()
+    ref = ProcessingService(settings).request_processing("a.md")
+    _worker(settings, llm, clock).run_once(scan=False)
+
+    with _read(settings) as db:
+        assert db.get_note_state("a.md") is None
+        assert db.jobs.list_consensus_refresh() == [], "a rolled-back extraction left refresh rows"
+        assert db.jobs.get(ref.job_id).companies == {}
+    assert ProcessingService(settings).get_status(ref.job_id)["state"] == "queued"
+
+    clock.advance(61)
+    _worker(settings, llm, clock).run_once(scan=False)
+    with _read(settings) as db:
+        rows = db.jobs.list_consensus_refresh()
+        assert [(row["target_revision"], row["completed_revision"], row["state"]) for row in rows] == [
+            (1, 1, "current")
+        ]
+    assert ProcessingService(settings).get_status(ref.job_id)["state"] == "succeeded"
+
+
+def test_corrections_are_claimed_ahead_of_earlier_extraction(tmp_path: Path) -> None:
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    _note(settings, "b.md", "Beta note\n")
+    clock = _Clock()
+    service = ProcessingService(settings)
+    extraction = service.request_processing("a.md")
+    correction = service.submit_correction(
+        "note.relationship.delete", "b.md", {"edge_id": "edge_x", "expected_hash": None}
+    )
+    worker = _worker(settings, _ScriptLLM(), clock)
+    with worker.open_store() as db:
+        worker.intake(db)
+        first = db.jobs.claim(clock(), 30)
+        second = db.jobs.claim(clock(), 30)
+    assert first is not None and second is not None
+    assert (first.job_id, second.job_id) == (correction.job_id, extraction.job_id)
+
+
+def test_three_attempts_with_exponential_backoff_and_a_new_revision_resets_the_budget(
+    tmp_path: Path,
+) -> None:
+    settings = _workspace(tmp_path)
+    note = _note(settings, "a.md", "Alpha note\n")
+    clock = _Clock()
+
+    def provider_down(_call: int) -> None:
+        raise RuntimeError("provider down")
+
+    llm = _ScriptLLM(on_extract=provider_down)
+    service = ProcessingService(settings)
+    ref = service.request_processing("a.md")
+    worker = _worker(settings, llm, clock)
+
+    worker.run_once(scan=False)
+    status = service.get_status(ref.job_id)
+    assert (status["state"], status["attempts"]) == ("queued", 1)
+    assert status["next_attempt_at"] == (clock() + timedelta(seconds=60)).isoformat()
+    assert "provider down" in status["error"]
+
+    clock.advance(59)
+    worker.run_once(scan=False)
+    assert len(llm.extract_calls) == 1, "a job ran before its backoff elapsed"
+    clock.advance(1)
+    worker.run_once(scan=False)
+    status = service.get_status(ref.job_id)
+    assert (status["state"], status["attempts"]) == ("queued", 2)
+    assert status["next_attempt_at"] == (clock() + timedelta(seconds=120)).isoformat()
+
+    clock.advance(120)
+    worker.run_once(scan=False)
+    assert service.get_status(ref.job_id)["state"] == "failed"
+    clock.advance(10_000)
+    worker.run_once(scan=False)
+    assert len(llm.extract_calls) == 3
+
+    assert service.retry(ref.job_id).job_id == ref.job_id
+    worker.run_once(scan=False)
+    status = service.get_status(ref.job_id)
+    assert (status["state"], status["attempts"]) == ("queued", 1), "retry reopens with a fresh budget"
+
+    note.write_text("Alpha note, revised\n", encoding="utf-8")
+    newer = service.request_processing("a.md")
+    assert newer.job_id != ref.job_id
+    assert service.get_status(newer.job_id)["attempts"] == 0
+    assert service.request_processing("a.md").job_id == newer.job_id, "duplicate requests share a job"
+
+
+def test_stale_consensus_keeps_its_date_and_citations_until_replaced(tmp_path: Path) -> None:
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    clock = _Clock()
+    failing = {"on": False}
+
+    def maybe_fail(_call: int, _company: Node) -> None:
+        if failing["on"]:
+            raise RuntimeError("synthesis unavailable")
+
+    llm = _ScriptLLM(on_consensus=maybe_fail)
+    service = ProcessingService(settings)
+    service.request_processing("a.md")
+    _worker(settings, llm, clock).run_once(scan=False)
+    runner = CliRunner()
+    env = {
+        "ONTOLOGY_DB": str(settings.db_path), "ONTOLOGY_DATA_DIR": str(settings.data_dir),
+        "ONTOLOGY_REGISTRY": str(settings.registry_path), "EMBEDDING_DIM": str(DIM),
+    }
+    before = _json(runner.invoke(cli_module.app, ["entity", COMPANY, "--json"], env=env))
+    assert before["consensus"]["stale"] is False
+
+    failing["on"] = True
+    _note(settings, "b.md", "Beta note\n")
+    service.request_processing("b.md")
+    _worker(settings, llm, clock).run_once(scan=False)
+
+    after = _json(runner.invoke(cli_module.app, ["entity", COMPANY, "--json"], env=env))
+    assert after["consensus"]["stale"] is True
+    assert after["consensus"]["summary"] == before["consensus"]["summary"]
+    assert after["consensus"]["as_of"] == before["consensus"]["as_of"]
+    assert after["consensus"]["citations"] == before["consensus"]["citations"]
+    assert {ev["source"]["file"] for ev in after["events"]} == {"a.md", "b.md"}
+
+    page = TestClient(create_app(settings, llm=llm)).get(f"/entity/{after['entity']['id']}", params={"lang": "en"})
+    assert page.status_code == 200
+    assert 'data-consensus-stale' in page.text
+    assert CONSENSUS_SUMMARY in unescape(page.text)
+
+
+@contextmanager
+def _writable_opens(monkeypatch: pytest.MonkeyPatch, db_path: Path) -> Iterator[list[tuple[str, bool]]]:
+    """Record (calling module, read_only) for every OntologyDB opened on `db_path`."""
+    seen: list[tuple[str, bool]] = []
+    original = OntologyDB.__init__
+
+    def record(self: OntologyDB, path: Any, *args: Any, **kwargs: Any) -> None:
+        if str(path) != ":memory:" and Path(path).resolve() == db_path.resolve():
+            caller = sys._getframe(1).f_globals.get("__name__", "?")
+            seen.append((caller, bool(kwargs.get("read_only", args[1] if len(args) > 1 else False))))
+        original(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(OntologyDB, "__init__", record)
+    yield seen
+
+
+def _cli_env(settings: Settings, registry_path: Path) -> dict[str, str]:
+    return {
+        "ONTOLOGY_DB": str(settings.db_path), "ONTOLOGY_DATA_DIR": str(settings.data_dir),
+        "ONTOLOGY_REGISTRY": str(registry_path), "EMBEDDING_DIM": str(DIM),
+        **{var: "" for var in LIVE_KEY_VARS},
+    }
+
+
+def test_operator_commands_write_only_through_claimed_jobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    registry_path = tmp_path / "ontology_registry.json"
+    save_registry(create_minimal_registry(), registry_path)
+    proposal = create_minimal_registry()
+    proposal.version += 1
+    proposal_path = tmp_path / "proposal.json"
+    save_registry(proposal, proposal_path)
+    llm = _ScriptLLM()
+    monkeypatch.setattr(cli_module, "create_llm_client", lambda _settings: llm)
+    env = _cli_env(settings, registry_path)
+    runner = CliRunner()
+    db_options = ["--db", str(settings.db_path)]
+    reg_options = [*db_options, "--registry", str(registry_path)]
+
+    def latest(kind: str) -> Any:
+        with _read(settings) as db:
+            jobs = db.jobs.list(kind=kind)
+        assert jobs, f"no {kind} job recorded"
+        return jobs[-1]
+
+    commands: list[tuple[str, list[str], str | None]] = [
+        ("ingest", ["ingest", *db_options, "--data-dir", str(settings.data_dir)], None),
+        ("ingest", ["ingest", *db_options, "--rebuild-consensus"], None),
+        ("reembed", ["reembed", *db_options], None),
+        ("registry.apply", ["registry-apply", *reg_options], "y\n"),
+        ("repair", ["repair", *reg_options, "--json"], "y\n"),
+        ("registry.publish", ["registry-publish", str(proposal_path), *reg_options], "y\n"),
+        ("registry.apply", ["registry-apply", *reg_options], "y\n"),
+    ]
+    for kind, args, answer in commands:
+        with _writable_opens(monkeypatch, settings.db_path) as opens:
+            result = runner.invoke(cli_module.app, args, input=answer, env=env)
+        monkeypatch.undo()
+        monkeypatch.setattr(cli_module, "create_llm_client", lambda _settings: llm)
+        assert result.exit_code == 0, (args, result.output)
+        writers = {caller for caller, read_only in opens if not read_only}
+        assert writers == {"stock_ontology.worker"}, (args, opens)
+        assert latest(kind).state == "succeeded", args
+
+    assert llm.consensus_calls == [COMPANY, COMPANY], "rebuild-consensus re-synthesized every company"
+    with _read(settings) as db:
+        assert db.registry.version == proposal.version
+
+    _note(settings, "b.md", "Beta note\n")
+    with _writable_opens(monkeypatch, settings.db_path) as opens:
+        queued = runner.invoke(cli_module.app, ["ingest", *db_options, "--no-wait", "--json"], env=env)
+    monkeypatch.undo()
+    assert queued.exit_code == 0, queued.output
+    assert [read_only for _, read_only in opens if not read_only] == []
+    job_id = json.loads(queued.stdout)["job_id"]
+    assert _json(runner.invoke(cli_module.app, ["status", job_id, "--json"], env=env))["state"] == "queued"
+
+
+def test_cli_reads_are_read_only_and_errors_are_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _workspace(tmp_path)
+    llm = _ScriptLLM()
+    monkeypatch.setattr(cli_module, "create_llm_client", lambda _settings: llm)
+    env = _cli_env(settings, settings.registry_path)
+    runner = CliRunner()
+    saved = _json(runner.invoke(
+        cli_module.app, ["note", "save", "--title", "Alpha", "--text", "Alpha note", "--json"], env=env
+    ))
+    assert saved["job_id"]
+    assert runner.invoke(cli_module.app, ["worker", "--once"], env=env).exit_code == 0
+
+    with _writable_opens(monkeypatch, settings.db_path) as opens:
+        listed = _json(runner.invoke(cli_module.app, ["note", "list", "--json"], env=env))
+        status = _json(runner.invoke(cli_module.app, ["status", saved["job_id"], "--json"], env=env))
+        overview = _json(runner.invoke(cli_module.app, ["entity", COMPANY, "--json"], env=env))
+        missing = runner.invoke(cli_module.app, ["status", "job_missing", "--json"], env=env)
+        unknown = runner.invoke(cli_module.app, ["entity", "Nobody Inc", "--json"], env=env)
+        bad_note = runner.invoke(cli_module.app, ["process", "../escape.md", "--json"], env=env)
+        inspect = runner.invoke(cli_module.app, ["inspect", COMPANY], env=env)
+    monkeypatch.undo()
+    assert opens and all(read_only for _, read_only in opens), opens
+    assert inspect.exit_code == 0, inspect.output
+    assert [(note["file"], note["status"]) for note in listed["notes"]] == [(saved["file"], "ingested")]
+    assert status["state"] == "succeeded" and status["kind"] == "process"
+    assert overview["entity"]["name"] == COMPANY
+    for result, code, exit_code in ((missing, "not_found", 3), (unknown, "not_found", 3), (bad_note, "not_found", 3)):
+        assert result.exit_code == exit_code, result.output
+        assert json.loads(result.stdout)["error"]["code"] == code
+
+
+def test_consensus_attempt_whose_lease_expired_during_synthesis_cannot_publish(tmp_path: Path) -> None:
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    clock = _Clock()
+    late_summary = "Late attempt summary that must never publish."
+
+    def slow_first_synthesis(call: int, _company: Node) -> None:
+        if call == 1:
+            llm.summary = late_summary
+            clock.advance(31)  # The lease (30 s) expires while the first attempt synthesizes.
+        else:
+            llm.summary = CONSENSUS_SUMMARY
+
+    llm = _ScriptLLM(on_consensus=slow_first_synthesis)
+    ref = ProcessingService(settings).request_processing("a.md")
+    _worker(settings, llm, clock).run_once(scan=False)
+
+    with _read(settings) as db:
+        company = db.find_by_name_or_alias(COMPANY, node_type="entity")
+        assert company is not None
+        views = [node.summary for node in db.list_nodes(node_type="view", limit=-1)]
+        assert late_summary not in views, "the expired attempt published its consensus"
+        consensus = db.get_entity_consensus(company.id)
+        assert consensus is not None and consensus.summary == CONSENSUS_SUMMARY
+        refresh = db.jobs.consensus_state(company.id)
+        assert (refresh["target_revision"], refresh["completed_revision"], refresh["state"]) == (1, 1, "current")
+    assert llm.consensus_calls == [COMPANY, COMPANY], "the reclaiming attempt must synthesize again"
+    assert llm.extract_calls == ["a.md"]
+    status = ProcessingService(settings).get_status(ref.job_id)
+    assert (status["state"], status["attempts"]) == ("succeeded", 2)

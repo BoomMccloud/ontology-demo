@@ -16,12 +16,18 @@ Pure definitions. Nothing here opens a connection.
 
 - `init_schema(conn, embedding_dim)` creates the tables and indexes:
   `nodes`, `edges`, `node_vectors` (a `vec0` virtual table, cosine distance),
-  `ingestion_log`, `db_metadata`, `node_lookup` (casefolded names and
-  aliases, for exact-match resolution), and `pending_edges` (extracted edges
+  `ingestion_log`, `note_entities` (current document-to-canonical-entity
+  membership), `db_metadata`, `node_lookup` (casefolded names and
+  aliases, for exact-match resolution), `jobs` (kind, target and revision,
+  priority, state, stage, attempts, next attempt time, claim ID, lease expiry,
+  payload, the consensus revisions a job waits for, result, and a short error),
+  `consensus_refresh` (one row per company: target and completed evidence
+  revision and `pending`, `failed`, or `current`), and `pending_edges` (extracted edges
   whose relation the registry does not map, or whose endpoints it does not allow: from_id, to_id, the raw relation,
   facets, source_doc_id, created_at; rows cascade when an endpoint node is
   deleted; `merge_node_into` repoints them to the survivor and drops self-loops). It then adds columns that shipped
-  later, listed in `_ADDED_COLUMNS` (`ingestion_log.size` and `mtime_ns`). It
+  later, listed in `_ADDED_COLUMNS`. `ingestion_log.entities_recorded`
+  distinguishes a complete but empty membership from an older unknown one. It
   is idempotent, so old databases upgrade on open.
 - `row_to_node`, `row_to_edge`, `node_to_dict` map between SQLite rows and the
   `Node` / `Edge` models.
@@ -41,7 +47,17 @@ table, a new facet merge rule. A column added to an existing table goes in
 - Opening: `OntologyDB(path, embedding_dim=768, read_only=False, registry=None)`.
   With `read_only=True` it sets `PRAGMA query_only = ON`, so SQLite itself
   rejects writes. Writable connections use WAL, call `init_schema`, and backfill
-  `node_lookup` if any node lacks rows there.
+  `node_lookup` if any node lacks rows there. Every connection waits up to 10
+  seconds for the write lock (`busy_timeout`). A write transaction on a
+  connection opened before the applied registry changed raises
+  `RegistryChangedError` (a `FacetSchemaError`); reopen and retry.
+- Jobs: `OntologyDB.jobs` is a `JobStore` (`db/jobs.py`) on the same
+  connection, so job state commits with the graph writes it describes.
+  `claim(now, lease_seconds)` takes the most urgent due job or reclaims one
+  whose lease expired, with a new claim ID. `check_claim` inside a commit
+  refuses a lost or expired claim and extends the lease. `mark_consensus_pending`,
+  `complete_consensus`, and `fail_consensus` keep `consensus_refresh`. Reads work
+  on read-only and older databases without these tables.
 - Facet schema: `upsert_node`, `upsert_edge` (both the insert and the merge
   path), and `update_edge` pass facets through `registry.check_facets` and
   refuse a missing required facet, a wrong kind or an enum outside its
@@ -97,8 +113,8 @@ Change this layer when you need a new query or a faster one.
 
 ## Used by
 
-The pipeline, agent, web app, governance, and CLI. Only the pipeline and
-`repair` open it writable.
+The pipeline, agent, services, worker, web app, governance, and CLI. Only the
+worker opens it writable (and the rollout preview's disposable copy).
 
 No other module may touch SQLite directly. `tests/test_architecture.py`
 enforces that.

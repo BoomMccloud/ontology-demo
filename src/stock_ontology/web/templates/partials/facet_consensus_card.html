@@ -15,6 +15,9 @@
     </div>
   </div>
 
+  {% if consensus_stale %}
+    <p class="consensus-stale" data-consensus-stale>{{ t('consensus.stale') }}</p>
+  {% endif %}
   <p class="u-m-0-0-10px">{{ consensus.summary }}</p>
 
   {% if consensus.as_of %}

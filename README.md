@@ -116,8 +116,16 @@ uv run stock-ontology repair --json
 # Add --reembed to recompute embeddings of merged survivors using the configured provider.
 # Merge proposals can be marked approved or rejected in ontology_registry.suggestions.json.
 
-# 3. Periodically watch data/ for new or updated notes
+# 3. Run the background worker: the only database writer. It applies queued jobs
+#    (Process, corrections, `--no-wait` operator commands) and scans data/ for changes.
 uv run stock-ontology watch --interval 60
+uv run stock-ontology worker --once   # drain due work once and exit
+
+# 3b. Agent-facing commands with JSON output; writes are queued as jobs.
+uv run stock-ontology note save --title "NVDA check" --text "..." --json
+uv run stock-ontology process _general/2026-11-24_nvda_check.md --json
+uv run stock-ontology status <job_id> --json
+uv run stock-ontology entity NVIDIA --json
 
 # 4. Ask a single question or evaluate a new meeting note against DB consensus
 uv run stock-ontology ask "We discussed AI Data Center Power Bottleneck — what are the related companies?"
@@ -180,7 +188,7 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
 
 ## Web UI Constraints
 
-- Add notes from the web app only through `web/note_intake.py::save_pasted_note`. Never write a note directly to its final path or replace an existing one: write a hidden temp file and publish it with `os.link`.
+- Add notes only through `services/notes.py::save_pasted_note`. Never write a note directly to its final path or replace an existing one: write a hidden temp file and publish it with `os.link`.
   **Why:** ingestion scans the data folder at any time, so a direct write can be read half-finished, and a check-then-write can overwrite a note saved at the same moment (proposal `paste-note`, 2026-11-23).
   **Guarded by:** `tests/test_web.py::test_paste_note_never_overwrites_including_concurrent_same_title` and `tests/test_web.py::test_paste_note_is_never_visible_to_ingestion_partially_written`.
 - Register every HTML route and view variant in `src/stock_ontology/web/navigation.py` (workflow, owning section, archetype, breadcrumb) and let `_render` derive navigation from it; never set nav state in a template or view model, and never use `style=` or `<style>` in templates (add a class to `library.css`).
@@ -189,6 +197,15 @@ uv run stock-ontology serve --host 127.0.0.1 --port 8000
 - Give the entity and theme page templates (`entity.html`, `theme.html` and every partial they include, among them the shared `section_events.html` and `section_views.html`) only the presentation models built in `web/viewmodels.py`. Never pass a raw ontology node, `facets`, or `edge_facets` to them, and never read `.facets` in them; add a field to the model and map it in the view model instead. The catalog note page follows the same rule: `partials/note_reader.html` reads only the frozen `NoteDetail` built by `_note_detail` in `web/catalog.py`, and links and labels are decided there, not in the template.
   **Why:** templates read raw facets and resolved sentiment inline, so the pages depended on how ontology data is shaped (proposals `company-view-separation` and `theme-view-separation`, 2026-11-22). The note page passed a raw dict and built its back and sibling links inline from the list state (proposal `event-view-separation`, 2026-11-22).
   **Guarded by:** `tests/test_web.py::test_entity_page_templates_only_see_presentation_models`, `tests/test_web.py::test_theme_page_templates_only_see_presentation_models` and `tests/test_web.py::test_note_page_templates_only_see_presentation_models`.
+- Treat an extraction as current only when its source hash matches and its entity membership has been recorded. Send Process and corrections through ingestion, as worker jobs. On an entity relink, update the selected note's attribution and edges while keeping shared entities and other notes' evidence.
+  **Why:** canonical entities had no note membership of their own, so edge-only attribution missed isolated entities, and mutating a shared node to fix one match would affect unrelated notes (proposal `note-reader`, 2026-11-24).
+  **Guarded by:** `tests/test_web.py::test_note_reader_extraction_workflow` and `tests/test_db.py::test_note_entity_membership_follows_canonical_merge_and_document_removal`.
+- Add relationships with the current note's document ID and validate that the selected note owns a relationship before deleting it.
+  **Why:** Two notes can independently support the same relationship. Adding or deleting one contribution must preserve the other (proposal `note-relationship-actions`).
+  **Guarded by:** `tests/test_web.py::test_note_reader_adds_and_deletes_relationships` and `tests/test_pipeline.py::test_delete_note_relationship_removes_only_its_pending_edge`.
+- When removing an entity from a note, remove its membership and that note's incident edges in one ingestion transaction. Keep the canonical entity and other notes' evidence.
+  **Why:** A note's relationship table should reflect its entity corrections, and canonical entities can be referenced by many notes (proposal `note-entity-actions`).
+  **Guarded by:** `tests/test_web.py::test_note_reader_adds_and_deletes_entities`.
 - Build every `/search` enum option in `build_search_filter_options` from `vocab.py` and relations from the loaded registry; never add values observed in the DB or a hand-kept list. Subtype and status options are `<node_type>:<value>` so a theme stage and a view type with the same name stay apart.
   **Why:** hand-kept lists merged with observed values offered stances such as `outperform` that the ontology does not define, and `consensus` matched both a consensus view and a consensus-stage theme (proposal `search-ontology`, 2026-11-22).
   **Guarded by:** `tests/test_search_ontology_options.py`.

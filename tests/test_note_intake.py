@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from stock_ontology.web.note_intake import (
+from stock_ontology.services.notes import (
     DEFAULT_NOTE_FOLDER,
     MAX_NOTE_BYTES,
     NoteSaveError,

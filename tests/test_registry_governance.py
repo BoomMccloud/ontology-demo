@@ -45,6 +45,16 @@ def _seed_workspace(tmp_path: Path) -> tuple[Path, Path, list[str]]:
     return db_path, registry_path, ["--db", str(db_path), "--registry", str(registry_path)]
 
 
+def _graph_state(db_path: Path) -> tuple[list[str], str | None, str | None]:
+    """Graph rows, the applied registry revision, and the facet stamp; job bookkeeping excluded."""
+    with OntologyDB(db_path, read_only=True) as db:
+        return (
+            db.registry_rollout_rows(),
+            db.get_metadata("applied_registry_revision"),
+            db.get_metadata("registry_version"),
+        )
+
+
 def _registry_status(runner: CliRunner, options: list[str]) -> dict:
     result = runner.invoke(app, ["audit", *options, "--no-sync-suggestions", "--json"])
     assert result.exit_code == 0, result.output
@@ -96,10 +106,14 @@ def test_publish_and_apply_require_separate_interactive_decisions(tmp_path: Path
     assert registry_path.read_bytes() == official_bytes
     assert db_path.read_bytes() == applied_database
 
+    applied_graph = _graph_state(db_path)
     accepted = runner.invoke(app, publication, input="y\n")
     assert accepted.exit_code == 0, accepted.output
     assert load_registry(registry_path).version == proposed.version
-    assert db_path.read_bytes() == applied_database
+    # A confirmed publish runs as a worker job: only job bookkeeping may change in the database.
+    assert _graph_state(db_path) == applied_graph
+    with OntologyDB(db_path, read_only=True) as db:
+        assert [job.state for job in db.jobs.list(kind="registry.publish")] == ["succeeded"]
     status = _registry_status(runner, options)
     assert status["published_version"] == proposed.version
     assert status["applied_version"] == initial.version
@@ -109,7 +123,7 @@ def test_publish_and_apply_require_separate_interactive_decisions(tmp_path: Path
     declined = runner.invoke(app, ["registry-apply", *options], input="n\n")
     assert "COLLABORATES_WITH" in declined.output
     assert load_registry(registry_path).version == proposed.version
-    assert db_path.read_bytes() == applied_database
+    assert _graph_state(db_path) == applied_graph
     assert _registry_status(runner, options)["applied_version"] == initial.version
 
     accepted = runner.invoke(app, ["registry-apply", *options], input="y\n")
@@ -172,3 +186,23 @@ def test_incompatible_rollout_preserves_applied_registry_and_graph(tmp_path: Pat
     status = _registry_status(runner, options)
     assert status["published_version"] == proposed.version
     assert status["applied_version"] == initial.version
+
+
+def test_registry_service_reads_the_applied_registry_not_the_published_file(tmp_path: Path) -> None:
+    from stock_ontology.config import Settings
+    from stock_ontology.services import RegistryService
+
+    db_path, registry_path, options = _seed_workspace(tmp_path)
+    applied = load_registry(registry_path)
+    assert CliRunner().invoke(app, ["registry-apply", *options], input="y\n").exit_code == 0
+    published = applied.model_copy(deep=True)
+    published.version += 1
+    published.companies.append(CompanySpec(name="AMD", ticker="AMD"))
+    save_registry(published, registry_path)
+
+    service = RegistryService(Settings(db_path=db_path, registry_path=registry_path))
+    with OntologyDB(db_path, read_only=True) as db:
+        assert service.get_applied(db).revision() == applied.revision() != published.revision()
+    fresh = tmp_path / "fresh.db"
+    with OntologyDB(fresh) as db:
+        assert service.get_applied(db).revision() == published.revision()

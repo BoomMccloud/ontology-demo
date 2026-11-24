@@ -1,6 +1,7 @@
 # Data processing pipeline
 
-Turns research notes into graph rows. It's the main writer to `ontology.db`.
+Turns research notes into graph rows. The worker runs it for every job that
+changes the graph.
 
 ## Files
 
@@ -9,6 +10,17 @@ Turns research notes into graph rows. It's the main writer to `ontology.db`.
   prompts the pipeline sends through the LLM layer.
 
 ## Flow
+
+The reader's Process action queues a `process` job, and the worker calls
+`process_note` for that source. It reuses the batch extraction transaction and
+records entity membership with the note's edges and content hash. Reader
+corrections are jobs too: they validate and update that note's membership or
+edges through ingestion, then refresh affected consensus.
+
+Every transaction that changes evidence advances the affected companies'
+`consensus_refresh` revisions in the same transaction (`_evidence_changed`),
+so a rollback queues none, and calls `commit_check` with those revisions. The
+worker sets `commit_check` to refuse a lost or expired job claim.
 
 `IngestionPipeline.run(force=False, rebuild_consensus=False)` does this:
 
@@ -42,9 +54,14 @@ Turns research notes into graph rows. It's the main writer to `ontology.db`.
 5. Canonicalize edges through the registry and write nodes, edges, and
    embeddings inside one transaction per document.
 6. Rebuild the `consensus` view for every company the note touched, through
-   `LLMClient.synthesize_consensus`.
+   `LLMClient.synthesize_consensus`. Synthesis and its embedding run outside
+   any write transaction. The result publishes only if the company's refresh
+   revision is unchanged (otherwise `StaleConsensusError`), and the published
+   revision is recorded with it. A failed refresh keeps the previous consensus
+   and marks the refresh `failed`.
 
-`watch(interval_seconds)` reruns `run` on a timer. `reembed_all_nodes`
+`watch(interval_seconds)` reruns `run` on a timer; the CLI's `watch` now runs
+the worker loop instead. `reembed_all_nodes`
 rebuilds every embedding, for example after switching embedding models.
 `reembed_nodes(db, llm, ids)` refreshes a few, which the CLI uses after
 `repair` merges duplicates. It lives here, not in governance, because
@@ -60,7 +77,8 @@ and [llm.md](llm.md).
 
 ## Used by
 
-The CLI (`ingest`, `watch`, `reembed`, and `repair` for `reembed_nodes`).
+The worker (`worker.py`) for every job kind, including `reembed_nodes` after a
+`repair --reembed`.
 
 ## Tests
 

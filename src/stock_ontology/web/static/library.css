@@ -870,6 +870,106 @@ code,
   border-top: 1px dotted #a8a08e;
 }
 
+.note-extraction {
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border-rule);
+}
+
+.note-job-status {
+  margin: 0 0 8px;
+  font-size: 0.9em;
+}
+
+.note-job-status[data-job-state="failed"] {
+  color: var(--burgundy);
+}
+
+.note-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: bold;
+}
+
+.note-status-icon {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #747474;
+}
+
+.note-status[data-note-status="extracted"] .note-status-icon {
+  background: #26713d;
+}
+
+.note-extraction-entities {
+  padding-left: 20px;
+}
+
+.note-entity-row,
+.note-entity-heading {
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.note-entity-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  overflow-wrap: anywhere;
+}
+
+.note-entity-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.note-inline-editor {
+  padding: 6px 10px;
+  border-left: 2px solid var(--border-rule);
+  background: var(--bg-subtle);
+}
+
+.note-relationships {
+  overflow-wrap: anywhere;
+}
+
+.note-relationship-fields,
+.note-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.note-entity-row .note-row-actions {
+  justify-self: end;
+}
+
+.note-relationship-fields select {
+  display: block;
+}
+
+.note-correction {
+  margin: 8px 0;
+}
+
+.note-correction label {
+  display: block;
+  margin: 6px 0;
+}
+
+.note-correction select,
+.note-correction input {
+  max-width: 100%;
+}
+
+.note-action-status {
+  color: var(--ink-muted);
+}
+
 .note-line:target {
   background: var(--hover-tint);
   outline: 1px solid var(--border-dark);
@@ -1363,4 +1463,11 @@ code,
   margin: 0;
   font-size: 13px;
   font-weight: bold;
+}
+
+.consensus-stale {
+  margin: 0 0 8px;
+  padding: 4px 6px;
+  border: 1px dashed #8a6d1a;
+  background: #fbf3d9;
 }

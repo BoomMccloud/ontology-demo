@@ -20,6 +20,7 @@ from typing import Any
 
 import sqlite_vec
 
+from stock_ontology.db.jobs import JobStore
 from stock_ontology.db.schema import (
     init_schema,
     merge_edge_facets,
@@ -58,6 +59,12 @@ REGISTRY_VERSION_KEY = "registry_version"
 facets were migrated to."""
 APPLIED_REGISTRY_KEY = "applied_registry"
 APPLIED_REVISION_KEY = "applied_registry_revision"
+# A second writer (the worker beside an operator command) waits this long for the write lock.
+BUSY_TIMEOUT_MS = 10_000
+
+
+class RegistryChangedError(FacetSchemaError):
+    """The applied registry changed since this connection opened: reopen it and retry the work."""
 
 
 def _edge_rank(relation: Any, edge_facets: dict[str, Any]) -> tuple[int, int]:
@@ -115,6 +122,7 @@ class OntologyDB:
         self.conn.create_function("so_casefold", 1, sql_casefold, deterministic=True)
 
         self.conn.execute("PRAGMA foreign_keys = ON;")
+        self.conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS};")
         if self.read_only:
             # Strict DB-enforced one-way data flow for the query agent.
             self.conn.execute("PRAGMA query_only = ON;")
@@ -142,15 +150,22 @@ class OntologyDB:
         """Close the underlying SQLite connection."""
         self.conn.close()
 
+    @property
+    def jobs(self) -> JobStore:
+        """Job and consensus-refresh rows on this connection (written only by the worker)."""
+        return JobStore(self.conn, self.transaction)
+
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[None]:
-        """Group writes into one atomic unit; only the outermost scope commits or rolls back."""
+        """Group writes or read-only queries in the outermost transaction."""
+        if self._tx_depth == 0 and self.read_only and not self.conn.in_transaction:
+            self.conn.execute("BEGIN")
         if self._tx_depth == 0 and not self.read_only and (immediate or self._registry_selected):
             if not self.conn.in_transaction:
                 self.conn.execute("BEGIN IMMEDIATE")
             if self.get_metadata(APPLIED_REVISION_KEY) != self._active_revision:
                 self.conn.rollback()
-                raise FacetSchemaError("The applied registry changed. Reopen the database and retry.")  # noqa: TRY003
+                raise RegistryChangedError("The applied registry changed. Reopen the database and retry.")  # noqa: TRY003
         self._tx_depth += 1
         try:
             yield
@@ -472,6 +487,7 @@ class OntologyDB:
     def delete_document_artifacts(self, doc_id: str) -> None:
         """Remove doc-scoped nodes, edges, pending edges, and vectors while keeping canonical entities/themes."""
         with self.transaction():
+            self.conn.execute("DELETE FROM note_entities WHERE doc_id = ?", (doc_id,))
             doc_node_rows = self.conn.execute(
                 "SELECT id FROM nodes WHERE source_doc_id = ?", (doc_id,)
             ).fetchall()
@@ -542,6 +558,11 @@ class OntologyDB:
         names and facets onto the survivor is the caller's job (`upsert_node`).
         """
         with self.transaction():
+            self.conn.execute(
+                "INSERT OR IGNORE INTO note_entities (doc_id, entity_id) "
+                "SELECT doc_id, ? FROM note_entities WHERE entity_id = ?",
+                (survivor_id, loser_id),
+            )
             self.conn.execute(
                 "UPDATE edges SET from_id = ? WHERE from_id = ?", (survivor_id, loser_id)
             )
@@ -634,6 +655,44 @@ class OntologyDB:
             for r in rows
         }
 
+    def get_note_state(self, file_path: str) -> dict[str, Any] | None:
+        """Look up one extraction, including on older read-only databases."""
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(ingestion_log)")}
+        recorded = "entities_recorded" if "entities_recorded" in columns else "0 AS entities_recorded"
+        row = self.conn.execute(
+            f"SELECT doc_id, content_hash, ingested_at, {recorded} FROM ingestion_log WHERE file_path = ?",  # noqa: S608
+            (file_path,),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_note_entities(self, doc_id: str) -> list[Node]:
+        """List canonical entities attributed to one recorded extraction."""
+        rows = self.conn.execute(
+            "SELECT n.* FROM note_entities ne JOIN nodes n ON n.id = ne.entity_id "
+            "WHERE ne.doc_id = ? ORDER BY n.name COLLATE NOCASE, n.id",
+            (doc_id,),
+        )
+        return [row_to_node(row) for row in rows]
+
+    def add_note_entities(self, doc_id: str, entity_ids: tuple[str, ...]) -> None:
+        with self.transaction():
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO note_entities (doc_id, entity_id) VALUES (?, ?)",
+                [(doc_id, entity_id) for entity_id in entity_ids],
+            )
+
+    def remove_note_entity(self, doc_id: str, entity_id: str) -> bool:
+        with self.transaction():
+            result = self.conn.execute(
+                "DELETE FROM note_entities WHERE doc_id = ? AND entity_id = ?", (doc_id, entity_id)
+            )
+            return result.rowcount != 0
+
+    def relink_note_entity(self, doc_id: str, entity_id: str, replacement_id: str) -> None:
+        with self.transaction():
+            self.add_note_entities(doc_id, (replacement_id,))
+            self.remove_note_entity(doc_id, entity_id)
+
     def upsert_ingestion_log(
         self,
         file_path: str,
@@ -643,23 +702,28 @@ class OntologyDB:
         *,
         size: int | None = None,
         mtime_ns: int | None = None,
+        entity_ids: tuple[str, ...] | None = None,
     ) -> None:
         """Record or update ingestion state for a source file."""
         ts = ingested_at or now_iso()
         with self.transaction():
             self.conn.execute(
                 """
-                INSERT INTO ingestion_log (file_path, doc_id, content_hash, ingested_at, size, mtime_ns)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO ingestion_log (file_path, doc_id, content_hash, ingested_at, size, mtime_ns, entities_recorded)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(file_path) DO UPDATE SET
                     doc_id = excluded.doc_id,
                     content_hash = excluded.content_hash,
                     ingested_at = excluded.ingested_at,
                     size = excluded.size,
-                    mtime_ns = excluded.mtime_ns
+                    mtime_ns = excluded.mtime_ns,
+                    entities_recorded = excluded.entities_recorded
                 """,
-                (file_path, doc_id, content_hash, ts, size, mtime_ns),
+                (file_path, doc_id, content_hash, ts, size, mtime_ns, entity_ids is not None),
             )
+            self.conn.execute("DELETE FROM note_entities WHERE doc_id = ?", (doc_id,))
+            if entity_ids:
+                self.add_note_entities(doc_id, entity_ids)
 
     def update_ingestion_stat(self, file_path: str, size: int, mtime_ns: int) -> None:
         """Record a file's size and modification time without touching its content state."""
@@ -1003,7 +1067,12 @@ class OntologyDB:
         ).fetchone()
         return self._list_with_endpoints("pending_edges") if exists is not None else []
 
-    def _list_with_endpoints(self, table: str) -> list[dict[str, Any]]:
+    def list_note_edges(self, doc_id: str, *, pending: bool = False) -> list[dict[str, Any]]:
+        """List relationships extracted from one document, with endpoint names."""
+        return self._list_with_endpoints("pending_edges" if pending else "edges", doc_id)
+
+    def _list_with_endpoints(self, table: str, doc_id: str | None = None) -> list[dict[str, Any]]:
+        restriction = "WHERE e.source_doc_id = ?" if doc_id is not None else ""
         rows = self.conn.execute(
             f"""
             SELECT
@@ -1023,8 +1092,10 @@ class OntologyDB:
             FROM {table} e
             JOIN nodes n1 ON n1.id = e.from_id
             JOIN nodes n2 ON n2.id = e.to_id
+            {restriction}
             ORDER BY e.created_at DESC
-            """  # noqa: S608
+            """,  # noqa: S608
+            (doc_id,) if doc_id is not None else (),
         ).fetchall()
 
         edges: list[dict[str, Any]] = []

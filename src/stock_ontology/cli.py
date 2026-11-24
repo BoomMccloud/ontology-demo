@@ -5,13 +5,10 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 from dataclasses import asdict
-from datetime import UTC, datetime
 from difflib import unified_diff
-from hashlib import sha256
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 from rich.console import Console
@@ -31,18 +28,35 @@ from stock_ontology.i18n import (
     translate,
     translate_enum,
 )
-from stock_ontology.llm import create_llm_client
-from stock_ontology.pipeline import IngestionPipeline, reembed_all_nodes, reembed_nodes
+from stock_ontology.llm import LLMClient, create_llm_client
+from stock_ontology.pipeline import IngestReport, ReembedReport
 from stock_ontology.registry import (
     OntologyRegistry,
-    RegistryPublication,
     RegistrySuggestions,
     SuggestionSyncSummary,
-    create_minimal_registry,
     load_registry,
     save_registry_json,
 )
-from stock_ontology.repair import RepairReport, repair_ontology, validate_rollout
+from stock_ontology.repair import RepairReport
+from stock_ontology.services import (
+    EXIT_CODES,
+    GraphQueries,
+    NoteSaveError,
+    NotesService,
+    ProcessingService,
+    ServiceError,
+    open_graph,
+)
+from stock_ontology.worker import (
+    DEFAULT_LEASE_SECONDS,
+    Worker,
+    load_repair_registry,
+    load_suggestions,
+    plan_rollout,
+)
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 app = typer.Typer(
     name="stock-ontology",
@@ -50,6 +64,8 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+note_app = typer.Typer(help="Save and list raw research notes.", no_args_is_help=True)
+app.add_typer(note_app, name="note")
 
 # Keep Pydantic AI's startup banner out of `ask`, `chat` and `serve` output.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -79,14 +95,39 @@ def _resolve_cli_lang(settings: Settings, lang: str | None) -> str:
     return settings.default_language
 
 
-def _load_ingest_registry(settings: Settings) -> OntologyRegistry:
-    """Load the official registry for relation canonicalization; fall back to the built-in one."""
-    if not Path(settings.registry_path).exists():
-        console.print(
-            f"[yellow]Registry not found at {settings.registry_path}; using the built-in minimal registry.[/yellow]"
-        )
-        return create_minimal_registry()
-    return load_registry(settings.registry_path)
+def _worker(settings: Settings, *, lease_seconds: float = DEFAULT_LEASE_SECONDS, llm: Any = None) -> Worker:
+    """A worker in this process; the LLM is built on first use from `create_llm_client`."""
+    return Worker(
+        settings,
+        llm_factory=(lambda _settings: llm) if llm is not None else (lambda target: create_llm_client(target)),
+        lease_seconds=lease_seconds,
+    )
+
+
+def _fail(exc: ServiceError, *, json_out: bool) -> typer.Exit:
+    """Report a typed service error and return the Exit carrying its stable code."""
+    if json_out:
+        print(json.dumps(exc.to_json()))
+    else:
+        typer.echo(f"{exc.code}: {exc.message}", err=True)
+    return typer.Exit(code=EXIT_CODES.get(exc.code, 1))
+
+
+def _run_job(settings: Settings, kind: str, params: dict[str, Any], *, wait: bool, json_out: bool = False,
+             llm: Any = None) -> Any:
+    """Submit an operator job. With `wait`, run the worker here until it finishes and return the job."""
+    ref = ProcessingService(settings).submit_operator(kind, params)
+    if not wait:
+        if json_out:
+            print(json.dumps({"job_id": ref.job_id, "state": ref.state}))
+        else:
+            typer.echo(f"Queued {kind} job {ref.job_id}.")
+        return None
+    job = _worker(settings, llm=llm).run_until(ref.job_id)
+    if job.state != "succeeded":
+        typer.echo(job.error or f"Job {job.job_id} {job.state}.", err=True)
+        raise typer.Exit(code=1)
+    return job
 
 
 def _open_readonly_db(settings: Settings) -> OntologyDB:
@@ -124,21 +165,27 @@ def ingest(
         str | None,
         typer.Option("--lang", "-l", help="Output language (en, zh, ko, ja, es, fr)."),
     ] = None,
+    no_wait: Annotated[bool, typer.Option("--no-wait", help="Only queue the job; a running worker applies it.")] = False,
+    json_out: Annotated[bool, typer.Option("--json", help="With --no-wait, print the job reference as JSON.")] = False,
 ) -> None:
-    """Scan research notes, extract ontology graphs with the configured LLM router, and update DB consensus."""
+    """Scan research notes, extract ontology graphs, and update consensus, as a worker job."""
     settings = _load_settings(db=db, data_dir=data_dir)
     resolved_lang = _resolve_cli_lang(settings, lang)
+    params = {"force": force, "rebuild_consensus": rebuild_consensus, "data_dir": str(settings.data_dir),
+              "registry_path": str(settings.registry_path)}
+    if no_wait:
+        _run_job(settings, "ingest", params, wait=False, json_out=json_out)
+        return
     llm = create_llm_client(settings)
     console.print(f"[cyan]{translate('cli.llm_chain', lang=resolved_lang)}[/cyan] {llm.format_chain_summary()}")
     try:
-        with OntologyDB(settings.db_path, embedding_dim=settings.embedding_dim, read_only=False) as store:
-            pipeline = IngestionPipeline(
-                store, llm, settings.data_dir, registry=_load_ingest_registry(settings)
-            )
-            report = pipeline.run(force=force, rebuild_consensus=rebuild_consensus)
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"[red]{translate('cli.ingest_failed', lang=resolved_lang)}[/red] {exc}")
-        raise typer.Exit(code=1) from exc
+        job = _run_job(settings, "ingest", params, wait=True, llm=llm)
+    except typer.Exit:
+        console.print(f"[red]{translate('cli.ingest_failed', lang=resolved_lang)}[/red]")
+        raise
+    result = dict(job.result or {})
+    result["errors"] = [tuple(item) for item in result.get("errors", [])]
+    report = IngestReport(**result)
 
     table = Table(title=translate("cli.ingest_title", lang=resolved_lang))
     table.add_column(translate("cli.col_metric", lang=resolved_lang), style="cyan")
@@ -198,6 +245,7 @@ def reembed(
             help="Allow falling back to a secondary embedding provider if the primary fails.",
         ),
     ] = False,
+    no_wait: Annotated[bool, typer.Option("--no-wait", help="Only queue the job; a running worker applies it.")] = False,
 ) -> None:
     """Recompute and atomically replace vector embeddings for all nodes in the database."""
     settings = _load_settings(db=db)
@@ -223,19 +271,11 @@ def reembed(
         updates["embedding_providers"] = [prov]
 
     effective_settings = settings.model_copy(update=updates)
-    llm = create_llm_client(effective_settings)
-    try:
-        with OntologyDB(
-            effective_settings.db_path,
-            embedding_dim=effective_settings.embedding_dim,
-            read_only=False,
-        ) as store:
-            report = reembed_all_nodes(store, llm)
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"[red]Re-embed failed:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
-    finally:
-        llm.close()
+    params = {"allow_fallback": allow_fallback, "provider": updates.get("embedding_providers", [None])[0]}
+    job = _run_job(settings, "reembed", params, wait=not no_wait)
+    if job is None:
+        return
+    report = ReembedReport(**(job.result or {}))
 
     table = Table(title="Vector Re-embed Summary")
     table.add_column("Metric", style="cyan")
@@ -265,37 +305,165 @@ def watch(
         typer.Option("--lang", "-l", help="Output language (en, zh, ko, ja, es, fr)."),
     ] = None,
 ) -> None:
-    """Periodically run incremental ingestion on `data_dir`."""
+    """Run the background worker: recover queued jobs, then scan `data_dir` every interval."""
     settings = _load_settings(db=db, data_dir=data_dir)
     resolved_lang = _resolve_cli_lang(settings, lang)
     llm = create_llm_client(settings)
     console.print(
         f"[cyan]{translate('cli.watching_msg', lang=resolved_lang, data_dir=settings.data_dir, interval=interval, db_path=settings.db_path, llm=llm.format_chain_summary())}[/cyan]"
     )
-
-    def _on_tick(report: object) -> None:
-        from stock_ontology.pipeline import IngestReport
-
-        if isinstance(report, IngestReport) and (
-            report.files_processed or report.files_deleted or report.consensus_updated_for
-        ):
-            console.print(
-                f"[green]Tick:[/green] processed={report.files_processed}, "
-                f"deleted={report.files_deleted}, "
-                f"consensus={report.consensus_updated_for}"
-            )
-
     try:
-        with OntologyDB(settings.db_path, embedding_dim=settings.embedding_dim, read_only=False) as store:
-            pipeline = IngestionPipeline(
-                store, llm, settings.data_dir, registry=_load_ingest_registry(settings)
-            )
-            pipeline.watch(interval_seconds=interval, on_tick=_on_tick)
+        _worker(settings, llm=llm).run_forever(interval)
     except KeyboardInterrupt:
         console.print(f"\n[yellow]{translate('cli.watch_stopped', lang=resolved_lang)}[/yellow]")
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"[red]{translate('cli.watch_failed', lang=resolved_lang)}[/red] {exc}")
-        raise typer.Exit(code=1) from exc
+
+
+@app.command()
+def worker(
+    once: Annotated[bool, typer.Option("--once", help="Run due work once and exit.")] = False,
+    interval: Annotated[int, typer.Option("--interval", min=1, help="Seconds between scans.")] = 60,
+    lease_seconds: Annotated[
+        float, typer.Option("--lease-seconds", min=1, help="How long a claim holds a job without renewal.")
+    ] = DEFAULT_LEASE_SECONDS,
+    scan: Annotated[bool, typer.Option("--scan/--no-scan", help="Queue an ingest scan when notes changed.")] = True,
+    data_dir: Annotated[Path | None, typer.Option("--data-dir", help="Root folder containing research notes.")] = None,
+    db: Annotated[Path | None, typer.Option("--db", help="Path to SQLite ontology database.")] = None,
+) -> None:
+    """The only database writer: claim queued jobs, run them, and record each outcome."""
+    settings = _load_settings(db=db, data_dir=data_dir)
+    runner = _worker(settings, lease_seconds=lease_seconds)
+    if once:
+        ran = runner.run_once(scan=scan)
+        typer.echo(f"Ran {ran} job(s).", err=True)
+        return
+    try:
+        runner.run_forever(interval)
+    except KeyboardInterrupt:
+        typer.echo("Worker stopped.", err=True)
+
+
+@note_app.command("save")
+def note_save(
+    title: Annotated[str, typer.Option("--title", help="Note title; it names the file.")],
+    text: Annotated[str | None, typer.Option("--text", help="Note text.")] = None,
+    file: Annotated[Path | None, typer.Option("--file", help="Read the note text from this file.")] = None,
+    json_out: Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")] = False,
+) -> None:
+    """Save a new note under the notes folder and queue its processing job."""
+    settings = _load_settings()
+    try:
+        if (text is None) == (file is None):
+            raise ServiceError("invalid", "Pass exactly one of --text or --file.")  # noqa: TRY301
+        body = text if text is not None else file.read_text(encoding="utf-8")  # type: ignore[union-attr]
+        try:
+            ref = NotesService(settings).save(title, body)
+        except NoteSaveError as exc:
+            raise ServiceError("invalid", f"The note could not be saved: {exc.code}.") from exc
+    except ServiceError as exc:
+        raise _fail(exc, json_out=json_out) from exc
+    if json_out:
+        print(json.dumps({"file": ref.file, "job_id": ref.job_id}))
+    else:
+        typer.echo(f"Saved {ref.file}. Processing job {ref.job_id}.")
+
+
+@note_app.command("list")
+def note_list(json_out: Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")] = False) -> None:
+    """List notes with their extraction status."""
+    settings = _load_settings()
+    log: dict[str, Any] = {}
+    if Path(settings.db_path).exists():
+        with open_graph(settings) as store:
+            log = store.get_ingestion_log()
+    notes = NotesService(settings).list(log)
+    if json_out:
+        print(json.dumps({"notes": notes}))
+        return
+    for item in notes:
+        typer.echo(f"{item['status']:<13} {item['file']}")
+
+
+@app.command()
+def process(
+    file: Annotated[str, typer.Argument(help="Note path relative to the notes folder.")],
+    json_out: Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")] = False,
+) -> None:
+    """Queue extraction and consensus for a note's current revision and return the job reference."""
+    settings = _load_settings()
+    try:
+        ref = ProcessingService(settings).request_processing(file)
+    except ServiceError as exc:
+        raise _fail(exc, json_out=json_out) from exc
+    if json_out:
+        print(json.dumps({"job_id": ref.job_id, "state": ref.state}))
+    else:
+        typer.echo(f"Job {ref.job_id} is {ref.state}.")
+
+
+@app.command()
+def status(
+    job_id: Annotated[str, typer.Argument(help="Job reference from process, note save, or an operator command.")],
+    json_out: Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")] = False,
+) -> None:
+    """Report a job's state, attempts, and last error."""
+    settings = _load_settings()
+    try:
+        current = ProcessingService(settings).get_status(job_id)
+    except ServiceError as exc:
+        raise _fail(exc, json_out=json_out) from exc
+    if json_out:
+        print(json.dumps(current))
+        return
+    typer.echo(f"{current['job_id']} {current['kind']} {current['state']} (attempts {current['attempts']})")
+    if current.get("error"):
+        typer.echo(f"Last error: {current['error']}")
+
+
+@app.command()
+def retry(
+    job_id: Annotated[str, typer.Argument(help="A failed job to queue again with a fresh attempt budget.")],
+    json_out: Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")] = False,
+) -> None:
+    """Reopen a failed job."""
+    settings = _load_settings()
+    try:
+        ref = ProcessingService(settings).retry(job_id)
+    except ServiceError as exc:
+        raise _fail(exc, json_out=json_out) from exc
+    if json_out:
+        print(json.dumps({"job_id": ref.job_id, "state": ref.state}))
+    else:
+        typer.echo(f"Job {ref.job_id} is {ref.state}.")
+
+
+@app.command()
+def entity(
+    name: Annotated[str, typer.Argument(help="Entity name, alias, or node ID.")],
+    json_out: Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")] = False,
+) -> None:
+    """Read an entity overview: consensus (marked stale while its refresh is pending) and cited evidence."""
+    settings = _load_settings()
+    try:
+        if not Path(settings.db_path).exists():
+            raise ServiceError("unavailable", f"Ontology database does not exist at {settings.db_path}.")  # noqa: TRY301
+        with open_graph(settings) as store:
+            graph = GraphQueries(store)
+            node = graph.find_entity(name)
+            if node is None:
+                raise ServiceError("not_found", f"No entity named {name!r}.")  # noqa: TRY301
+            overview = graph.entity_overview(node.id)
+    except ServiceError as exc:
+        raise _fail(exc, json_out=json_out) from exc
+    if json_out:
+        print(json.dumps(overview, ensure_ascii=False))
+        return
+    consensus = overview["consensus"]
+    typer.echo(f"{overview['entity']['name']} ({overview['entity']['id']})")
+    if consensus:
+        marker = " [stale]" if consensus["stale"] else ""
+        typer.echo(f"Consensus{marker} as of {consensus['as_of']}: {consensus['summary']}")
+    for event in overview["events"]:
+        typer.echo(f"- {event['name']} ({event['source']['file']})")
 
 
 @app.command()
@@ -604,6 +772,12 @@ def chat(
                 console.print(f"[red]{err_prefix}[/red] {exc}")
 
 
+def _create_library_app(settings: Settings, llm: LLMClient) -> FastAPI:
+    from stock_ontology.web import create_app
+
+    return create_app(settings, llm=llm, note_actions=True)
+
+
 @app.command()
 def serve(
     host: Annotated[str, typer.Option("--host", help="Bind host address.")] = "127.0.0.1",
@@ -619,10 +793,8 @@ def serve(
         typer.Option("--lang", "-l", help="Default web UI language (en, zh, ko, ja, es, fr)."),
     ] = None,
 ) -> None:
-    """Start the 1990s Library UI and Office-Clippy PM chat (read-only DB, can add pasted notes)."""
+    """Start the research library, note reader, and read-only Clippy chat."""
     import uvicorn
-
-    from stock_ontology.web import create_app
 
     settings = _load_settings(db=db, data_dir=data_dir)
     resolved_lang = _resolve_cli_lang(settings, lang)
@@ -638,7 +810,7 @@ def serve(
         f"[cyan]{translate('cli.serve_starting', lang=resolved_lang, host=host, port=port, db_path=settings.db_path, language=resolved_lang)}[/cyan]\n"
         f"[cyan]{translate('cli.llm_chain', lang=resolved_lang)}[/cyan] {llm.format_chain_summary()}"
     )
-    uvicorn.run(create_app(settings, llm=llm), host=host, port=port)
+    uvicorn.run(_create_library_app(settings, llm), host=host, port=port)
 
 
 def _render_audit_report(
@@ -875,9 +1047,7 @@ def audit(
 
 
 def _load_suggestions(path: Path, fallback: RegistrySuggestions) -> RegistrySuggestions:
-    if not path.exists():
-        return fallback
-    return RegistrySuggestions.model_validate(json.loads(path.read_text(encoding="utf-8"))["suggestions"])
+    return load_suggestions(path, fallback)
 
 
 def _echo_diff(before: list[str], after: list[str], from_label: str, to_label: str, *, err: bool = False) -> None:
@@ -897,6 +1067,7 @@ def registry_publish(
     proposal: Annotated[Path, typer.Argument(help="Proposed full registry JSON.")],
     db: Annotated[Path | None, typer.Option("--db")] = None,
     registry: Annotated[Path | None, typer.Option("--registry")] = None,
+    no_wait: Annotated[bool, typer.Option("--no-wait", help="Only queue the confirmed job.")] = False,
 ) -> None:
     """Review a proposal and confirm publication of its registry version."""
     settings = _load_settings(db=db, registry=registry)
@@ -913,98 +1084,49 @@ def registry_publish(
         _echo_diff(before.splitlines(), after.splitlines(), f"published v{current.version}", f"proposal v{proposed.version}")
         if not typer.confirm(f"Publish registry version {proposed.version} to {settings.registry_path}?"):
             return
-        with OntologyDB(settings.db_path, embedding_dim=settings.embedding_dim) as store, store.transaction(
-            immediate=True
-        ):
-            if load_registry(settings.registry_path).revision() != current.revision():
-                raise ValueError("The published registry changed during review. Preview the proposal again.")  # noqa: TRY003, TRY301
-            suggestion_path = settings.registry_path.with_suffix(".suggestions.json")
-            if not suggestion_path.exists():
-                save_registry_json({"suggestions": current.suggestions.model_dump(mode="json")}, suggestion_path)
-            official = proposed.official_definitions()
-            publication = RegistryPublication(
-                version=proposed.version,
-                revision=proposed.revision(),
-                previous_revision=current.revision(),
-                confirmed_at=datetime.now(UTC).isoformat(),
-            )
-            official["publications"] = [
-                item.model_dump(mode="json") for item in [*current.publications, publication]
-            ]
-            save_registry_json(official, settings.registry_path)
-        typer.echo(f"Published registry version {proposed.version}. Use registry-apply to review database adoption.")
+        job = _run_job(settings, "registry.publish", {
+            "proposal_path": str(proposal.resolve()), "proposed_revision": proposed.revision(),
+            "current_revision": current.revision(), "registry_path": str(settings.registry_path),
+        }, wait=not no_wait)
+        if job is not None:
+            typer.echo(f"Published registry version {proposed.version}. Use registry-apply to review database adoption.")
     except (OSError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
 
 def _review_registry_rollout(
-    settings: Settings, target: OntologyRegistry, *, adoption: bool, err: bool = False
-) -> RepairReport | None:
-    """Preview a repair on a copy, then apply exactly the reviewed result under a write lock."""
-    published_revision = load_registry(settings.registry_path).revision()
-    if adoption and published_revision != target.revision():
-        raise ValueError("The published registry changed. Run a new preview.")  # noqa: TRY003
-    with tempfile.TemporaryDirectory(prefix="ontology-rollout-") as temp_dir:
-        copy_path = Path(temp_dir) / "preview.db"
-        with _open_readonly_db(settings) as source:
-            source.copy_to(copy_path)
-        with OntologyDB(copy_path, embedding_dim=settings.embedding_dim) as preview:
-            applied = preview.applied_registry()
-            old_revision = applied.revision() if applied else None
-            old_stamp = preview.get_metadata("registry_version")
-            if adoption and applied and old_revision != target.revision() and (
-                not target.publications or target.publications[-1].revision != target.revision()
-            ):
-                raise ValueError("Publish this registry proposal using registry-publish before applying it.")  # noqa: TRY003
-            if not adoption and (old_revision or old_stamp) and (
-                old_revision != target.revision() if applied else old_stamp != target.schema_stamp()
-            ):
-                raise ValueError("Use registry-apply to review and adopt a different registry version.")  # noqa: TRY003
-            before = preview.registry_rollout_rows()
-            planned = repair_ontology(preview, target, data_dir=settings.data_dir)
-            validate_rollout(preview, target)
-            after = preview.registry_rollout_rows()
-
-    starting_version = f"v{applied.version}" if applied else "unrecorded"
+    settings: Settings, target: OntologyRegistry, *, adoption: bool, err: bool = False,
+    reembed: bool = False, no_wait: bool = False,
+) -> tuple[RepairReport, int] | None:
+    """Preview a repair on a copy, then queue exactly the reviewed result as a worker job."""
+    plan = plan_rollout(settings, target, adoption=adoption)
+    starting_version = f"v{plan.applied_version}" if plan.applied_version is not None else "unrecorded"
     typer.echo(f"Database {settings.db_path}. Applied {starting_version}. Target v{target.version}.", err=err)
-    _echo_diff(before, after, "current database", "reviewed database", err=err)
-    if before == after:
+    _echo_diff(plan.before, plan.after, "current database", "reviewed database", err=err)
+    if plan.before == plan.after:
         typer.echo("No graph rows will change.", err=err)
     prompt = "Apply this registry rollout?" if adoption else "Apply this repair?"
     if not _confirm_review(prompt, json_out=err):
         return None
-
-    with OntologyDB(settings.db_path, embedding_dim=settings.embedding_dim) as store, store.transaction(immediate=True):
-        current = store.applied_registry()
-        current_revision = current.revision() if current else None
-        if (
-            load_registry(settings.registry_path).revision() != published_revision
-            or current_revision != old_revision
-            or store.get_metadata("registry_version") != old_stamp
-            or store.registry_rollout_rows() != before
-        ):
-            raise ValueError("Registry or database changed during review. Run a new preview.")  # noqa: TRY003
-        result = repair_ontology(store, target, data_dir=settings.data_dir)
-        validate_rollout(store, target)
-        if store.registry_rollout_rows() != after or result != planned:
-            raise ValueError("The migration result changed during review. Run a new preview.")  # noqa: TRY003
-        if adoption:
-            plan = sha256(json.dumps([before, after]).encode("utf-8")).hexdigest()
-            store.record_registry_adoption(target, old_revision, plan)
-    return result
+    kind = "registry.apply" if adoption else "repair"
+    job = _run_job(settings, kind, plan.job_payload(settings, adoption=adoption, reembed=reembed), wait=not no_wait)
+    if job is None:
+        return None
+    return RepairReport(**dict((job.result or {}).get("report") or {})), int((job.result or {}).get("reembedded", 0))
 
 
 @app.command()
 def registry_apply(
     db: Annotated[Path | None, typer.Option("--db")] = None,
     registry: Annotated[Path | None, typer.Option("--registry")] = None,
+    no_wait: Annotated[bool, typer.Option("--no-wait", help="Only queue the confirmed job.")] = False,
 ) -> None:
     """Review and separately confirm adoption of the published registry."""
     settings = _load_settings(db=db, registry=registry)
     try:
         published = load_registry(settings.registry_path)
-        if _review_registry_rollout(settings, published, adoption=True) is not None:
+        if _review_registry_rollout(settings, published, adoption=True, no_wait=no_wait) is not None:
             typer.echo(f"Applied registry version {published.version}.")
     except (OSError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -1029,12 +1151,12 @@ def repair(
             help="Recompute embeddings of merged survivors with the configured LLM (needs API keys).",
         ),
     ] = False,
+    no_wait: Annotated[bool, typer.Option("--no-wait", help="Only queue the confirmed job.")] = False,
 ) -> None:
     """Apply deterministic fixes to ontology.db: orphaned rows, alias/inverse relations, exact duplicates."""
     settings = _load_settings(db=db, registry=registry)
     try:
-        reg = load_registry(settings.registry_path)
-        reg.suggestions = _load_suggestions(settings.registry_path.with_suffix(".suggestions.json"), reg.suggestions)
+        reg = load_repair_registry(settings.registry_path)
     except (FileNotFoundError, ValueError) as exc:
         console.print(f"[red]Registry error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -1045,19 +1167,14 @@ def repair(
     try:
         if reembed:
             typer.echo("Merged survivors will be reembedded after the confirmed repair.", err=json_out)
-        report = _review_registry_rollout(settings, reg, adoption=False, err=json_out)
+        reviewed = _review_registry_rollout(settings, reg, adoption=False, err=json_out, reembed=reembed, no_wait=no_wait)
     except (OSError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    if report is None:
+    if reviewed is None:
         return
 
-    reembedded = 0
-    if reembed and report.merged_survivor_ids:
-        llm = create_llm_client(settings)
-        with OntologyDB(settings.db_path, embedding_dim=settings.embedding_dim) as store:
-            reembedded = reembed_nodes(store, llm, report.merged_survivor_ids)
-
+    report, reembedded = reviewed
     payload = {**asdict(report), "total_changes": report.total_changes, "reembedded": reembedded}
     if json_out:
         print(json.dumps(payload, indent=2))
