@@ -199,6 +199,18 @@ def test_page_marks_workflow_section_breadcrumb_and_dock(
     assert page.current["breadcrumb"] == ["li"], url
 
 
+@pytest.mark.parametrize(
+    ("url", "search_href"),
+    [
+        ("/", 'href="/search" class="portal-topnav-search"'),
+        ("/catalog", 'href="/search?in=notes" class="portal-topnav-search"'),
+        ("/ontology", 'href="/search" class="portal-topnav-search"'),
+    ],
+)
+def test_top_search_link_keeps_notes_workflow(client: TestClient, url: str, search_href: str) -> None:
+    assert search_href in client.get(url).text, url
+
+
 def test_ask_redirects_to_overview_with_clippy_open_and_context(client: TestClient) -> None:
     resp = client.get("/ask", params={"context": "Entity NVIDIA"}, follow_redirects=False)
     assert resp.status_code in (302, 303, 307)

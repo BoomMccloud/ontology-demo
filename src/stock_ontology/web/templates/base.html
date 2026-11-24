@@ -23,7 +23,7 @@
         {% endfor %}
       </div>
       <div class="portal-topnav-tools">
-        <a href="/search" class="portal-topnav-search">{{ t('nav.search_quick') }}</a>
+        <a href="{{ '/search?in=notes' if nav.workflow == 'notes' else '/search' }}" class="portal-topnav-search">{{ t('nav.search_quick') }}</a>
         <span class="portal-rail-langs" aria-label="{{ t('lang.selector_label') }}">
           {% for item in languages %}
             {% set lang_label = (item.code | upper) if item.code in ('en', 'es', 'fr') else item.native_name %}
