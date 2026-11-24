@@ -45,8 +45,8 @@
               <div class="source-cite u-mt-4px">
                 {% if src.label %}
                   {{ t('common.source') }}
-                  {% if src.href %}
-                    <a href="{{ src.href }}">{{ src.label }}</a>
+                  {% if src.exists %}
+                    <a href="/catalog?file={{ src.file | urlencode }}">{{ src.label }}</a>
                   {% else %}
                     {{ src.label }}
                   {% endif %}

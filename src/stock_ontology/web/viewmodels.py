@@ -6,7 +6,6 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlencode
 
 from collections import Counter
 
@@ -338,7 +337,6 @@ class SourceCitation:
     exists: bool = False
     author: str | None = None
     kind: str | None = None
-    href: str | None = None
 
 
 @dataclass(frozen=True)
@@ -488,12 +486,7 @@ def _text(value: Any) -> str | None:
     return str(value) if value else None
 
 
-def _evidence_href(file: str, parent: str) -> str:
-    args = urlencode({"file": file, "from": parent}, quote_via=quote, safe="/")
-    return f"/catalog?{args}"
-
-
-def _source_citation(facets: dict[str, Any], data_dir: Path | None, parent: str) -> SourceCitation:
+def _source_citation(facets: dict[str, Any], data_dir: Path | None) -> SourceCitation:
     src = facets.get("source")
     fp, label, exists = _resolve_source_fields(src, data_dir)
     src_map = src if isinstance(src, dict) else {}
@@ -503,7 +496,6 @@ def _source_citation(facets: dict[str, Any], data_dir: Path | None, parent: str)
         exists=exists,
         author=_text(src_map.get("author")),
         kind=_text(src_map.get("kind")),
-        href=_evidence_href(fp, parent) if fp and exists else None,
     )
 
 
@@ -518,7 +510,7 @@ def _sentiment_display(item: dict[str, Any]) -> tuple[str | None, str | None, st
     return _text(shown), "entity", None
 
 
-def _event_row(item: dict[str, Any], data_dir: Path | None, parent: str) -> EventRow:
+def _event_row(item: dict[str, Any], data_dir: Path | None) -> EventRow:
     facets = item.get("facets", {})
     sentiment, note, overall = _sentiment_display(item)
     event_type = facets.get("event_type", "event")
@@ -533,11 +525,11 @@ def _event_row(item: dict[str, Any], data_dir: Path | None, parent: str) -> Even
         sentiment=sentiment,
         impact_note=note,
         overall_sentiment=overall,
-        source=_source_citation(facets, data_dir, parent),
+        source=_source_citation(facets, data_dir),
     )
 
 
-def _view_row(item: dict[str, Any], data_dir: Path | None, parent: str) -> ViewRow:
+def _view_row(item: dict[str, Any], data_dir: Path | None) -> ViewRow:
     facets = item.get("facets", {})
     sentiment, note, overall = _sentiment_display(item)
     view_type = facets.get("view_type", "view")
@@ -553,7 +545,7 @@ def _view_row(item: dict[str, Any], data_dir: Path | None, parent: str) -> ViewR
         conviction=_text(facets.get("conviction")),
         impact_note=note,
         overall_sentiment=overall,
-        source=_source_citation(facets, data_dir, parent),
+        source=_source_citation(facets, data_dir),
     )
 
 
@@ -645,7 +637,6 @@ def _exposure_notes(
     company_id: str,
     file_by_doc: dict[str, str],
     data_dir: Path | None,
-    parent: str,
 ) -> tuple[ExposureNote, ...]:
     """Return one stated exposure per source note, so disagreement between notes stays visible."""
     by_doc: dict[str | None, str | None] = {}
@@ -661,7 +652,7 @@ def _exposure_notes(
     notes = [
         ExposureNote(
             sentiment=sentiment,
-            source=_source_citation({"source": {"file_path": file_by_doc.get(doc_id or "", "")}}, data_dir, parent),
+            source=_source_citation({"source": {"file_path": file_by_doc.get(doc_id or "", "")}}, data_dir),
         )
         for doc_id, sentiment in by_doc.items()
     ]
@@ -727,7 +718,7 @@ def _theme_company_rows(
                 is_exposed=exposure_link is not None,
                 exposure=_text(exposure_link.get("exposure_sentiment")) if exposure_link else None,
                 notes=(
-                    _exposure_notes(db, theme_edges, row["company"]["id"], file_by_doc, data_dir, f"/theme/{theme_id}#sec-exposure")
+                    _exposure_notes(db, theme_edges, row["company"]["id"], file_by_doc, data_dir)
                     if exposure_link
                     else ()
                 ),
@@ -736,20 +727,6 @@ def _theme_company_rows(
         )
     out.sort(key=lambda r: (-len(r.notes), -len(r.evidence), r.company.name.casefold()))
     return out
-
-
-@dataclass(frozen=True)
-class EvidenceLink:
-    label: str
-    href: str
-
-
-def _evidence_links(sources: list[SourceCitation], parent: str) -> tuple[EvidenceLink, ...]:
-    links = {}
-    for src in sources:
-        if src.exists and src.file and src.file not in links:
-            links[src.file] = EvidenceLink(src.label or src.file, _evidence_href(src.file, parent))
-    return tuple(links.values())
 
 
 def build_entity_context(
@@ -789,9 +766,6 @@ def build_entity_context(
         reverse=True,
     )
 
-    event_rows = [_event_row(ev, data_dir, f"/entity/{entity_id}#sec-events") for ev in events]
-    view_rows = [_view_row(vw, data_dir, f"/entity/{entity_id}#sec-views") for vw in views]
-    sources = [row.source for row in (*event_rows, *view_rows)]
     return {
         "entity": _entity_header(entity, entity_type),
         "entity_type": entity_type,
@@ -802,11 +776,8 @@ def build_entity_context(
         "extra_facets": extra_facets,
         "consensus": consensus,
         "prior_consensuses": [_prior_consensus_row(c) for c in overview["prior_consensuses"]],
-        "events": event_rows,
-        "views": view_rows,
-        "evidence_notes": _evidence_links(sources, f"/entity/{entity_id}#sec-evidence"),
-        "authored_notes_href": f"/catalog?view=author&author={quote(entity_id, safe='')}" if entity_type == "person" else "",
-
+        "events": [_event_row(ev, data_dir) for ev in events],
+        "views": [_view_row(vw, data_dir) for vw in views],
         "themes": [_theme_link_row(thm) for thm in overview["themes"]],
         "related_entities": [_related_entity_row(rel) for rel in overview["related_entities"]],
         "page_context": translate(
@@ -861,11 +832,9 @@ def build_theme_context(
             if nid not in views_by_id or rank > views_by_id[nid][0]:
                 views_by_id[nid] = (rank, entry)
 
-    events = [_event_row(pair[1], data_dir, f"/theme/{theme_id}#sec-events") for pair in events_by_id.values()]
-    views = [_view_row(pair[1], data_dir, f"/theme/{theme_id}#sec-views") for pair in views_by_id.values()]
+    events = [_event_row(pair[1], data_dir) for pair in events_by_id.values()]
+    views = [_view_row(pair[1], data_dir) for pair in views_by_id.values()]
     company_rows = _theme_company_rows(db, theme_id, theme_data["companies"], data_dir)
-    sources = [row.source for row in (*events, *views)]
-    sources.extend(note.source for row in company_rows for note in row.notes)
 
     return {
         "theme": _theme_header(theme),
@@ -875,7 +844,6 @@ def build_theme_context(
         "mentioned_companies": [row for row in company_rows if not row.is_exposed],
         "events": events,
         "views": views,
-        "evidence_notes": _evidence_links(sources, f"/theme/{theme_id}#sec-evidence"),
         "page_context": translate(
             "page_context.theme",
             lang=lang,
@@ -991,7 +959,6 @@ def build_search_results(
     data_dir: Path,
     *,
     limit: int = 50,
-    notes_only: bool = False,
 ) -> dict[str, Any]:
     """Run the shared entity-first search and shape it into the search page's card and sections."""
     found = search_ontology(db, llm, query, filters=filters, data_dir=data_dir, limit=limit)
@@ -1007,29 +974,6 @@ def build_search_results(
     for p in found.passages:
         label, exists = format_source_citation(p.file, data_dir)
         passages.append({**p.to_dict(), "source_label": label or p.file, "source_exists": exists})
-    if notes_only:
-        # A graph hit can carry the matching line instead of a duplicate passage.
-        # Surface that line as a source link when only notes are requested.
-        seen_files = {p["file"] for p in passages}
-        for hit in found.signals:
-            file = node_source_file(hit.node)
-            if hit.note_line is not None and file and file not in seen_files:
-                label, exists = format_source_citation(file, data_dir)
-                passages.append({
-                    "file": file,
-                    "line": hit.note_line,
-                    "text": "",
-                    "source_label": label or file,
-                    "source_exists": exists,
-                })
-                seen_files.add(file)
-        return {
-            "best_match": None,
-            "sections": [],
-            "passages": passages,
-            "notes_truncated": found.notes_truncated,
-            "count": len(passages),
-        }
     return {
         "best_match": _format_search_hit(db, found.best_match, data_dir) if found.best_match else None,
         "sections": [s for s in sections if s["hits"]],

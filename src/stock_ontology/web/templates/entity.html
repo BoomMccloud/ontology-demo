@@ -3,49 +3,17 @@
 {% block title %}{{ t('entity.page_title', name=entity.name) }}{% endblock %}
 
 {% block content %}
-  {% include "partials/facet_header.html" %}
-  <nav class="portal-jumpbar" aria-label="{{ t('nav.record_sections') }}">
-    [ <a href="#sec-overview">{{ t('nav.overview' if is_company else 'nav.profile') }}</a>
-    {% if events %} | <a href="#sec-events">{{ t('nav.events') }}</a>{% endif %}
-    {% if views %} | <a href="#sec-views">{{ t('nav.views') }}</a>{% endif %}
-    | <a href="#sec-connections">{{ t('nav.connections') }}</a>
-    {% if is_company %} | <a href="#sec-evidence">{{ t('nav.evidence_notes') }}</a>{% endif %}
-    {% if authored_notes_href %} | <a href="#sec-authored">{{ t('nav.authored_research') }}</a>{% endif %} ]
-  </nav>
   <div id="sec-overview">
+    {% include "partials/facet_header.html" %}
     {% include "partials/facet_company_card.html" %}
     {% include "partials/facet_person_card.html" %}
     {% include "partials/facet_consensus_card.html" %}
     {% include "partials/facet_generic_table.html" %}
   </div>
+  {% include "partials/section_themes.html" %}
   {% include "partials/section_events.html" %}
   {% include "partials/section_views.html" %}
-  <div id="sec-connections">
-    {% include "partials/section_themes.html" %}
-    {% include "partials/section_related_entities.html" %}
-    {% if not themes and not related_entities %}
-      <section class="section-block">
-        <h2>{{ t('nav.connections') }}</h2>
-        <p>{{ t('nav.no_connections') }}</p>
-      </section>
-    {% endif %}
-  </div>
-  {% if is_company %}
-    {% include "partials/section_evidence_notes.html" %}
-  {% endif %}
-  {% if authored_notes_href %}
-    <section id="sec-authored" class="section-block">
-      <h2>{{ t('nav.authored_research') }}</h2>
-      {% if authored_notes %}
-        <ul class="portal-list">
-          {% for note in authored_notes %}<li><a href="{{ note.href }}">{{ note.label }}</a></li>{% endfor %}
-        </ul>
-      {% else %}
-        <p>{{ t('catalog.no_author_notes') }}</p>
-      {% endif %}
-      <a href="{{ authored_notes_href }}">{{ t('nav.browse_authored_notes') }}</a>
-    </section>
-  {% endif %}
+  {% include "partials/section_related_entities.html" %}
 
   <p class="portal-more-link">
     <a href="/ask?context={{ page_context | urlencode }}" data-clippy-context="{{ page_context }}">{{ t('ask.link_from_entity', name=entity.name) }}</a>

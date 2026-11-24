@@ -48,8 +48,8 @@ from stock_ontology.services import (
     ServiceError,
     open_graph,
 )
-from stock_ontology.web.catalog import authored_note_links, build_catalog_context
-from stock_ontology.web.navigation import LEFT_NAV, MODERN_PRIMARY, WORKFLOWS, note_origin, resolve_nav
+from stock_ontology.web.catalog import build_catalog_context
+from stock_ontology.web.navigation import LEFT_NAV, WORKFLOWS, resolve_nav
 from stock_ontology.web.viewmodels import (
     build_companies_context,
     build_entity_context,
@@ -229,8 +229,6 @@ def create_app(
             "nav": nav,
             "nav_workflows": WORKFLOWS,
             "nav_groups": LEFT_NAV[nav.workflow],
-            "nav_modern_primary": MODERN_PRIMARY,
-            "nav_ontology_groups": LEFT_NAV["ontology"],
             "clippy_open": request.query_params.get("ask") == "1",
             "clippy_context": request.query_params.get("context", "").strip(),
             "lang": lang,
@@ -353,8 +351,6 @@ def create_app(
                     detail=translate("api.entity_not_found", lang=lang, entity_id=entity_id),
                 ) from exc
             ctx["consensus_stale"] = GraphQueries(db).consensus_status(entity_id)["stale"]
-            if ctx["authored_notes_href"]:
-                ctx["authored_notes"] = authored_note_links(db, settings.data_dir, entity_id, lang)
             ctx["rail"] = build_rail_context(db)
         return _render(request, "entity.html", ctx, lang)
 
@@ -393,7 +389,6 @@ def create_app(
         search_mode: str = "hybrid",
     ) -> HTMLResponse:
         lang = _resolve_request_lang(request)
-        notes_scope = request.query_params.get("in") == "notes"
         norm_mode = "keyword" if search_mode.strip().lower() == "keyword" else "hybrid"
         filters = {
             "subtype": subtype.strip(),
@@ -433,7 +428,6 @@ def create_app(
                     search_mode=norm_mode,
                 ),
                 settings.data_dir,
-                notes_only=notes_scope,
             )
             entity_label = filters["entity_id"]
             if filters["entity_id"]:
@@ -522,7 +516,6 @@ def create_app(
         ctx = {
             "rail": rail,
             "query": q,
-            "notes_scope": notes_scope,
             "node_type": node_type,
             "filters": filters,
             "active_filters": active_filters,
@@ -552,10 +545,8 @@ def create_app(
         alpha: str = "",
         file: str = "",
         format: str = "rendered",
-        pane: str = "source",
     ) -> HTMLResponse:
         lang = _resolve_request_lang(request)
-        origin = note_origin(request.query_params.get("from", ""))
         with _open_ro_db(lang) as db:
             try:
                 ctx = build_catalog_context(
@@ -568,8 +559,6 @@ def create_app(
                     selected_alpha=alpha,
                     selected_file=file,
                     note_format=format,
-                    pane=pane,
-                    origin=(origin.href or "") if origin else "",
                     actions_enabled=note_actions,
                     note_job_state=_note_job_state if note_actions else None,
                     lang=lang,

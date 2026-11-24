@@ -23,23 +23,15 @@ and it submits Process and corrections as worker jobs.
   `resolve_safe_note_path`. The note page (`?file=`) hands its reader partial
   one frozen `NoteDetail` (with `NoteCompanyChip`, `NoteAuthorChip` and
   `NoteLink`s), built by `_note_detail`. The reader shows the current ontology
-  extraction in a separate pane from the source. Changed notes and older notes with unrecorded
+  extraction above the source. Changed notes and older notes with unrecorded
   entity attribution show **Not processed** and can be processed on demand.
   The reader also shows the state of the note's latest job (`data-job-state`).
   Note discovery and status come from `services.notes.scan_notes`.
 - `src/stock_ontology/web/navigation.py`: the navigation registry. Every HTML
-  route maps to a workflow (Research, Notes, or Ontology), a rail section,
-  an archetype (`page` or `component`), and breadcrumbs. The note reader
-  uses one contextual parent link. Catalog grouping is local to the list,
-  and entity and theme pages link to their evidence from the record.
-  `_render` resolves navigation before rendering the shared shell.
-- `library.css` defines shared styles and Classic. `library-modern.css`
-  supplies the default Modern theme. Modern presents the Stock Ontology
-  wordmark and five primary links in the desktop header, with an Ontology
-  menu for Graph Explorer, Registry, and Audit. Classic presents the Library
-  masthead, workflow tabs, and rail. Both derive their links from the same
-  registry and render the same page content. The shared theme control
-  remembers a browser-local preference without changing the URL.
+  route maps to a workflow (top nav: Research, Ontology), an owning section
+  (left nav), an archetype (`page` or `component`), and a breadcrumb trail.
+  `_render` resolves it for every page, so templates never set navigation
+  state themselves.
 - Pasted notes are saved by `services.notes.save_pasted_note` in `_general/`.
   It writes a hidden temp file and publishes it with a hard link, so a note is
   never partial or overwritten. The paste route then queues the note's
@@ -51,11 +43,6 @@ and it submits Process and corrections as worker jobs.
 Pages: `/`, `/companies`, `/themes`, `/entity/{id}`, `/theme/{id}`, `/search`,
 `/catalog`, `/notes/new`, `/ontology`. `/ask` redirects to `/` with the Clippy
 dock open and the page context carried. The Clippy dock is on every page.
-The Notes workflow links to `/catalog?view=all`. Existing catalog grouping
-URLs, raw citations with line anchors, and note job endpoints remain
-supported. The reader's Extraction pane uses `pane=extraction`. Graph
-Explorer owns the graph tabs. The Ontology rail links directly to Registry
-and Audit under Governance.
 
 `/notes/new` posts JSON `{title, content}` to `POST /api/notes`, which returns
 201 `{"file": "_general/<date>_<slug>.md", "job_id": ...}`. The reader uses
@@ -75,9 +62,7 @@ shared account and require an access control layer before non-local hosting.
 
 `/search` shows the functional results first: a best-match card, then
 sections for entities and themes, items connected through relationships,
-events and views, and note passages, each labeled with why it matched.
-The Notes scope (`in=notes`) shows note matches, including source lines
-that would otherwise be folded into event or view results. The
+events and views, and note passages, each labeled with why it matched. The
 Clippy dock behaves as on every other page: it floats in the lower right and
 can be minimized. `clippy.js` moves the search note into the dock, opens the
 dock, sends the search word to `/api/chat` once per word, and shows a failed
@@ -92,8 +77,6 @@ connected-entity options are DB instances. Subtype and status options are
 A new HTML route must be added to `NAV_ROUTES` in `navigation.py`.
 `tests/test_web_navigation.py` fails on an unregistered route, a page without
 exactly one current workflow and section, a detail page without a breadcrumb,
-a note reader without its single contextual parent or separate panes,
-a Modern header with missing or misordered primary destinations,
 an inline `style=` or `<style>`, or a class missing from `library.css`.
 
 API: `/api/chat`, `/api/chat/reset`, `/api/health` (LLM chain diagnostics

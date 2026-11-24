@@ -30,12 +30,11 @@
 {% endmacro %}
 
 {% block content %}
-{% set governance_view = active_tab in ('registry', 'audit') %}
 <section class="facet-card" aria-label="{{ t('ontology.header_aria') }}">
   <div class="entry-title-row">
     <div>
-      <h1 class="u-m-0 u-fs-1p45rem">{{ t('nav.' ~ active_tab if governance_view else 'nav.graph') }}</h1>
-      {% if not governance_view %}<p class="entry-meta u-mb-0">{{ t('ontology.heading') }}</p>{% endif %}
+      <h1 class="u-m-0 u-fs-1p45rem">{{ t('ontology.heading') }}</h1>
+      <p class="entry-meta u-mb-0">{{ t('ontology.page_desc') }}</p>
     </div>
     <div class="u-d-flex u-flex-wrap-wrap u-gap-6px u-align-center">
       <span class="badge badge-consensus">{{ t('ontology.active_consensus_badge', count=stats.active_consensus_views) }}</span>
@@ -48,12 +47,18 @@
   </div>
 </section>
 
-{% if governance_view %}
+<!-- Registry & Audit Overview Card (aggregate counts only) -->
 <section class="facet-card registry-overview-card" aria-label="{{ t('ontology.registry_card_aria') }}">
   <div class="entry-title-row">
     <div>
       <h2 class="u-m-0 u-bdb-none u-pb-0">{{ t('ontology.registry_card_heading') }}</h2>
     </div>
+    {% if registry_summary.loaded %}
+      <div class="registry-actions-row u-mt-0">
+        <a href="/ontology?tab=registry#structure-explorer" class="retro-link-btn">{{ t('ontology.btn_open_registry') }}</a>
+        <a href="/ontology?tab=audit#structure-explorer" class="retro-link-btn">{{ t('ontology.btn_open_audit') }}</a>
+      </div>
+    {% endif %}
   </div>
 
   {% if registry_summary.loaded %}
@@ -101,9 +106,6 @@
   {% endif %}
 </section>
 
-{% else %}
-<details class="ontology-model-guide">
-  <summary>{{ t('nav.model_guide') }}</summary>
 <!-- Section 1: 4-Node Architecture Blueprint (SVG) -->
 <section class="facet-card" aria-label="{{ t('ontology.blueprint_aria') }}">
   <h2>{{ t('ontology.blueprint_heading') }}</h2>
@@ -291,27 +293,30 @@
   </div>
 </section>
 
-</details>
-{% endif %}
-
-<!-- Live Structure Explorer or Governance -->
+<!-- Section 3: Live Structure, Registry & Audit Explorer -->
 <section id="structure-explorer" class="section-block" aria-label="{{ t('ontology.explorer_aria') }}">
-  {% if not governance_view %}
   <h2>{{ t('ontology.explorer_heading') }}</h2>
 
-  <nav class="tab-bar" aria-label="{{ t('ontology.tabs_aria') }}">
+  <div class="tab-bar" role="tablist" aria-label="{{ t('ontology.tabs_aria') }}">
     {% for s in structures %}
       <a
         href="/ontology?tab={{ s.key }}#structure-explorer"
-        class="tab-btn {% if active_tab == s.key %}tab-btn-active{% endif %}"{% if active_tab == s.key %} aria-current="page"{% endif %}
+        class="tab-btn {% if active_tab == s.key %}tab-btn-active{% endif %}"
       >{{ s.plural }} ({{ s.count }})</a>
     {% endfor %}
     <a
       href="/ontology?tab=edges#structure-explorer"
-      class="tab-btn {% if active_tab == 'edges' %}tab-btn-active{% endif %}"{% if active_tab == 'edges' %} aria-current="page"{% endif %}
+      class="tab-btn {% if active_tab == 'edges' %}tab-btn-active{% endif %}"
     >{{ t('ontology.tab_unified_edges', count=stats.total_edges) }}</a>
-  </nav>
-  {% endif %}
+    <a
+      href="/ontology?tab=registry#structure-explorer"
+      class="tab-btn {% if active_tab == 'registry' %}tab-btn-active{% endif %}"
+    >{{ t('ontology.tab_registry') }}{% if registry_summary.loaded %} ({{ registry_summary.official_relations + registry_summary.official_companies + registry_summary.official_themes }}){% endif %}</a>
+    <a
+      href="/ontology?tab=audit#structure-explorer"
+      class="tab-btn {% if active_tab == 'audit' %}tab-btn-active{% endif %}"
+    >{% if registry_summary.loaded %}{{ t('ontology.tab_audit_count', count=registry_summary.pending_total) }}{% else %}{{ t('ontology.tab_audit') }}{% endif %}</a>
+  </div>
 
   {% if active_tab == 'registry' %}
     {% if not registry_summary.loaded or not registry_view %}

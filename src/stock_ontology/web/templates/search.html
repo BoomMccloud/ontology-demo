@@ -26,7 +26,7 @@
         <span class="source-cite">
           {{ t('common.source') }}
           {% if item.source_exists %}
-            <a href="/catalog?file={{ item.source_file | urlencode }}&amp;from={{ next_path | urlencode }}{% if item.note_line %}&amp;format=raw#L{{ item.note_line }}{% endif %}">{{ item.source_label }}</a>
+            <a href="/catalog?file={{ item.source_file | urlencode }}{% if item.note_line %}&amp;format=raw#L{{ item.note_line }}{% endif %}">{{ item.source_label }}</a>
           {% else %}
             {{ item.source_label }}
           {% endif %}
@@ -49,7 +49,7 @@
     {% for label, val in active_filters %}
       <span class="filter-pill mono">{{ label }}: {{ val }}</span>
     {% endfor %}
-    <a href="/search{% if notes_scope %}?in=notes{% endif %}" class="mono">{{ t('search.clear_all') }}</a>
+    <a href="/search" class="mono">{{ t('search.clear_all') }}</a>
   </div>
 {% endif %}
 
@@ -87,12 +87,12 @@
           <ul class="search-list">
             {% for p in search.passages %}
               <li class="search-result search-passage" data-note-file="{{ p.file }}" data-note-line="{{ p.line }}" data-match-reason="note">
-                {% if p.text %}<div class="search-passage-text">{{ p.text }}</div>{% endif %}
+                <div class="search-passage-text">{{ p.text }}</div>
                 <div class="search-result-meta">
                   <span class="search-reason search-reason-note">{{ t('search.match_reason_label') }} {{ t_enum('match_reason', 'note') }}</span>
                   <span class="source-cite">
                     {% if p.source_exists %}
-                      <a href="/catalog?file={{ p.file | urlencode }}&amp;from={{ next_path | urlencode }}&amp;format=raw#L{{ p.line }}">{{ p.source_label }}</a>
+                      <a href="/catalog?file={{ p.file | urlencode }}&amp;format=raw#L{{ p.line }}">{{ p.source_label }}</a>
                     {% else %}
                       {{ p.source_label }}
                     {% endif %}

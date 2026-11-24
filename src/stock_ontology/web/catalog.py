@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 
 from stock_ontology.services import GraphStore
 from stock_ontology.services.notes import scan_notes
@@ -185,7 +185,7 @@ def _strip_markdown_markers(line: str) -> str:
     return cleaned.strip()
 
 
-def render_markdown_safe(text: str, *, title: str = "") -> str:
+def render_markdown_safe(text: str) -> str:
     """Render Markdown notes into HTML after escaping all untrusted input first."""
     escaped = html.escape(text.replace("\r\n", "\n").replace("\r", "\n"), quote=True)
     lines = escaped.split("\n")
@@ -222,11 +222,9 @@ def render_markdown_safe(text: str, *, title: str = "") -> str:
         # Headings (# through ####)
         heading_match = re.match(r"^(#{1,4})\s+(.+)$", stripped)
         if heading_match:
-            depth = len(heading_match.group(1))
-            if out or depth != 1 or _strip_markdown_markers(html.unescape(stripped)) != title:
-                level = depth + 2
-                content = _format_inline_markdown(heading_match.group(2))
-                out.append(f"<h{level}>{content}</h{level}>")
+            level = len(heading_match.group(1))
+            content = _format_inline_markdown(heading_match.group(2))
+            out.append(f"<h{level}>{content}</h{level}>")
             i += 1
             continue
 
@@ -618,29 +616,10 @@ class NoteDetail:
     back_link: NoteLink
     extraction: NoteExtraction
     show_raw: bool
-    show_extraction: bool
-    source_href: str
-    extraction_href: str
-    alternate_source_href: str
     body_html: str
     raw_lines: tuple[str, ...]
     prev_link: NoteLink | None
     next_link: NoteLink | None
-
-
-def authored_note_links(db: GraphStore, data_dir: Path, author_id: str, lang: str) -> tuple[NoteLink, ...]:
-    ctx = build_catalog_context(db, data_dir, view="author", selected_author=author_id, lang=lang)
-    group = ctx["active_group"]
-    if group is None:
-        return ()
-    parent = f"/entity/{author_id}#sec-authored"
-    return tuple(
-        NoteLink(
-            note["title"],
-            f"/catalog?{urlencode({'file': note['rel_path'], 'from': parent}, quote_via=quote, safe='/')}",
-        )
-        for note in group["notes"]
-    )
 
 
 def _note_detail(
@@ -648,9 +627,6 @@ def _note_detail(
     raw_text: str,
     *,
     fmt: str,
-    pane: str,
-    active_alpha: str,
-    origin: str,
     view_mode: str,
     active_group: dict[str, Any] | None,
     sibling_list: list[dict[str, Any]],
@@ -682,35 +658,31 @@ def _note_detail(
         if any(n["rel_path"] == rel_path for n in grp["notes"])
     )
 
-    list_params = {"view": view_mode}
-    back_label = translate(
-        "nav.notes_by_author" if view_mode == "author" else "catalog.back_to_all_notes", lang=lang
-    )
     if view_mode == "author" and active_group:
-        list_params["author"] = str(active_group["id"])
-        back_label = translate("catalog.up_to_dir", lang=lang, label=active_group["label"])
-    elif view_mode == "company":
-        list_params["dir"] = str(active_group["key"]) if active_group else folder
-        back_label = translate(
-            "catalog.up_to_dir", lang=lang, label=active_group["label"] if active_group else subject_label
+        author_query = f"view=author&author={quote(str(active_group['id']))}"
+        back_link = NoteLink(
+            label=translate("catalog.up_to_dir", lang=lang, label=active_group["label"]),
+            href=f"/catalog?{author_query}",
         )
-    if active_alpha:
-        list_params["alpha"] = active_alpha
+    elif view_mode == "all":
+        back_link = NoteLink(label=translate("catalog.back_to_all_notes", lang=lang), href="/catalog?view=all")
+    else:
+        back_link = NoteLink(
+            label=translate("catalog.up_to_dir", lang=lang, label=subject_label),
+            href=f"/catalog?view=company&dir={quote(folder)}",
+        )
 
-    def catalog_url(params: dict[str, str]) -> str:
-        return f"/catalog?{urlencode(params, quote_via=quote, safe='/')}"
-
-    back_link = NoteLink(label=back_label, href=catalog_url(list_params))
-    reader_params = {**list_params, "file": rel_path}
-    if origin:
-        reader_params["from"] = origin
-    source_href = catalog_url({**reader_params, **({"format": "raw"} if fmt == "raw" else {})})
-    extraction_href = catalog_url({
-        **reader_params, **({"format": "raw"} if fmt == "raw" else {}), "pane": "extraction",
-    })
+    if view_mode == "company":
+        list_query = f"view=company&dir={quote(folder)}"
+    elif view_mode == "author" and active_group:
+        list_query = author_query
+    else:
+        list_query = f"view={view_mode}"
 
     def _sibling(sib: dict[str, Any]) -> NoteLink:
-        return NoteLink(label=str(sib["title"]), href=catalog_url({**list_params, "file": str(sib["rel_path"])}))
+        return NoteLink(
+            label=str(sib["title"]), href=f"/catalog?{list_query}&file={quote(str(sib['rel_path']))}"
+        )
 
     prev_link = None
     next_link = None
@@ -723,10 +695,9 @@ def _note_detail(
             break
 
     show_raw = fmt == "raw"
-    title = str(note_meta["title"])
     return NoteDetail(
         rel_path=rel_path,
-        title=title,
+        title=str(note_meta["title"]),
         folder=folder,
         subject_label=subject_label,
         company=company,
@@ -734,11 +705,7 @@ def _note_detail(
         back_link=back_link,
         extraction=extraction,
         show_raw=show_raw,
-        show_extraction=pane == "extraction",
-        source_href=source_href,
-        extraction_href=extraction_href,
-        alternate_source_href=catalog_url({**reader_params, **({} if show_raw else {"format": "raw"})}),
-        body_html="" if show_raw else render_markdown_safe(raw_text, title=title),
+        body_html="" if show_raw else render_markdown_safe(raw_text),
         raw_lines=tuple(raw_text.splitlines()) if show_raw else (),
         prev_link=prev_link,
         next_link=next_link,
@@ -756,8 +723,6 @@ def build_catalog_context(
     selected_alpha: str = "",
     selected_file: str = "",
     note_format: str = "rendered",
-    pane: str = "source",
-    origin: str = "",
     actions_enabled: bool = False,
     note_job_state: Callable[[str], str] | None = None,
     lang: str = DEFAULT_LANGUAGE,
@@ -1122,7 +1087,7 @@ def build_catalog_context(
         if active_group is not None:
             sibling_list = active_group["notes"]
         elif view_mode == "all":
-            sibling_list = filtered_all_notes
+            sibling_list = all_notes
         else:
             for grp in company_groups + other_dir_groups:
                 if grp["key"] == note_meta["folder"]:
@@ -1138,9 +1103,6 @@ def build_catalog_context(
             note_meta,
             raw_text,
             fmt=fmt,
-            pane=pane,
-            active_alpha=active_alpha,
-            origin=origin,
             view_mode=view_mode,
             active_group=active_group,
             sibling_list=sibling_list,

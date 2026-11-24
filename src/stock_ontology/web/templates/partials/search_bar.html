@@ -3,6 +3,7 @@
 {% set nt = node_type | default('') %}
 <section class="search-box" aria-label="{{ t('search.section_aria') }}">
   <form class="search-form-wrapper" action="/search" method="get">
+    {% if nav.workflow == 'notes' %}<input type="hidden" name="in" value="notes">{% endif %}
     <div class="search-form">
       <input
         id="catalog-q"
@@ -12,10 +13,6 @@
         aria-label="{{ t('search.query_label') }}"
         placeholder="{{ t('home.search_placeholder') }}"
       >
-      <select name="in" aria-label="{{ t('nav.search_scope') }}">
-        <option value="">{{ t('nav.search_everywhere') }}</option>
-        <option value="notes"{% if notes_scope %} selected{% endif %}>{{ t('nav.notes') }}</option>
-      </select>
       <select name="node_type" aria-label="{{ t('search.filter_aria') }}">
         <option value="" {% if not nt %}selected{% endif %}>{{ t('search.node_type_all') }}</option>
         {% for type_key in opts.get('node_types', []) %}

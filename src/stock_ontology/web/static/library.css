@@ -60,22 +60,6 @@ code,
   border: 1px solid var(--border-dark);
 }
 
-.portal-header {
-  min-width: 0;
-}
-
-.portal-classic-wordmark {
-  display: inline;
-}
-
-.portal-modern-nav,
-.portal-modern-wordmark,
-.portal-modern-mark,
-.portal-ontology-menu,
-.portal-ontology-menu-panel {
-  display: none;
-}
-
 .portal-masthead {
   background: var(--burgundy);
   color: var(--burgundy-ink);
@@ -893,7 +877,7 @@ code,
 }
 
 .note-job-status {
-  margin: 8px 0 0;
+  margin: 0 0 8px;
   font-size: 0.9em;
 }
 
@@ -1375,12 +1359,6 @@ code,
     border-right: none;
     border-bottom: 1px solid var(--border-dark);
   }
-
-  .portal-table :is(th, td),
-  .catalog-table :is(th, td) {
-    overflow-wrap: anywhere;
-    white-space: normal;
-  }
 }
 
 /* Utilities that replace former inline style attributes (templates may not use style=).
@@ -1492,35 +1470,4 @@ code,
   padding: 4px 6px;
   border: 1px dashed #8a6d1a;
   background: #fbf3d9;
-}
-
-/* Shared controls used by both Library themes. */
-#library-theme {
-  background: var(--bg-pane);
-  border: 1px solid var(--border-dark);
-  color: var(--ink);
-  font: inherit;
-}
-
-.portal-topnav-tools .portal-tool-active,
-.portal-jumpbar [aria-current="page"] {
-  color: var(--ink);
-  font-weight: bold;
-}
-
-.ontology-model-guide {
-  margin-bottom: 12px;
-}
-
-.ontology-model-guide > summary {
-  cursor: pointer;
-  font-family: var(--font-ui);
-}
-
-.note-reader-header + .portal-jumpbar {
-  margin-top: 12px;
-}
-
-.note-extraction[hidden] {
-  display: none;
 }

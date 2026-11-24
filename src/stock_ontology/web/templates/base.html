@@ -4,69 +4,57 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}{{ t('site.title') }}{% endblock %}</title>
-  <script src="/static/library-theme.js"></script>
   <link rel="stylesheet" href="/static/library.css">
-  <link rel="stylesheet" href="/static/library-modern.css">
 </head>
 <body data-page-context="{{ page_context | default(t('page_context.home')) }}" data-lang="{{ lang }}" data-archetype="{{ nav.archetype }}">
   <div class="portal-frame">
-    <header class="portal-header">
-      <div class="portal-masthead">
-        <a href="/" class="portal-masthead-title">
-          <span class="portal-classic-wordmark">{{ t('site.portal_title') }}</span>
-          <span class="portal-modern-wordmark"><span class="portal-modern-mark" aria-hidden="true">S</span>Stock Ontology</span>
-        </a>
-      </div>
-      <nav id="modern-nav" class="portal-modern-nav" aria-label="{{ t('nav.primary_aria') }}">
-        {% for item in nav_modern_primary %}
-          <a href="{{ item.href }}" data-nav="{{ item.key }}"{% if item.key == nav.section %} aria-current="page"{% endif %}>{{ t(item.label_key) }}</a>
-        {% endfor %}
-      </nav>
-      <div class="portal-topnav">
-        <nav id="top-nav" class="portal-topnav-workflows" aria-label="{{ t('nav.top_aria') }}">
-          {% for wf in nav_workflows %}
-            {% if wf.key == nav.workflow %}
-              <span class="portal-topnav-active" aria-current="page" data-nav="{{ wf.key }}">{{ t(wf.label_key) }}</span>
-            {% else %}
-              <a href="{{ wf.href }}" data-nav="{{ wf.key }}">{{ t(wf.label_key) }}</a>
-            {% endif %}
-          {% endfor %}
-        </nav>
-        <div class="portal-topnav-tools">
-          <details class="portal-ontology-menu">
-            <summary{% if nav.workflow == 'ontology' %} class="portal-tool-active"{% endif %}>{{ t('rail.ontology') }}</summary>
-            <div class="portal-ontology-menu-panel">
-              {% for group in nav_ontology_groups %}
-                {% for item in group.items %}
-                  <a href="{{ item.href }}"{% if item.key == nav.section %} aria-current="page"{% endif %}>{{ t(item.label_key) }}</a>
-                {% endfor %}
-              {% endfor %}
-            </div>
-          </details>
-          <a href="/search" class="portal-topnav-search{% if nav.tool == 'search' %} portal-tool-active{% endif %}">{{ t('nav.search_quick') }}</a>
-          <a href="/notes/new"{% if nav.tool == 'paste' %} class="portal-tool-active"{% endif %}>{{ t('nav.notes_new') }}</a>
-          <span class="portal-rail-langs" aria-label="{{ t('lang.selector_label') }}">
-            {% for item in languages %}
-              {% set lang_label = (item.code | upper) if item.code in ('en', 'es', 'fr') else item.native_name %}
-              {% if item.code == lang %}
-                <strong>{{ lang_label }}</strong>
-              {% else %}
-                <a href="/set-language?lang={{ item.code }}&amp;next={{ next_path | urlencode }}" title="{{ item.native_name }}">{{ lang_label }}</a>
-              {% endif %}
-              {% if not loop.last %} &middot; {% endif %}
-            {% endfor %}
-          </span>
-          <label for="library-theme">{{ t('nav.theme_label') }}</label>
-          <select id="library-theme">
-            <option value="modern">{{ t('nav.theme_modern') }}</option>
-            <option value="classic">{{ t('nav.theme_classic') }}</option>
-          </select>
-        </div>
-      </div>
+    <header class="portal-masthead">
+      <a href="/" class="portal-masthead-title">{{ t('site.portal_title') }}</a>
     </header>
+
+    <nav id="top-nav" class="portal-topnav" aria-label="{{ t('nav.top_aria') }}">
+      <div class="portal-topnav-workflows">
+        {% for wf in nav_workflows %}
+          {% if wf.key == nav.workflow %}
+            <span class="portal-topnav-active" aria-current="page" data-nav="{{ wf.key }}">{{ t(wf.label_key) }}</span>
+          {% else %}
+            <a href="{{ wf.href }}" data-nav="{{ wf.key }}">{{ t(wf.label_key) }}</a>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <div class="portal-topnav-tools">
+        <a href="/search" class="portal-topnav-search">{{ t('nav.search_quick') }}</a>
+        <span class="portal-rail-langs" aria-label="{{ t('lang.selector_label') }}">
+          {% for item in languages %}
+            {% set lang_label = (item.code | upper) if item.code in ('en', 'es', 'fr') else item.native_name %}
+            {% if item.code == lang %}
+              <strong>{{ lang_label }}</strong>
+            {% else %}
+              <a href="/set-language?lang={{ item.code }}&amp;next={{ next_path | urlencode }}" title="{{ item.native_name }}">{{ lang_label }}</a>
+            {% endif %}
+            {% if not loop.last %} &middot; {% endif %}
+          {% endfor %}
+        </span>
+      </div>
+    </nav>
 
     <div class="portal-grid">
       <aside class="portal-rail" aria-label="{{ t('nav.side_aria') }}">
+        <form class="portal-rail-search" action="/search" method="get">
+          {% if nav.workflow == 'notes' %}<input type="hidden" name="in" value="notes">{% endif %}
+          <div class="portal-rail-search-row">
+            <input
+              id="rail-q"
+              name="q"
+              type="text"
+              value="{{ query | default('') }}"
+              aria-label="{{ t('rail.search_label') }}"
+              placeholder="{{ t('rail.search_placeholder') }}"
+            >
+            <button type="submit" class="portal-btn">{{ t('rail.search_go') }}</button>
+          </div>
+        </form>
+
         <nav id="side-nav" aria-label="{{ t('nav.side_aria') }}">
           {% for group in nav_groups %}
             {% if group.label_key %}
