@@ -29,7 +29,8 @@ def test_web_home_entity_theme_search_and_clippy_chat(tmp_path: Path) -> None:
     seed_web_db(db_path)
 
     settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=tmp_path)
-    app = create_app(settings, llm=FakeWebLLM())
+    llm = FakeWebLLM()
+    app = create_app(settings, llm=llm, agent_model=llm.model)
     client = TestClient(app)
 
     # 1. Home page: clean Two-Pane Library Portal (no decorative headings/colophon/floating Clippy).
@@ -277,7 +278,7 @@ def test_web_language_switching_cookie_header_chat_and_open_redirect_guard(tmp_p
 
     llm = FakeWebLLM()
     settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=tmp_path)
-    app = create_app(settings, llm=llm)
+    app = create_app(settings, llm=llm, agent_model=llm.model)
     client = TestClient(app)
 
     # 1. /api/health reports language metadata

@@ -29,6 +29,7 @@ from stock_ontology.i18n import (
     translate_enum,
 )
 from stock_ontology.llm import LLMClient, create_llm_client
+from stock_ontology.llm.agent_model import build_agent_models
 from stock_ontology.pipeline import IngestReport, ReembedReport
 from stock_ontology.registry import (
     OntologyRegistry,
@@ -706,9 +707,10 @@ def ask(
         prompt = f"{question}\n\n--- ATTACHED NOTE ({file.name}) ---\n{note_text}"
 
     llm = create_llm_client(settings)
+    agent_models = build_agent_models(settings)
     with _open_readonly_db(settings) as store:
-        agent = OntologyAgent(store, llm, language=resolved_lang)
         try:
+            agent = OntologyAgent(store, llm, model=agent_models.for_turn(), language=resolved_lang)
             answer = agent.ask(prompt)
         except Exception as exc:  # noqa: BLE001
             console.print(f"[red]{translate('cli.agent_error', lang=resolved_lang)}[/red] {exc}")
@@ -731,8 +733,13 @@ def chat(
     resolved_lang = _resolve_cli_lang(settings, lang)
     lang_spec = get_language_spec(resolved_lang)
     llm = create_llm_client(settings)
+    agent_models = build_agent_models(settings)
     with _open_readonly_db(settings) as store:
-        agent = OntologyAgent(store, llm, language=resolved_lang)
+        try:
+            agent = OntologyAgent(store, llm, model=agent_models.for_turn(), language=resolved_lang)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]{translate('cli.agent_error', lang=resolved_lang)}[/red] {exc}")
+            raise typer.Exit(code=1) from exc
         console.print(
             Panel(
                 translate(
@@ -765,6 +772,8 @@ def chat(
                 console.print(f"[dim]{cleared_msg}[/dim]")
                 continue
             try:
+                # Each turn gets a fresh fallback order, so a cooled provider goes last.
+                agent.model = agent_models.for_turn()
                 reply = agent.ask(user_input)
                 console.print(Markdown(reply))
             except Exception as exc:  # noqa: BLE001

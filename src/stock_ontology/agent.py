@@ -9,7 +9,10 @@ from typing import Any
 
 from pydantic_ai import Agent, AbstractToolset, FunctionToolset, Tool, UsageLimits, capture_run_messages
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import Model
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import WrapperToolset
 
 from stock_ontology.db import OntologyDB, node_to_dict
@@ -19,8 +22,7 @@ from stock_ontology.i18n import (
     normalize_language,
     translate,
 )
-from stock_ontology.llm import AgentTurn, LLMClient
-from stock_ontology.llm.pydantic_ai_model import LLMClientModel
+from stock_ontology.llm import LLMClient
 from stock_ontology.models import Node, NodeType
 from stock_ontology.search import SearchFilters, SearchHit, scan_notes, search_ontology
 from stock_ontology.vocab import EVENT_STATUS, SENTIMENT_FILTER_VALUES, SIGNAL_CATEGORIES
@@ -272,7 +274,8 @@ class OntologyAgent:
     """Read-only conversational agent that traverses the stock ontology via tools.
 
     Public interface for other components: construct it with a read-only
-    `OntologyDB`, then call `chat(message, history)` for caller-held multi-turn
+    `OntologyDB`, the `LLMClient` its tools embed queries with, and the Pydantic AI
+    chat `model` (optionally with `model_settings`), then call `chat(message, history)` for caller-held multi-turn
     sessions, or `ask(message)` and `reset()` when the agent holds history.
     Other attributes (`messages`, `tool_trace`, `last_*`) are internal.
     """
@@ -282,6 +285,8 @@ class OntologyAgent:
         db: OntologyDB,
         llm: LLMClient,
         *,
+        model: Model,
+        model_settings: ModelSettings | None = None,
         language: str = DEFAULT_LANGUAGE,
         toolsets: Sequence[AbstractToolset[Any]] = (),
         data_dir: Path | None = None,
@@ -292,6 +297,8 @@ class OntologyAgent:
             )
         self.db = db
         self.llm = llm
+        self.model = model
+        self.model_settings = model_settings
         self.language = normalize_language(language) or DEFAULT_LANGUAGE
         self.toolsets = list(toolsets)
         self.data_dir = Path(data_dir) if data_dir is not None else None
@@ -533,26 +540,32 @@ class OntologyAgent:
             ]
         )
 
-    def _record_turn(self, turn: AgentTurn) -> None:
-        if turn.provider is not None:
-            self.last_provider = turn.provider
-            self.last_model = turn.model
-            self.last_fallback_used = turn.fallback_used
+    def _record_turn(self, new_messages: Sequence[ModelMessage]) -> None:
+        """Stamp provider and model from the run's answering response, and whether a fallback answered."""
+        responses = [m for m in new_messages if isinstance(m, ModelResponse)]
+        if not responses:
+            return
+        first = self.model.models[0] if isinstance(self.model, FallbackModel) else self.model
+        last = responses[-1]
+        self.last_provider = last.provider_name
+        self.last_model = last.model_name
+        self.last_fallback_used = any(
+            r.failed_attempts or (r.model_name is not None and r.model_name != first.model_name)
+            for r in responses
+        )
 
     def ask(self, user_message: str, max_rounds: int = 8) -> str:
         """Process a user query over the read-only ontology and return the final answer."""
-        model = LLMClientModel(
-            self.llm,
-            system_instruction=build_agent_system_prompt(self.language),
-            on_turn=self._record_turn,
-        )
         agent = Agent(
-            model,
+            self.model,
+            instructions=build_agent_system_prompt(self.language),
+            model_settings=self.model_settings,
             toolsets=[
                 self._ontology_toolset(),
                 *(_TracedToolset(ts, self.tool_trace) for ts in self.toolsets),
             ],
         )
+        history_len = len(self.messages)
         with capture_run_messages() as run_messages:
             try:
                 result = agent.run_sync(
@@ -564,8 +577,10 @@ class OntologyAgent:
                 )
             except UsageLimitExceeded:
                 self.messages = list(run_messages)
+                self._record_turn(self.messages[history_len:])
                 return translate("agent.max_rounds_reached", lang=self.language)
         self.messages = result.all_messages()
+        self._record_turn(result.new_messages())
         return result.output
 
     def chat(

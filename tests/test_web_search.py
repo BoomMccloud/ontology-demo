@@ -22,7 +22,6 @@ from web_support import (
 from stock_ontology.config import Settings
 from stock_ontology.db import OntologyDB
 from stock_ontology.i18n import SUPPORTED_LANGUAGE_CODES, translate
-from stock_ontology.llm import AgentTurn
 from stock_ontology.models import Edge, Node
 from stock_ontology.web import create_app
 
@@ -272,7 +271,7 @@ class EmbeddingAndAgentDownWebLLM(FakeWebLLM):
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         raise RuntimeError("embedding provider unavailable")
 
-    def generate_agent_reply(self, **kwargs: Any) -> AgentTurn:
+    def respond(self, messages: Any, info: Any) -> Any:
         raise RuntimeError("agent provider unavailable")
 
 
@@ -289,7 +288,7 @@ def test_web_search_functional_results_survive_embedding_and_agent_failure(tmp_p
     # The agent run the column starts fails as a JSON error the column can show.
     r_chat = client.post("/api/chat", json={"message": "nvidia", "page_context": "Search: nvidia"})
     assert r_chat.status_code == 500
-    assert r_chat.json()["error"]
+    assert "agent provider unavailable" in r_chat.json()["error"]
     assert r_chat.json()["session_id"]
 
 

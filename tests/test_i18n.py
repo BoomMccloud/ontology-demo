@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from typer.testing import CliRunner
 
 from stock_ontology.agent import OntologyAgent, build_agent_system_prompt
@@ -29,7 +31,6 @@ from stock_ontology.i18n import (
     translate_facet_label,
     translate_subtype,
 )
-from stock_ontology.llm import AgentTurn, ToolCall
 from stock_ontology.models import ConsensusSynthesis, ExtractionResult, Node
 
 DIM = 16
@@ -193,17 +194,15 @@ class _LanguageCapturingLLM:
     def synthesize_consensus(self, **kwargs: Any) -> ConsensusSynthesis:
         raise NotImplementedError
 
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
-        self.seen_system_instructions.append(system_instruction)
+    @property
+    def model(self) -> FunctionModel:
+        return FunctionModel(self.respond)
+
+    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        self.seen_system_instructions.append(info.instructions or "")
         if self.loop_forever:
-            return AgentTurn(tool_calls=[ToolCall(name="list_catalog", args={})])
-        return AgentTurn(text="OK")
+            return ModelResponse(parts=[ToolCallPart("list_catalog", {})])
+        return ModelResponse(parts=[TextPart("OK")])
 
 
 def test_ontology_agent_language_prompt_and_max_rounds(tmp_path: Path) -> None:
@@ -226,13 +225,13 @@ def test_ontology_agent_language_prompt_and_max_rounds(tmp_path: Path) -> None:
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro:
         llm = _LanguageCapturingLLM()
-        agent = OntologyAgent(ro, llm, language="zh")
+        agent = OntologyAgent(ro, llm, model=llm.model, language="zh")
         assert agent.language == "zh"
         assert agent.ask("Check NVDA") == "OK"
         assert "Simplified Chinese" in llm.seen_system_instructions[0]
 
         loop_llm = _LanguageCapturingLLM(loop_forever=True)
-        loop_agent = OntologyAgent(ro, loop_llm, language="ja")
+        loop_agent = OntologyAgent(ro, loop_llm, model=loop_llm.model, language="ja")
         msg = loop_agent.ask("Loop", max_rounds=1)
         assert msg == translate("agent.max_rounds_reached", lang="ja")
 

@@ -67,8 +67,10 @@ def build_router(shell: WebShell) -> APIRouter:
         )
 
         with shell.open_db(lang) as db:
-            agent = OntologyAgent(db, shell.llm, language=lang, data_dir=settings.data_dir)
             try:
+                agent = OntologyAgent(
+                    db, shell.llm, model=shell.agent_models.for_turn(), language=lang, data_dir=settings.data_dir
+                )
                 turn = agent.chat(prompt, history)
             except Exception as exc:  # noqa: BLE001
                 return JSONResponse(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, TypeVar
 
 import httpx
@@ -10,12 +9,10 @@ from pydantic import BaseModel
 
 from stock_ontology.config import Settings
 from stock_ontology.llm.base import (
-    AgentTurn,
     BaseLLMProvider,
     HttpJsonClientMixin,
     LLMProviderError,
     ProviderConfigError,
-    ToolCall,
     classify_error,
 )
 from stock_ontology.llm.prompts import strip_json_fences
@@ -111,112 +108,4 @@ class AnthropicProvider(HttpJsonClientMixin, BaseLLMProvider):
             provider=self.name,
             model=self.chat_model,
             error_kind="invalid_response",
-        )
-
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
-        anth_messages: list[dict[str, Any]] = []
-        last_assistant_call_ids: list[str] = []
-
-        def _append_msg(role: str, blocks: list[dict[str, Any]]) -> None:
-            if not blocks:
-                return
-            if anth_messages and anth_messages[-1]["role"] == role:
-                anth_messages[-1]["content"].extend(blocks)
-            else:
-                anth_messages.append({"role": role, "content": blocks})
-
-        for msg_idx, msg in enumerate(messages):
-            role = msg["role"]
-            if role == "user":
-                _append_msg("user", [{"type": "text", "text": msg["text"]}])
-            elif role == "model":
-                blocks: list[dict[str, Any]] = []
-                if msg.get("text"):
-                    blocks.append({"type": "text", "text": msg["text"]})
-                tool_calls = msg.get("tool_calls") or []
-                current_ids: list[str] = []
-                for idx, tc in enumerate(tool_calls):
-                    cid = tc.get("call_id") or f"toolu_m{msg_idx}_{idx}"
-                    current_ids.append(cid)
-                    blocks.append(
-                        {
-                            "type": "tool_use",
-                            "id": cid,
-                            "name": tc["name"],
-                            "input": dict(tc.get("args") or {}),
-                        }
-                    )
-                last_assistant_call_ids = current_ids
-                _append_msg("assistant", blocks)
-            elif role == "tool":
-                result_blocks: list[dict[str, Any]] = []
-                for idx, resp in enumerate(msg["responses"]):
-                    fallback_cid = (
-                        last_assistant_call_ids[idx]
-                        if idx < len(last_assistant_call_ids)
-                        else f"toolu_m{msg_idx}_{idx}"
-                    )
-                    result_blocks.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": resp.get("call_id") or fallback_cid,
-                            "content": json.dumps(resp["response"]),
-                        }
-                    )
-                _append_msg("user", result_blocks)
-
-        tools = [
-            {
-                "name": schema["name"],
-                "description": schema["description"],
-                "input_schema": schema["parameters"],
-            }
-            for schema in tool_schemas
-        ]
-        payload: dict[str, Any] = {
-            "model": self.chat_model,
-            "max_tokens": 4096,
-            "temperature": 0.2,
-            "system": system_instruction,
-            "messages": anth_messages,
-            "tools": tools,
-        }
-        data = self._post_messages(payload)
-        blocks = data.get("content") or []
-        if not blocks:
-            raise LLMProviderError(
-                "Anthropic returned empty content in agent reply.",
-                provider=self.name,
-                model=self.chat_model,
-                error_kind="invalid_response",
-            )
-
-        text_parts: list[str] = []
-        parsed_calls: list[ToolCall] = []
-        for block in blocks:
-            btype = block.get("type")
-            if btype == "text" and isinstance(block.get("text"), str) and block["text"].strip():
-                text_parts.append(block["text"].strip())
-            elif btype == "tool_use" and block.get("name"):
-                raw_input = block.get("input")
-                parsed_calls.append(
-                    ToolCall(
-                        name=block["name"],
-                        args=dict(raw_input) if isinstance(raw_input, dict) else {},
-                        call_id=block.get("id"),
-                    )
-                )
-
-        text = "\n".join(text_parts) if text_parts else None
-        return AgentTurn(
-            text=text,
-            tool_calls=parsed_calls,
-            provider=self.name,
-            model=self.chat_model,
         )

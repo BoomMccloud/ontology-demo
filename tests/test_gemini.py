@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,18 +11,13 @@ import pytest
 from google.genai import _transformers as genai_transformers
 from google.genai import types
 
-from stock_ontology.agent import OntologyAgent
 from stock_ontology.config import Settings
-from stock_ontology.db import OntologyDB
 from stock_ontology.llm import (
-    DashScopeProvider,
     GeminiClient,
     GeminiProvider,
     LLMProviderError,
-    LLMRouter,
     ProviderConfigError,
 )
-from stock_ontology.llm.pydantic_ai_model import to_llm_messages
 from stock_ontology.models import ConsensusSynthesis, ExtractedEntity, ExtractionResult, Node
 
 
@@ -224,199 +218,6 @@ def test_gemini_structured_extraction_consensus_and_errors() -> None:
     assert json_err.value.error_kind == "invalid_response"
 
 
-def test_gemini_agent_tool_calling_thought_filtering_and_empty_tools(tmp_path: Path) -> None:
-    db_path = tmp_path / "gemini_agent.db"
-    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
-        db.upsert_node(
-            Node(
-                id="ent_nvda",
-                node_type="entity",
-                name="NVIDIA",
-                summary="AI GPU leader",
-                aliases=["NVDA"],
-                facets={"entity_type": "company", "ticker": "NVDA"},
-            ),
-            embedding=[1.0, 0.0, 0.0, 0.0],
-        )
-
-    seen_calls: list[dict[str, Any]] = []
-    call_idx = 0
-
-    class _FakeModels:
-        def generate_content(
-            self, *, model: str, contents: list[types.Content], config: types.GenerateContentConfig
-        ) -> types.GenerateContentResponse:
-            nonlocal call_idx
-            call_idx += 1
-            seen_calls.append({"contents": contents, "config": config})
-            if call_idx == 1:
-                thought_part = types.Part(text="internal reasoning", thought=True)
-                fc_part = types.Part(
-                    function_call=types.FunctionCall(
-                        id="call_gem_1",
-                        name="get_entity_overview",
-                        args={"entity_name_or_id": "NVDA"},
-                    ),
-                    thought_signature=b"opaque_sig_1",
-                )
-                return types.GenerateContentResponse(
-                    candidates=[
-                        types.Candidate(content=types.Content(role="model", parts=[thought_part, fc_part]))
-                    ]
-                )
-            if call_idx == 2:
-                # Verify FunctionResponse.id matches call_gem_1 from turn 1.
-                tool_content = contents[-1]
-                assert tool_content.role == "user"
-                assert tool_content.parts is not None
-                fr = tool_content.parts[0].function_response
-                assert fr is not None
-                assert fr.id == "call_gem_1"
-                assert fr.name == "get_entity_overview"
-                thought_part = types.Part(text="more thoughts", thought=True)
-                answer_part = types.Part(text="NVIDIA summary.")
-                return types.GenerateContentResponse(
-                    candidates=[
-                        types.Candidate(content=types.Content(role="model", parts=[thought_part, answer_part]))
-                    ]
-                )
-            return types.GenerateContentResponse(
-                candidates=[
-                    types.Candidate(content=types.Content(role="model", parts=[types.Part(text="No tools needed.")]))
-                ]
-            )
-
-    prov = GeminiProvider(
-        Settings(gemini_api_key="gkey"),
-        client=SimpleNamespace(models=_FakeModels()),  # type: ignore[arg-type]
-    )
-
-    with OntologyDB(db_path, embedding_dim=4, read_only=True) as ro_db:
-        agent = OntologyAgent(ro_db, prov)
-        reply = agent.ask("Summarize NVDA")
-
-    assert reply == "NVIDIA summary."
-    assert agent.last_provider == "gemini"
-    assert agent.last_model == "gemini-3.8-flash"
-    assert agent.tool_trace[0]["tool"] == "get_entity_overview"
-    # Turn 1 must not expose thought text as assistant text.
-    history = to_llm_messages(agent.messages)
-    assert history[1]["text"] is None
-    assert history[1]["tool_calls"][0]["call_id"] == "call_gem_1"
-    assert "internal reasoning" not in reply
-    assert "more thoughts" not in reply
-
-    # Empty tool_schemas omits config.tools rather than sending an empty Tool declaration list.
-    empty_tools_turn = prov.generate_agent_reply(
-        system_instruction="sys",
-        messages=[{"role": "user", "text": "hello"}],
-        tool_schemas=[],
-    )
-    assert empty_tools_turn.text == "No tools needed."
-    assert seen_calls[-1]["config"].tools is None
-
-
-def test_cross_provider_fallback_dashscope_to_gemini_sets_thought_signature(tmp_path: Path) -> None:
-    db_path = tmp_path / "ds_to_gem.db"
-    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
-        db.upsert_node(
-            Node(
-                id="ent_nvda",
-                node_type="entity",
-                name="NVIDIA",
-                summary="GPU leader",
-                aliases=["NVDA"],
-                facets={"entity_type": "company", "ticker": "NVDA"},
-            ),
-            embedding=[1.0, 0.0, 0.0, 0.0],
-        )
-
-    ds_calls = 0
-
-    def ds_handler(request: httpx.Request) -> httpx.Response:
-        nonlocal ds_calls
-        ds_calls += 1
-        if ds_calls == 1:
-            return httpx.Response(
-                200,
-                json={
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": "",
-                                "tool_calls": [
-                                    {
-                                        "id": "call_ds_99",
-                                        "type": "function",
-                                        "function": {
-                                            "name": "get_entity_overview",
-                                            "arguments": json.dumps({"entity_name_or_id": "NVDA"}),
-                                        },
-                                    }
-                                ],
-                            }
-                        }
-                    ]
-                },
-            )
-        return httpx.Response(429, json={"error": {"message": "RESOURCE_EXHAUSTED"}})
-
-    seen_gemini_contents: list[list[types.Content]] = []
-
-    class _FakeGenAIModels:
-        def generate_content(
-            self, *, model: str, contents: list[types.Content], config: types.GenerateContentConfig
-        ) -> types.GenerateContentResponse:
-            seen_gemini_contents.append(contents)
-            return types.GenerateContentResponse(
-                candidates=[
-                    types.Candidate(
-                        content=types.Content(
-                            role="model",
-                            parts=[types.Part.from_text(text="NVIDIA via Gemini fallback.")],
-                        )
-                    )
-                ]
-            )
-
-    settings = Settings(
-        dashscope_api_key="dkey",
-        dashscope_api_url="https://mock.dashscope.local/v1",
-        gemini_api_key="gkey",
-        embedding_dim=4,
-    )
-    ds = DashScopeProvider(settings, http_client=httpx.Client(transport=httpx.MockTransport(ds_handler)))
-    gem = GeminiProvider(settings, client=SimpleNamespace(models=_FakeGenAIModels()))  # type: ignore[arg-type]
-    router = LLMRouter([ds, gem])
-
-    with OntologyDB(db_path, embedding_dim=4, read_only=True) as ro_db:
-        agent = OntologyAgent(ro_db, router)
-        reply = agent.ask("Check NVDA")
-
-    assert reply == "NVIDIA via Gemini fallback."
-    assert agent.last_provider == "gemini"
-    assert agent.last_fallback_used is True
-    assert len(seen_gemini_contents) == 1
-
-    gem_msgs = seen_gemini_contents[0]
-    assert len(gem_msgs) == 3
-    model_msg = gem_msgs[1]
-    tool_msg = gem_msgs[2]
-    assert model_msg.role == "model"
-    assert model_msg.parts is not None
-    assert model_msg.parts[0].function_call is not None
-    assert model_msg.parts[0].function_call.name == "get_entity_overview"
-    assert model_msg.parts[0].function_call.id == "call_ds_99"
-    assert model_msg.parts[0].thought_signature == b"skip_thought_signature_validator"
-
-    assert tool_msg.role == "user"
-    assert tool_msg.parts is not None
-    assert tool_msg.parts[0].function_response is not None
-    assert tool_msg.parts[0].function_response.name == "get_entity_overview"
-    assert tool_msg.parts[0].function_response.id == "call_ds_99"
-
-
 @pytest.mark.parametrize(
     ("exc_factory", "expected_kind"),
     [
@@ -439,11 +240,7 @@ def test_gemini_error_classification(
         client=SimpleNamespace(models=_FailingModels()),  # type: ignore[arg-type]
     )
     with pytest.raises(LLMProviderError) as exc_info:
-        prov.generate_agent_reply(
-            system_instruction="sys",
-            messages=[{"role": "user", "text": "hi"}],
-            tool_schemas=[],
-        )
+        prov.generate_structured(system_instruction="sys", prompt="hi", schema=ConsensusSynthesis)
     assert exc_info.value.provider == "gemini"
     assert exc_info.value.error_kind == expected_kind
 

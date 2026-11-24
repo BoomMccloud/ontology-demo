@@ -6,15 +6,18 @@ calling tools over the graph.
 ## Files
 
 - `src/stock_ontology/agent.py`
-- `src/stock_ontology/llm/pydantic_ai_model.py` adapts the app's `LLMClient`
-  to a Pydantic AI `Model`, so the agent loop runs on Pydantic AI while
-  provider fallback stays in the LLM layer.
+- `src/stock_ontology/llm/agent_model.py` builds the agent's Pydantic AI
+  models from the configured chat chain (`GoogleModel`, `OpenAIChatModel`,
+  `AnthropicModel`) and the `AgentModelChain` that orders cooled providers last.
 
 ## How it works
 
-`OntologyAgent(db, llm, language, data_dir=None)` refuses to start unless
-`db.read_only` is true. `data_dir` is the research notes directory that
-`search_notes` greps. There are two ways to call it:
+`OntologyAgent(db, llm, *, model, model_settings=None, language, data_dir=None)`
+refuses to start unless `db.read_only` is true. `model` is any Pydantic AI
+`Model`; the agent runs it with `instructions=build_agent_system_prompt(language)`
+and `model_settings` on every request. `llm` is only used to embed tool queries.
+`data_dir` is the research notes directory that `search_notes` greps. There are
+two ways to call it:
 
 - `chat(message, history=())` returns a `ChatTurn`, a frozen dataclass with
   `reply`, `history`, `tools_used` (this turn only), `provider`, `model`, and
@@ -22,6 +25,11 @@ calling tools over the graph.
   opaque: store it and pass it back to the next `chat()` call unchanged.
 - `ask(message, max_rounds=8)` returns the reply text and keeps history inside
   the agent until `reset()`. The CLI uses this.
+
+`provider` and `model` come from the run's last `ModelResponse`
+(`provider_name`, `model_name`). `fallback_used` is true when a response came
+from a model other than the first in the turn's `FallbackModel`, or carries
+failed attempts.
 
 Other attributes (`messages`, `tool_trace`, `last_provider`, `last_model`,
 `last_fallback_used`) are internal and may change.
@@ -53,9 +61,11 @@ graph's own text stays in its original language.
 ## Used by
 
 The CLI (`ask`, `chat`, through `ask()`/`reset()`) and the web app
-(`/api/chat`, through `chat()`).
+(`/api/chat`, through `chat()`). Both build one `AgentModelChain` with
+`build_agent_models(settings)` and pass `for_turn()` as each turn's `model`.
 
 ## Tests
 
 `tests/test_agent.py`, `tests/test_i18n.py`, and parts of
-`tests/test_gemini.py` and `tests/test_dashscope.py`.
+`tests/test_llm_router.py` and `tests/test_dashscope.py`. Agent tests use
+Pydantic AI `FunctionModel` fakes.

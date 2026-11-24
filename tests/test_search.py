@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from stock_ontology.config import Settings
 from stock_ontology.db import OntologyDB
-from stock_ontology.llm import AgentTurn, ToolCall
 from stock_ontology.models import ConsensusSynthesis, Edge, ExtractionResult, Node
 from stock_ontology.search import (
     SearchFilters,
@@ -39,7 +40,7 @@ class NearestLLM:
     def __init__(self, idx: int = 0, *, fail: bool = False) -> None:
         self.idx = idx
         self.fail = fail
-        self.agent_turns: list[AgentTurn] = []
+        self.agent_turns: list[ModelResponse] = []
         self.tool_responses: list[dict[str, Any]] = []
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -53,10 +54,14 @@ class NearestLLM:
     def synthesize_consensus(self, **kwargs: Any) -> ConsensusSynthesis:
         raise NotImplementedError
 
-    def generate_agent_reply(self, *, messages: list[dict[str, Any]], **kwargs: Any) -> AgentTurn:
-        last = messages[-1]
-        if last["role"] == "tool":
-            self.tool_responses.append(last["responses"][0]["response"])
+    @property
+    def model(self) -> FunctionModel:
+        return FunctionModel(self.respond)
+
+    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        last = next(m for m in reversed(messages) if isinstance(m, ModelRequest)).parts[-1]
+        if isinstance(last, ToolReturnPart):
+            self.tool_responses.append(last.content)
         return self.agent_turns.pop(0)
 
 
@@ -278,10 +283,12 @@ def test_chat_endpoint_gives_the_agent_note_search(tmp_path: Path) -> None:
     data = _notes(tmp_path)
     llm = NearestLLM(0)
     llm.agent_turns = [
-        AgentTurn(tool_calls=[ToolCall(name="search_notes", args={"query": "channel check"})]),
-        AgentTurn(text="done"),
+        ModelResponse(parts=[ToolCallPart("search_notes", {"query": "channel check"})]),
+        ModelResponse(parts=[TextPart("done")]),
     ]
-    client = TestClient(create_app(Settings(db_path=db_path, embedding_dim=DIM, data_dir=data), llm=llm))
+    client = TestClient(
+        create_app(Settings(db_path=db_path, embedding_dim=DIM, data_dir=data), llm=llm, agent_model=llm.model)
+    )
 
     r = client.post("/api/chat", json={"message": "channel check", "page_context": "Search: channel check"})
     assert r.status_code == 200

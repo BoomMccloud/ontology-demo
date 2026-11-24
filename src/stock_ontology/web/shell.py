@@ -29,7 +29,10 @@ from stock_ontology.i18n import (
     translate_enum,
     translate_subtype,
 )
+from pydantic_ai.models import Model
+
 from stock_ontology.llm import LLMClient
+from stock_ontology.llm.agent_model import AgentModelChain, build_agent_models
 from stock_ontology.registry import OntologyRegistry, load_registry
 from stock_ontology.services import GraphStore, ProcessingService, ServiceError, open_graph
 from stock_ontology.web.navigation import LEFT_NAV, WORKFLOWS, resolve_nav
@@ -89,9 +92,16 @@ class WebShell:
 
     def __init__(
         self, settings: Settings, llm: LLMClient, *, note_actions: bool, registry_origin: str | None = None,
+        agent_model: AgentModelChain | Model | None = None,
     ) -> None:
         self.settings = settings
         self.llm = llm
+        # The Clippy agent's chat models, built once; each chat turn takes `agent_models.for_turn()`.
+        if agent_model is None:
+            agent_model = build_agent_models(settings)
+        elif isinstance(agent_model, Model):
+            agent_model = AgentModelChain([agent_model], cooldown_seconds=settings.llm_cooldown_seconds)
+        self.agent_models = agent_model
         self.note_actions = note_actions
         self.registry_origin = registry_origin
         self.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))

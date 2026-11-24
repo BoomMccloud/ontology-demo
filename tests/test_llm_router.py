@@ -9,24 +9,32 @@ from typing import Any
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from google.genai import types
 
 from stock_ontology.agent import OntologyAgent
 from stock_ontology.config import Settings
 from stock_ontology.db import OntologyDB
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
 from stock_ontology.llm import (
-    AgentTurn,
     AllProvidersFailedError,
     AnthropicProvider,
     BaseLLMProvider,
-    DashScopeProvider,
-    GeminiProvider,
     LLMRouter,
     OpenAICompatibleProvider,
     OpenAIProvider,
-    ToolCall,
     create_llm_client,
 )
+from stock_ontology.llm.agent_model import AgentModelChain, build_agent_models
 from stock_ontology.models import ConsensusSynthesis, ExtractionResult, Node
 from stock_ontology.web import create_app
 
@@ -63,7 +71,6 @@ class _StubProvider(BaseLLMProvider):
         self._embed_side_effects = list(embed_side_effects or [])
         self.chat_calls = 0
         self.embed_calls = 0
-        self.seen_messages: list[list[dict[str, Any]]] = []
 
     def is_configured(self) -> bool:
         return self._configured
@@ -93,22 +100,6 @@ class _StubProvider(BaseLLMProvider):
         if callable(val):
             return val(texts)
         return val
-
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
-        self.chat_calls += 1
-        self.seen_messages.append(list(messages))
-        val = self._next(self._side_effects)
-        if callable(val):
-            val = val(messages)
-        if isinstance(val, AgentTurn):
-            return val
-        return AgentTurn(text=str(val))
 
 
 def test_settings_from_env_chains_and_dashscope_key_without_url(
@@ -217,8 +208,8 @@ def test_router_fallback_across_error_types_and_operations() -> None:
         side_effects=[
             extraction,
             consensus,
-            AgentTurn(text="Fallback reply 1"),
-            AgentTurn(text="Fallback reply 2"),
+            consensus.model_copy(update={"summary": "Fallback reply 1"}),
+            consensus.model_copy(update={"summary": "Fallback reply 2"}),
         ],
         embed_side_effects=[[[0.1, 0.2]]],
     )
@@ -239,19 +230,25 @@ def test_router_fallback_across_error_types_and_operations() -> None:
     )
     assert syn_res.stance == "bullish"
 
-    turn1 = router.generate_agent_reply(
-        system_instruction="sys", messages=[{"role": "user", "text": "hi"}], tool_schemas=[]
+    # The 503 and the network timeout fall back as well.
+    syn1 = router.synthesize_consensus(
+        company=nvda, events=[], views=[], themes=[], prior_consensus=None
     )
-    assert turn1.text == "Fallback reply 1"
-    assert turn1.provider == "gemini"
-    assert turn1.model == "gemini-3.8-flash"
-    assert turn1.fallback_used is True
+    assert syn1.summary == "Fallback reply 1"
+    assert router.last_chat_provider == "gemini"
+    assert [(a.provider, a.error_kind) for a in router.last_attempts] == [
+        ("dashscope", "server"),
+        ("gemini", None),
+    ]
 
-    turn2 = router.generate_agent_reply(
-        system_instruction="sys", messages=[{"role": "user", "text": "hi"}], tool_schemas=[]
+    syn2 = router.synthesize_consensus(
+        company=nvda, events=[], views=[], themes=[], prior_consensus=None
     )
-    assert turn2.text == "Fallback reply 2"
-    assert turn2.fallback_used is True
+    assert syn2.summary == "Fallback reply 2"
+    assert [(a.provider, a.error_kind) for a in router.last_attempts] == [
+        ("dashscope", "network"),
+        ("gemini", None),
+    ]
 
     vecs = router.embed_texts(["nvidia"])
     assert vecs == [[0.1, 0.2]]
@@ -264,59 +261,63 @@ def test_router_cooldown_and_disabled_fallback_and_all_failed() -> None:
     class _RateLimitError(RuntimeError):
         status_code = 429
 
+    nvda = Node(id="ent_nvda", node_type="entity", name="NVIDIA", summary="GPU leader")
+
+    def _syn(summary: str) -> ConsensusSynthesis:
+        return ConsensusSynthesis(
+            stance="buy", support_strength="strong", conviction="high", summary=summary, pillars=["p"]
+        )
+
+    def _synthesize(router: LLMRouter) -> ConsensusSynthesis:
+        return router.synthesize_consensus(company=nvda, events=[], views=[], themes=[], prior_consensus=None)
+
     clock = _FakeClock(start=1000.0)
     p1 = _StubProvider(
         "dashscope",
         side_effects=[
             _RateLimitError("429 RESOURCE_EXHAUSTED"),
-            AgentTurn(text="Primary recovered"),
+            _syn("Primary recovered"),
         ],
     )
     p2 = _StubProvider(
         "openai",
         side_effects=[
-            AgentTurn(text="Secondary 1"),
-            AgentTurn(text="Secondary 2"),
+            _syn("Secondary 1"),
+            _syn("Secondary 2"),
             RuntimeError("Secondary transient failure"),
         ],
     )
     router = LLMRouter([p1, p2], cooldown_seconds=60.0, clock=clock)
 
     # First call hits p1 (429 -> cooled for 60s), falls back to p2.
-    t1 = router.generate_agent_reply(
-        system_instruction="s", messages=[{"role": "user", "text": "1"}], tool_schemas=[]
-    )
-    assert t1.provider == "openai"
-    assert t1.fallback_used is True
+    t1 = _synthesize(router)
+    assert t1.summary == "Secondary 1"
+    assert router.last_chat_provider == "openai"
+    assert [a.provider for a in router.last_attempts] == ["dashscope", "openai"]
     assert p1.chat_calls == 1
     assert "dashscope" in router.describe()["cooled_down_providers"]
 
     # Within cooldown window, p1 is skipped cleanly.
     clock.advance(30.0)
-    t2 = router.generate_agent_reply(
-        system_instruction="s", messages=[{"role": "user", "text": "2"}], tool_schemas=[]
-    )
-    assert t2.provider == "openai"
+    t2 = _synthesize(router)
+    assert t2.summary == "Secondary 2"
+    assert router.last_chat_provider == "openai"
     assert p1.chat_calls == 1
     assert p2.chat_calls == 2
 
     # If p2 fails while p1 is still cooled, router still tries cooled p1 as last resort!
-    t3 = router.generate_agent_reply(
-        system_instruction="s", messages=[{"role": "user", "text": "3"}], tool_schemas=[]
-    )
-    assert t3.provider == "dashscope"
-    assert t3.text == "Primary recovered"
+    t3 = _synthesize(router)
+    assert router.last_chat_provider == "dashscope"
+    assert t3.summary == "Primary recovered"
     assert p1.chat_calls == 2
     assert router.describe()["cooled_down_providers"] == []
 
     # When fallback_enabled=False, router does not try p2.
     p_fail = _StubProvider("dashscope", side_effects=[_RateLimitError("429")])
-    p_unused = _StubProvider("gemini", side_effects=[AgentTurn(text="should not run")])
+    p_unused = _StubProvider("gemini", side_effects=[_syn("should not run")])
     strict_router = LLMRouter([p_fail, p_unused], fallback_enabled=False)
     with pytest.raises(AllProvidersFailedError) as exc_info:
-        strict_router.generate_agent_reply(
-            system_instruction="s", messages=[{"role": "user", "text": "x"}], tool_schemas=[]
-        )
+        _synthesize(strict_router)
     assert len(exc_info.value.attempts) == 1
     assert exc_info.value.attempts[0].provider == "dashscope"
     assert p_unused.chat_calls == 0
@@ -326,9 +327,7 @@ def test_router_cooldown_and_disabled_fallback_and_all_failed() -> None:
     p_b = _StubProvider("gemini", side_effects=[_RateLimitError("429 quota")])
     broken = LLMRouter([p_a, p_b], fallback_enabled=True)
     with pytest.raises(AllProvidersFailedError) as all_err:
-        broken.generate_agent_reply(
-            system_instruction="s", messages=[{"role": "user", "text": "x"}], tool_schemas=[]
-        )
+        _synthesize(broken)
     msg = str(all_err.value)
     assert "dashscope" in msg and "gemini" in msg
     assert len(all_err.value.attempts) == 2
@@ -401,24 +400,7 @@ def test_openai_anthropic_and_compat_http_adapters() -> None:
                     ]
                 },
             )
-        msgs = body["messages"]
-        if msgs[-1]["content"][0]["type"] == "text":
-            return httpx.Response(
-                200,
-                json={
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "toolu_1",
-                            "name": "list_catalog",
-                            "input": {},
-                        }
-                    ]
-                },
-            )
-        return httpx.Response(
-            200, json={"content": [{"type": "text", "text": "Anthropic agent done."}]}
-        )
+        return httpx.Response(500, json={"error": "unexpected request"})
 
     settings = Settings(
         openai_api_key="oa-key",
@@ -450,10 +432,11 @@ def test_openai_anthropic_and_compat_http_adapters() -> None:
         known_facets={},
     ).entities == []
     assert oa.embed_texts(["test"]) == [[0.5, 0.5, 0.0, 0.0]]
-    assert compat.generate_agent_reply(
-        system_instruction="sys", messages=[{"role": "user", "text": "hi"}], tool_schemas=[]
-    ).text == "OpenAI OK"
-    assert len(seen_openai_bodies) >= 2
+    assert compat.extract_document(
+        text="hi", source_meta={}, existing_catalog="", known_facets={}
+    ).entities == []
+    assert seen_openai_bodies[-1]["model"] == "llama-3.3-70b"
+    assert len(seen_openai_bodies) >= 3
 
     syn = ant.synthesize_consensus(
         company=Node(id="ent_1", node_type="entity", name="NVDA", summary="GPUs"),
@@ -470,33 +453,60 @@ def test_openai_anthropic_and_compat_http_adapters() -> None:
     assert router.embed_texts(["test"]) == [[0.5, 0.5, 0.0, 0.0]]
     assert router.last_embedding_provider == "openai"
 
-    t_call = ant.generate_agent_reply(
-        system_instruction="sys",
-        messages=[{"role": "user", "text": "catalog?"}],
-        tool_schemas=[{"name": "list_catalog", "description": "list", "parameters": {"type": "object"}}],
-    )
-    assert t_call.tool_calls[0].name == "list_catalog"
-    t_done = ant.generate_agent_reply(
-        system_instruction="sys",
-        messages=[
-            {"role": "user", "text": "catalog?"},
-            {
-                "role": "model",
-                "text": None,
-                "tool_calls": [{"name": "list_catalog", "args": {}, "call_id": "toolu_1"}],
-            },
-            {
-                "role": "tool",
-                "responses": [{"name": "list_catalog", "call_id": "toolu_1", "response": {"ok": True}}],
-            },
-        ],
-        tool_schemas=[{"name": "list_catalog", "description": "list", "parameters": {"type": "object"}}],
-    )
-    assert t_done.text == "Anthropic agent done."
-    assert len(seen_anthropic_bodies) == 3
+    assert len(seen_anthropic_bodies) == 1
 
 
-def test_cross_provider_agent_turn_fallback_gemini_and_dashscope(tmp_path: Path) -> None:
+def test_build_agent_models_maps_chain_to_native_models() -> None:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.openai import OpenAIChatModel
+
+    settings = Settings(
+        llm_providers=["anthropic", "gemini", "dashscope", "openai", "openai_compatible"],
+        gemini_api_key="g",
+        gemini_model="gemini-x",
+        dashscope_api_key="d",
+        dashscope_api_url="https://mock.dashscope.local/compatible-mode/v1",
+        dashscope_model="qwen-x",
+        openai_api_key="o",
+        openai_api_url="https://mock.openai.local/v1",
+        openai_model="gpt-x",
+        anthropic_api_key="a",
+        anthropic_api_url="https://mock.anthropic.local/v1",
+        anthropic_model="claude-x",
+        openai_compat_api_key="c",
+        openai_compat_api_url="https://mock.compat.local/v1",
+        openai_compat_model="llama-x",
+        llm_cooldown_seconds=17.0,
+    )
+    chain = build_agent_models(settings)
+    assert chain.cooldown_seconds == 17.0
+    assert [(type(m), m.model_name, (m.base_url or "").rstrip("/")) for m in chain.models] == [
+        (AnthropicModel, "claude-x", "https://mock.anthropic.local"),
+        (GoogleModel, "gemini-x", "https://generativelanguage.googleapis.com"),
+        (OpenAIChatModel, "qwen-x", "https://mock.dashscope.local/compatible-mode/v1"),
+        (OpenAIChatModel, "gpt-x", "https://mock.openai.local/v1"),
+        (OpenAIChatModel, "llama-x", "https://mock.compat.local/v1"),
+    ]
+    turn_model = chain.for_turn()
+    assert isinstance(turn_model, FallbackModel)
+    assert [m.model_name for m in turn_model.models] == ["claude-x", "gemini-x", "qwen-x", "gpt-x", "llama-x"]
+
+    # Unconfigured providers are skipped, and with fallback off only the first configured one is used.
+    partial = build_agent_models(Settings(llm_providers=["anthropic", "gemini", "dashscope"], dashscope_api_key="d", gemini_api_key="g"))
+    assert [m.model_name for m in partial.models] == [Settings.model_fields["gemini_model"].default, "qwen3.8-flash"]
+    strict = build_agent_models(
+        Settings(llm_providers=["gemini", "dashscope"], gemini_api_key="g", dashscope_api_key="d", llm_fallback_enabled=False)
+    )
+    assert len(strict.models) == 1 and strict.for_turn() is strict.models[0]
+
+    from stock_ontology.llm import ProviderConfigError
+
+    with pytest.raises(ProviderConfigError):
+        build_agent_models(Settings(llm_providers=["gemini"])).for_turn()
+
+
+def test_agent_model_chain_cools_failed_models_last_across_turns(tmp_path: Path) -> None:
     db_path = tmp_path / "cross.db"
     with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
         db.upsert_node(
@@ -511,60 +521,79 @@ def test_cross_provider_agent_turn_fallback_gemini_and_dashscope(tmp_path: Path)
             embedding=[1.0, 0.0, 0.0, 0.0],
         )
 
-    # Turn 1 succeeds on Gemini (producing raw_content=types.Content and call_id=None).
-    # Turn 2 fails on Gemini with 429 and falls back to DashScope (OpenAI-compatible).
-    gem_calls = 0
+    calls: list[str] = []
+    gemini_errors: list[Exception | None] = [None, ModelHTTPError(429, "gemini-x", {"error": "quota"})]
+    ds_seen: list[list[ModelMessage]] = []
 
-    class _FakeGenAIModels:
-        def generate_content(self, **kwargs: Any) -> Any:
-            nonlocal gem_calls
-            gem_calls += 1
-            if gem_calls == 1:
-                fc = types.FunctionCall(name="get_entity_overview", args={"entity_name_or_id": "NVDA"})
-                part = types.Part(function_call=fc)
-                content = types.Content(role="model", parts=[part])
-                cand = types.Candidate(content=content)
-                return types.GenerateContentResponse(candidates=[cand])
-            err = RuntimeError("429 RESOURCE_EXHAUSTED")
-            err.code = 429  # type: ignore[attr-defined]
-            raise err
+    def gemini(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append("gemini")
+        error = gemini_errors.pop(0) if gemini_errors else None
+        if error is not None:
+            raise error
+        if not any(isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, "parts", [])):
+            return ModelResponse(
+                parts=[ToolCallPart("get_entity_overview", {"entity_name_or_id": "NVDA"})], provider_name="google"
+            )
+        return ModelResponse(parts=[TextPart("NVIDIA via Gemini.")], provider_name="google")
 
-    class _FakeGenAIClient:
-        models = _FakeGenAIModels()
+    dashscope_errors: list[Exception | None] = []
 
-    seen_ds_messages: list[list[dict[str, Any]]] = []
+    def dashscope(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append("dashscope")
+        ds_seen.append(list(messages))
+        error = dashscope_errors.pop(0) if dashscope_errors else None
+        if error is not None:
+            raise error
+        return ModelResponse(parts=[TextPart("NVIDIA via DashScope fallback.")], provider_name="openai")
 
-    def ds_handler(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content.decode("utf-8"))
-        seen_ds_messages.append(body["messages"])
-        return httpx.Response(
-            200,
-            json={"choices": [{"message": {"role": "assistant", "content": "NVIDIA via DashScope fallback."}}]},
-        )
-
-    settings = Settings(
-        gemini_api_key="gkey",
-        dashscope_api_key="dkey",
-        dashscope_api_url="https://mock.dashscope.local/v1",
-        embedding_dim=4,
+    clock = _FakeClock(start=1000.0)
+    chain = AgentModelChain(
+        [FunctionModel(gemini, model_name="gemini-x"), FunctionModel(dashscope, model_name="qwen-x")],
+        cooldown_seconds=60.0,
+        clock=clock,
     )
-    gem = GeminiProvider(settings, client=_FakeGenAIClient())  # type: ignore[arg-type]
-    ds = DashScopeProvider(settings, http_client=httpx.Client(transport=httpx.MockTransport(ds_handler)))
-    router = LLMRouter([gem, ds])
 
     with OntologyDB(db_path, embedding_dim=4, read_only=True) as ro_db:
-        agent = OntologyAgent(ro_db, router)
-        reply = agent.ask("Check NVDA")
+        agent = OntologyAgent(ro_db, _StubProvider("gemini"), model=chain.for_turn())
+        # Turn 1: Gemini calls a tool, then its follow-up request is rate limited and DashScope answers.
+        first = agent.chat("Check NVDA", ())
+        assert calls == ["gemini", "gemini", "dashscope"]
+        assert first.reply == "NVIDIA via DashScope fallback."
+        assert (first.provider, first.model, first.fallback_used) == ("openai", "qwen-x", True)
+        # DashScope sees the whole history, with the tool call and its return paired by id.
+        history = ds_seen[0]
+        call = next(p for m in history if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, ToolCallPart))
+        ret = next(p for m in history if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart))
+        assert call.tool_call_id == ret.tool_call_id
 
-    assert reply == "NVIDIA via DashScope fallback."
-    assert agent.last_provider == "dashscope"
-    assert agent.last_fallback_used is True
-    assert len(seen_ds_messages) == 1
-    # Verify assistant tool_call id and tool response tool_call_id match cleanly!
-    ds_msgs = seen_ds_messages[0]
-    assistant_tc_id = ds_msgs[2]["tool_calls"][0]["id"]
-    tool_resp_id = ds_msgs[3]["tool_call_id"]
-    assert assistant_tc_id == tool_resp_id
+        # Turn 2, within the cooldown: DashScope is tried first; Gemini is not called.
+        clock.advance(30.0)
+        calls.clear()
+        agent.model = chain.for_turn()
+        assert [m.model_name for m in agent.model.models] == ["qwen-x", "gemini-x"]
+        second = agent.chat("Again", first.history)
+        assert calls == ["dashscope"]
+        assert (second.provider, second.model) == ("openai", "qwen-x")
+
+        # Turn 3: if DashScope fails while Gemini is cooled, Gemini is still the last resort.
+        calls.clear()
+        dashscope_errors.append(ModelAPIError("qwen-x", "connection reset"))
+        agent.model = chain.for_turn()
+        third = agent.chat("Once more", second.history)
+        assert calls == ["dashscope", "gemini"]
+        assert third.reply == "NVIDIA via Gemini."
+        assert (third.provider, third.model) == ("google", "gemini-x")
+
+        # A non-cooling error (connection) leaves DashScope active; after the window Gemini leads again.
+        clock.advance(31.0)
+        assert [m.model_name for m in chain.ordered()] == ["gemini-x", "qwen-x"]
+
+    # 401/403 cool a model too; other HTTP errors fall back without cooling.
+    for status, cools in ((401, True), (403, True), (500, False)):
+        chain = AgentModelChain([FunctionModel(gemini, model_name="m1"), FunctionModel(dashscope, model_name="m2")], clock=clock)
+        assert chain._falls_back(ModelHTTPError(status, "m1")) is True
+        assert [m.model_name for m in chain.ordered()] == (["m2", "m1"] if cools else ["m1", "m2"])
+    assert AgentModelChain([], clock=clock)._falls_back(ValueError("not an API error")) is False
 
 
 def test_web_health_and_chat_report_provider_and_no_secret_leak(tmp_path: Path) -> None:
@@ -582,20 +611,19 @@ def test_web_health_and_chat_report_provider_and_no_secret_leak(tmp_path: Path) 
             embedding=[1.0, 0.0, 0.0, 0.0],
         )
 
-    class _RateLimitError(RuntimeError):
-        status_code = 429
-
-    p_gem = _StubProvider(
-        "gemini",
-        chat_model="gemini-3.8-flash",
-        side_effects=[_RateLimitError("429 RESOURCE_EXHAUSTED")],
-    )
-    p_ds = _StubProvider(
-        "dashscope",
-        chat_model="qwen3.8-flash",
-        side_effects=[AgentTurn(text="Answered by DashScope fallback.")],
-    )
+    p_gem = _StubProvider("gemini", chat_model="gemini-3.8-flash")
+    p_ds = _StubProvider("dashscope", chat_model="qwen3.8-flash")
     router = LLMRouter([p_gem, p_ds])
+
+    def gemini(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(429, "gemini-3.8-flash", {"error": "RESOURCE_EXHAUSTED"})
+
+    def dashscope(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart("Answered by DashScope fallback.")], provider_name="dashscope")
+
+    agent_models = AgentModelChain(
+        [FunctionModel(gemini, model_name="gemini-3.8-flash"), FunctionModel(dashscope, model_name="qwen3.8-flash")]
+    )
 
     settings = Settings(
         db_path=db_path,
@@ -604,7 +632,7 @@ def test_web_health_and_chat_report_provider_and_no_secret_leak(tmp_path: Path) 
         dashscope_api_key="super-secret-ds-key",
         gemini_api_key="super-secret-gm-key",
     )
-    app = create_app(settings, llm=router)
+    app = create_app(settings, llm=router, agent_model=agent_models)
     client = TestClient(app)
 
     r_health = client.get("/api/health")

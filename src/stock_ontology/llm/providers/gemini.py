@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, TypeVar
+from typing import TypeVar
 
 from google import genai
 from google.genai import types
@@ -11,17 +11,14 @@ from pydantic import BaseModel
 
 from stock_ontology.config import Settings
 from stock_ontology.llm.base import (
-    AgentTurn,
     BaseLLMProvider,
     LLMProviderError,
     ProviderConfigError,
-    ToolCall,
     classify_error,
 )
 from stock_ontology.llm.prompts import strip_json_fences
 
 T = TypeVar("T", bound=BaseModel)
-_THOUGHT_SIGNATURE_SKIP = b"skip_thought_signature_validator"
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -136,117 +133,3 @@ class GeminiProvider(BaseLLMProvider):
             return vectors
         except Exception as exc:  # noqa: BLE001
             raise classify_error(exc, provider=self.name, model=self.embedding_model) from exc
-
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
-        client = self._get_client()
-        contents: list[types.Content] = []
-        for msg in messages:
-            role = msg["role"]
-            raw_content = msg.get("raw_content")
-            if isinstance(raw_content, types.Content):
-                contents.append(raw_content)
-            elif role == "user":
-                contents.append(
-                    types.Content(role="user", parts=[types.Part.from_text(text=msg["text"])])
-                )
-            elif role == "model":
-                parts: list[types.Part] = []
-                if msg.get("text"):
-                    parts.append(types.Part.from_text(text=msg["text"]))
-                for tc in msg.get("tool_calls", []):
-                    fc_kwargs: dict[str, Any] = {
-                        "name": tc["name"],
-                        "args": dict(tc.get("args") or {}),
-                    }
-                    if tc.get("call_id"):
-                        fc_kwargs["id"] = tc["call_id"]
-                    # Reconstructed non-Gemini tool calls lack an opaque thought signature.
-                    parts.append(
-                        types.Part(
-                            function_call=types.FunctionCall(**fc_kwargs),
-                            thought_signature=_THOUGHT_SIGNATURE_SKIP,
-                        )
-                    )
-                if parts:
-                    contents.append(types.Content(role="model", parts=parts))
-            elif role == "tool":
-                parts = []
-                for resp in msg["responses"]:
-                    fr_kwargs: dict[str, Any] = {
-                        "name": resp["name"],
-                        "response": {"result": resp["response"]},
-                    }
-                    if resp.get("call_id"):
-                        fr_kwargs["id"] = resp["call_id"]
-                    parts.append(
-                        types.Part(function_response=types.FunctionResponse(**fr_kwargs))
-                    )
-                if parts:
-                    contents.append(types.Content(role="user", parts=parts))
-
-        declarations = [
-            types.FunctionDeclaration(
-                name=schema["name"],
-                description=schema["description"],
-                parameters_json_schema=schema["parameters"],
-            )
-            for schema in tool_schemas
-        ]
-        config_kwargs: dict[str, Any] = {
-            "system_instruction": system_instruction,
-            "temperature": 0.2,
-        }
-        if declarations:
-            config_kwargs["tools"] = [types.Tool(function_declarations=declarations)]
-
-        try:
-            response = client.models.generate_content(
-                model=self.chat_model,
-                contents=contents,
-                config=types.GenerateContentConfig(**config_kwargs),
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise classify_error(exc, provider=self.name, model=self.chat_model) from exc
-
-        candidate_content = (
-            response.candidates[0].content
-            if response.candidates and response.candidates[0].content is not None
-            else None
-        )
-        tool_calls: list[ToolCall] = []
-        if response.function_calls:
-            for fc in response.function_calls:
-                if fc.name:
-                    tool_calls.append(
-                        ToolCall(
-                            name=fc.name,
-                            args=dict(fc.args or {}),
-                            call_id=getattr(fc, "id", None),
-                        )
-                    )
-
-        text: str | None = None
-        if candidate_content and candidate_content.parts:
-            text_parts = [
-                p.text
-                for p in candidate_content.parts
-                if getattr(p, "text", None) and not getattr(p, "thought", False)
-            ]
-            if text_parts:
-                text = "\n".join(text_parts)
-        elif not tool_calls and response.text:
-            text = response.text
-
-        return AgentTurn(
-            text=text,
-            tool_calls=tool_calls,
-            raw_content=candidate_content,
-            provider=self.name,
-            model=self.chat_model,
-        )

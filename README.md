@@ -34,7 +34,8 @@ data/**/*.md|.txt   (any folder layout)
 - `create_llm_client(settings)` builds an `LLMRouter` wrapping pluggable adapters (`DashScopeProvider`, `OpenAIProvider`, `AnthropicProvider`, `OpenAICompatibleProvider`, `GeminiProvider`).
 - With `LLM_PROVIDER=auto` (default), all configured providers are ordered automatically (`gemini -> dashscope -> openai -> anthropic -> openai_compatible`).
 - You can also set explicit chains with `LLM_PROVIDERS=gemini,dashscope,openai`, append fallbacks with `LLM_FALLBACK_PROVIDERS=...`, or specify a separate embedding chain with `EMBEDDING_PROVIDERS=...` (chat-only providers like Anthropic are automatically skipped for embeddings).
-- On `429 RESOURCE_EXHAUSTED`, auth errors, `5xx`, network timeouts, or invalid responses, `LLMRouter` automatically falls back to the next provider and places rate-limited/auth-failed providers on a configurable cooldown (`LLM_COOLDOWN_SECONDS`).
+- For ingestion (extraction, consensus synthesis) and embeddings, on `429 RESOURCE_EXHAUSTED`, auth errors, `5xx`, network timeouts, or invalid responses, `LLMRouter` automatically falls back to the next provider and places rate-limited/auth-failed providers on a configurable cooldown (`LLM_COOLDOWN_SECONDS`).
+- The query agent (Clippy, CLI `ask`/`chat`) answers through Pydantic AI's own models instead (`GoogleModel`, `OpenAIChatModel` for DashScope/OpenAI/OpenAI-compatible, `AnthropicModel`), built from the same provider chain by `build_agent_models(settings)` in `stock_ontology.llm.agent_model`. Each turn runs a Pydantic AI `FallbackModel` that moves to the next provider on any provider API error; a provider that failed with a rate-limit, auth or config error is tried last on later turns for `LLM_COOLDOWN_SECONDS`.
 - `/api/health` exposes configured LLM chain diagnostics (without secrets) and `/api/chat` + Clippy display which provider and model served each reply.
 
 ### Calling the Agent (`stock_ontology.agent`)
@@ -45,19 +46,23 @@ Other components call the agent through two entry points and nothing else.
   ```python
   from stock_ontology.agent import OntologyAgent
   from stock_ontology.db import OntologyDB
+  from stock_ontology.llm.agent_model import build_agent_models
 
+  agent_models = build_agent_models(settings)  # once per process
   with OntologyDB(db_path, embedding_dim=dim, read_only=True) as db:
-      agent = OntologyAgent(db, llm, language="en", data_dir=notes_dir)  # data_dir optional, for note search
+      agent = OntologyAgent(
+          db, llm, model=agent_models.for_turn(), language="en", data_dir=notes_dir
+      )  # llm embeds tool queries; model answers; data_dir optional, for note search
       turn = agent.chat("What is our view on NVDA?", history)  # history: () or a previous turn.history
   turn.reply          # str, the answer
   turn.history        # tuple, pass back next time; don't inspect it
   turn.tools_used     # tuple[str, ...], tools called in this turn only
-  turn.provider, turn.model, turn.fallback_used  # which LLM served this turn
+  turn.provider, turn.model, turn.fallback_used  # from the answering Pydantic AI ModelResponse
   ```
 
 - **One-shot or REPL, for a caller that lets the agent hold history (the CLI does):** `OntologyAgent.ask(message)` returns the reply string, and `reset()` clears history.
 
-`OntologyAgent` requires a read-only `OntologyDB` and raises `ValueError` otherwise. Pass the optional `data_dir` (the research notes directory) to let its `search_notes` tool grep notes; without it that tool returns an error. Build one agent per request, or per conversation for a REPL. An instance holds mutable state, so don't share one across concurrent callers. Attributes such as `messages`, `tool_trace` and `last_provider` are internal and may change; agent tests may read them, other components must not.
+`OntologyAgent` takes any Pydantic AI `Model` as `model=` (a `FunctionModel` in tests) and an optional `model_settings=` (for example `{"max_tokens": 800}`) that reaches every model request; the system prompt goes in as Pydantic AI `instructions`. Build `agent_models = build_agent_models(settings)` once per process and pass `agent_models.for_turn()` for each turn, so a cooled provider goes last. `fallback_used` is true when a model other than the first in that turn's chain answered. `OntologyAgent` requires a read-only `OntologyDB` and raises `ValueError` otherwise. Pass the optional `data_dir` (the research notes directory) to let its `search_notes` tool grep notes; without it that tool returns an error. Build one agent per request, or per conversation for a REPL. An instance holds mutable state, so don't share one across concurrent callers. Attributes such as `messages`, `tool_trace` and `last_provider` are internal and may change; agent tests may read them, other components must not.
 
 ### Multi-Language Support (`en`, `zh`, `ko`, `ja`, `es`, `fr`)
 - The Web Library UI, Office-Clippy PM chat, `OntologyAgent`, and CLI support **English (`en`)**, **Chinese (`zh`)**, **Korean (`ko`)**, **Japanese (`ja`)**, **Spanish (`es`)**, and **French (`fr`)** while keeping ingested research notes and database text in their original language.
@@ -186,6 +191,9 @@ Run `./deploy.sh` after pushing `main`. See [docs/deploy.md](docs/deploy.md).
 - The web app talks to the agent only through `OntologyAgent(...)` and `OntologyAgent.chat()`. It stores `ChatTurn.history` per session without inspecting it and never reads or writes other agent attributes (`messages`, `tool_trace`, `last_provider`, and so on).
   **Why:** the pydantic-ai rewrite kept `/api/chat` working only because the agent's attribute names happened to survive; a stated contract lets agent internals change without breaking the web chat (proposal `agent-chat-contract`, 2026-11-22).
   **Guarded by:** `tests/test_web_clippy.py::test_web_chat_endpoint_uses_only_agent_chat` and `tests/test_agent.py::test_agent_chat_returns_immutable_turn_contract`.
+- Give the agent its chat model as a Pydantic AI `Model` (`OntologyAgent(..., model=, model_settings=)`, built by `build_agent_models`). Never route agent chat through `LLMClient` or wrap it in a custom `Model` adapter.
+  **Why:** the custom `LLMClientModel` adapter dropped `model_settings`, so upstream controls such as `max_tokens` never reached the provider while Clippy was too verbose (proposal `native-pydantic-ai-models`, 2026-11-24).
+  **Guarded by:** `tests/test_agent.py::test_agent_answers_through_native_model_with_model_settings` and `tests/test_agent.py::test_agent_falls_back_to_next_native_model_and_stamps_answering_provider`.
 - Search the ontology, from the web page or the agent, only through `stock_ontology.search.search_ontology`, and read notes for a search word only through its `grep_notes`. Never add a second vector-then-keyword merge, and never let a vector hit outrank an exact name or alias match.
   **Why:** the web page and the agent each merged vector hits ahead of keyword hits, so searching "nvidia" showed "Consensus: Buy Apple Inc." before NVIDIA (proposal `ontology-search`, 2026-11-22).
   **Guarded by:** `tests/test_web_search.py::test_web_search_entity_first_card_sections_notes_and_agent_column`, `tests/test_agent.py::test_agent_search_nodes_returns_entity_first_with_match_reasons`, and `tests/test_web_search.py::test_web_search_reads_only_data_dir_notes_and_never_writes_db`.

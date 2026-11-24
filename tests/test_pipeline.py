@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 
 from stock_ontology.db import OntologyDB
-from stock_ontology.llm import AgentTurn
 from stock_ontology.models import (
     ConsensusSynthesis,
     ExtractedEdge,
@@ -424,15 +423,6 @@ class FakePipelineLLM:
             contradicting_node_ids=contradict_ids,
             facets=[FacetKV(key="synthesized_from_count", value=str(len(events) + len(views)))],
         )
-
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
-        raise NotImplementedError("Not used in pipeline tests.")
 
 
 def test_pipeline_ingest_idempotent_edit_delete_and_resolution(tmp_path: Path) -> None:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, TypeVar
 
 import httpx
@@ -10,12 +9,10 @@ from pydantic import BaseModel
 
 from stock_ontology.config import Settings
 from stock_ontology.llm.base import (
-    AgentTurn,
     BaseLLMProvider,
     HttpJsonClientMixin,
     LLMProviderError,
     ProviderConfigError,
-    ToolCall,
     classify_error,
 )
 from stock_ontology.llm.prompts import strip_json_fences
@@ -167,120 +164,6 @@ class OpenAICompatibleProvider(HttpJsonClientMixin, BaseLLMProvider):
                     )
                 vectors.append(list(emb))
         return vectors
-
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
-        oai_messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system_instruction}
-        ]
-        last_assistant_call_ids: list[str] = []
-
-        for msg_idx, msg in enumerate(messages):
-            role = msg["role"]
-            if role == "user":
-                oai_messages.append({"role": "user", "content": msg["text"]})
-            elif role == "model":
-                assistant_msg: dict[str, Any] = {
-                    "role": "assistant",
-                    "content": msg.get("text") or "",
-                }
-                tool_calls = msg.get("tool_calls") or []
-                if tool_calls:
-                    current_ids: list[str] = []
-                    serialized_tcs: list[dict[str, Any]] = []
-                    for idx, tc in enumerate(tool_calls):
-                        cid = tc.get("call_id") or f"call_m{msg_idx}_{idx}"
-                        current_ids.append(cid)
-                        serialized_tcs.append(
-                            {
-                                "id": cid,
-                                "type": "function",
-                                "function": {
-                                    "name": tc["name"],
-                                    "arguments": json.dumps(tc.get("args", {})),
-                                },
-                            }
-                        )
-                    assistant_msg["tool_calls"] = serialized_tcs
-                    last_assistant_call_ids = current_ids
-                else:
-                    last_assistant_call_ids = []
-                oai_messages.append(assistant_msg)
-            elif role == "tool":
-                for idx, resp in enumerate(msg["responses"]):
-                    fallback_cid = (
-                        last_assistant_call_ids[idx]
-                        if idx < len(last_assistant_call_ids)
-                        else f"call_m{msg_idx}_{idx}"
-                    )
-                    oai_messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": resp.get("call_id") or fallback_cid,
-                            "content": json.dumps(resp["response"]),
-                        }
-                    )
-
-        tools = [{"type": "function", "function": schema} for schema in tool_schemas]
-        payload: dict[str, Any] = {
-            "model": self.chat_model,
-            "temperature": 0.2,
-            "messages": oai_messages,
-            "tools": tools,
-            **self.extra_chat_body,
-        }
-        data = self._post("/chat/completions", payload, model=self.chat_model)
-        choices = data.get("choices") or []
-        if not choices:
-            raise LLMProviderError(
-                f"{self.name} returned no choices in agent reply.",
-                provider=self.name,
-                model=self.chat_model,
-                error_kind="invalid_response",
-            )
-        msg_obj = choices[0].get("message") or {}
-
-        parsed_tool_calls: list[ToolCall] = []
-        for raw_tc in msg_obj.get("tool_calls") or []:
-            fn = raw_tc.get("function") or {}
-            name = fn.get("name")
-            if not name:
-                continue
-            raw_args = fn.get("arguments") or "{}"
-            parsed_args = parse_tool_args(raw_args)
-            parsed_tool_calls.append(
-                ToolCall(
-                    name=name,
-                    args=parsed_args,
-                    call_id=raw_tc.get("id"),
-                )
-            )
-
-        content = msg_obj.get("content")
-        text = content.strip() if isinstance(content, str) and content.strip() else None
-        return AgentTurn(
-            text=text,
-            tool_calls=parsed_tool_calls,
-            provider=self.name,
-            model=self.chat_model,
-        )
-
-
-def parse_tool_args(raw_args: Any) -> dict[str, Any]:
-    if isinstance(raw_args, dict):
-        return dict(raw_args)
-    if isinstance(raw_args, str):
-        try:
-            parsed = json.loads(raw_args)
-            return parsed if isinstance(parsed, dict) else {}
-        except json.JSONDecodeError:
-            return {}
-    return {}
 
 
 class DashScopeProvider(OpenAICompatibleProvider):

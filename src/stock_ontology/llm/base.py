@@ -1,11 +1,11 @@
-"""Base LLM provider abstractions, normalized turn models, and error classification."""
+"""Base LLM provider abstractions and error classification."""
 
 from __future__ import annotations
 
 import json
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal, Protocol, TypeVar
 
 import httpx
@@ -34,27 +34,6 @@ ErrorKind = Literal[
     "invalid_response",
     "unknown",
 ]
-
-
-@dataclass
-class ToolCall:
-    """Normalized function call requested by the query agent model."""
-
-    name: str
-    args: dict[str, Any] = field(default_factory=dict)
-    call_id: str | None = None
-
-
-@dataclass
-class AgentTurn:
-    """Single model turn in the agent's tool-calling loop."""
-
-    text: str | None = None
-    tool_calls: list[ToolCall] = field(default_factory=list)
-    raw_content: Any = None
-    provider: str | None = None
-    model: str | None = None
-    fallback_used: bool = False
 
 
 @dataclass
@@ -211,7 +190,7 @@ def classify_error(
 
 
 class LLMClient(Protocol):
-    """Abstract interface used by the ingestion pipeline and query agent."""
+    """Abstract interface used by the ingestion pipeline and the agent's tool embeddings."""
 
     def extract_document(
         self,
@@ -234,14 +213,6 @@ class LLMClient(Protocol):
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
 
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn: ...
-
 
 class BaseLLMProvider(ABC):
     """Base adapter for a single concrete LLM/embedding provider."""
@@ -261,16 +232,6 @@ class BaseLLMProvider(ABC):
         self, *, system_instruction: str, prompt: str, schema: type[T]
     ) -> T:
         """Generate structured JSON validated against Pydantic `schema`."""
-
-    @abstractmethod
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
-        """Run one tool-calling/conversation turn for the query agent."""
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed text inputs into vectors; override on embedding-capable providers."""

@@ -18,10 +18,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from pydantic_ai.models import Model
 
 from stock_ontology.config import Settings
 from stock_ontology.i18n import SUPPORTED_LANGUAGE_CODES, normalize_language, translate
 from stock_ontology.llm import LLMClient, create_llm_client
+from stock_ontology.llm.agent_model import AgentModelChain
 from stock_ontology.services import ServiceError
 from stock_ontology.web.clippy.routes import build_router as build_clippy_router
 from stock_ontology.web.notes.routes import build_router as build_notes_router
@@ -37,14 +39,14 @@ class LanguageRequest(BaseModel):
 
 def create_app(
     settings: Settings, llm: LLMClient | None = None, *, note_actions: bool = False,
-    registry_origin: str | None = None,
+    registry_origin: str | None = None, agent_model: AgentModelChain | Model | None = None,
 ) -> FastAPI:
     """Create the library. `note_actions` enables Process and corrections, which queue worker jobs."""
     app = FastAPI(title="Stock Ontology Library", version="0.1.0")
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     shell = WebShell(
         settings, llm if llm is not None else create_llm_client(settings), note_actions=note_actions,
-        registry_origin=registry_origin,
+        registry_origin=registry_origin, agent_model=agent_model,
     )
     for build_router in (
         build_research_router,

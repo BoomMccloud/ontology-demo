@@ -10,7 +10,16 @@ import pytest
 
 from stock_ontology.agent import OntologyAgent
 from stock_ontology.db import OntologyDB
-from stock_ontology.llm import AgentTurn, ToolCall
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from stock_ontology.models import ConsensusSynthesis, Edge, ExtractionResult, Node
 
 DIM = 16
@@ -20,6 +29,21 @@ def _unit_vec(idx: int) -> list[float]:
     v = [0.0] * DIM
     v[idx % DIM] = 1.0
     return v
+
+
+def _text(text: str) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(text)])
+
+
+def _call(name: str, args: dict[str, Any], call_id: str | None = None) -> ModelResponse:
+    part = ToolCallPart(name, args, tool_call_id=call_id) if call_id else ToolCallPart(name, args)
+    return ModelResponse(parts=[part])
+
+
+def _last_part(messages: list[ModelMessage]) -> Any:
+    """The last part of the latest request: the user's prompt or a tool return."""
+    request = next(m for m in reversed(messages) if isinstance(m, ModelRequest))
+    return request.parts[-1]
 
 
 def _seed_db(db_path: Path) -> None:
@@ -110,10 +134,14 @@ def _seed_db(db_path: Path) -> None:
 
 
 class ScriptedAgentLLM:
-    """Offline mock driving tool calls and inspecting real tool responses."""
+    """Offline `LLMClient` for tool embeddings, plus a scripted Pydantic AI model that inspects real tool responses."""
 
     def __init__(self, loop_forever: bool = False) -> None:
         self.loop_forever = loop_forever
+
+    @property
+    def model(self) -> FunctionModel:
+        return FunctionModel(self.respond, model_name="scripted")
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []
@@ -133,83 +161,54 @@ class ScriptedAgentLLM:
     def synthesize_consensus(self, **kwargs: Any) -> ConsensusSynthesis:
         raise NotImplementedError
 
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
+    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if self.loop_forever:
-            return AgentTurn(tool_calls=[ToolCall(name="list_catalog", args={})])
+            return _call("list_catalog", {})
 
-        last_msg = messages[-1]
-        if last_msg["role"] == "user":
-            text = last_msg["text"].lower()
+        last = _last_part(messages)
+        if isinstance(last, UserPromptPart):
+            text = str(last.content).lower()
             if "theme" in text or "power bottleneck" in text:
-                return AgentTurn(
-                    tool_calls=[
-                        ToolCall(
-                            name="find_theme_companies",
-                            args={"theme_query": "AI Data Center Power Bottleneck"},
-                        )
-                    ]
-                )
+                return _call("find_theme_companies", {"theme_query": "AI Data Center Power Bottleneck"})
             if "consensus" in text or "meeting" in text:
-                return AgentTurn(
-                    tool_calls=[
-                        ToolCall(
-                            name="get_entity_overview",
-                            args={"entity_name_or_id": "NVDA"},
-                        )
-                    ]
-                )
+                return _call("get_entity_overview", {"entity_name_or_id": "NVDA"})
             if "how many" in text and "negative" in text:
-                return AgentTurn(
-                    tool_calls=[
-                        ToolCall(
-                            name="query_entity_signals",
-                            args={
-                                "entity_name_or_id": "NVDA",
-                                "sentiments": ["negative"],
-                                "categories": ["rumor", "news"],
-                            },
-                        )
-                    ]
+                return _call(
+                    "query_entity_signals",
+                    {
+                        "entity_name_or_id": "NVDA",
+                        "sentiments": ["negative"],
+                        "categories": ["rumor", "news"],
+                    },
                 )
-            return AgentTurn(tool_calls=[ToolCall(name="list_catalog", args={})])
+            return _call("list_catalog", {})
 
-        if last_msg["role"] == "tool":
-            resp = last_msg["responses"][0]
-            tool_name = resp["name"]
-            payload = resp["response"]
+        if isinstance(last, ToolReturnPart):
+            tool_name = last.tool_name
+            payload = last.content
             if tool_name == "get_entity_overview":
                 cons = payload["consensus"]
                 pillars = cons["facets"]["pillars"]
                 src = payload["events"][0]["facets"]["source"]["file_path"]
-                return AgentTurn(
-                    text=(
-                        f"Verdict: Keep ({cons['facets']['stance'].upper()}). "
-                        f"Checked pillars: {json.dumps(pillars)}. "
-                        f"Source: {src}. Read-only mode: save note to data/NVDA/ and run ingest to update DB."
-                    )
+                return _text(
+                    f"Verdict: Keep ({cons['facets']['stance'].upper()}). "
+                    f"Checked pillars: {json.dumps(pillars)}. "
+                    f"Source: {src}. Read-only mode: save note to data/NVDA/ and run ingest to update DB."
                 )
             if tool_name == "query_entity_signals":
                 total = payload["total_matched"]
                 unclassified = payload["unclassified_in_scope"]
                 names = ", ".join(it["name"] for it in payload["items"])
-                return AgentTurn(
-                    text=(
-                        f"Found {total} negative rumor/news items for {payload['entity']['name']}: "
-                        f"{names}. Unclassified legacy items in scope: {unclassified}."
-                    )
+                return _text(
+                    f"Found {total} negative rumor/news items for {payload['entity']['name']}: "
+                    f"{names}. Unclassified legacy items in scope: {unclassified}."
                 )
             if tool_name == "find_theme_companies":
                 names = [c["company"]["name"] for c in payload["companies"]]
-                return AgentTurn(text=f"Affected companies: {', '.join(sorted(names))}.")
-            return AgentTurn(text=json.dumps(payload))
+                return _text(f"Affected companies: {', '.join(sorted(names))}.")
+            return _text(json.dumps(payload))
 
-        return AgentTurn(text="No action.")
+        return _text("No action.")
 
 
 def test_agent_requires_read_only_db(tmp_path: Path) -> None:
@@ -217,7 +216,7 @@ def test_agent_requires_read_only_db(tmp_path: Path) -> None:
     _seed_db(db_path)
     with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as writable_db:
         with pytest.raises(ValueError, match="read-only"):
-            OntologyAgent(writable_db, ScriptedAgentLLM())
+            OntologyAgent(writable_db, ScriptedAgentLLM(), model=ScriptedAgentLLM().model)
 
 
 def test_agent_ux1_meeting_note_consensus_check(tmp_path: Path) -> None:
@@ -226,7 +225,8 @@ def test_agent_ux1_meeting_note_consensus_check(tmp_path: Path) -> None:
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
         before_stats = ro_db.get_stats()
-        agent = OntologyAgent(ro_db, ScriptedAgentLLM())
+        llm = ScriptedAgentLLM()
+        agent = OntologyAgent(ro_db, llm, model=llm.model)
         reply = agent.ask(
             "I just had a meeting with a supply engineer confirming Blackwell yields are fine "
             "and only small colos face transformer delays. Does this change our NVDA consensus?"
@@ -245,7 +245,8 @@ def test_agent_ux2_theme_related_companies(tmp_path: Path) -> None:
     _seed_db(db_path)
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
-        agent = OntologyAgent(ro_db, ScriptedAgentLLM())
+        llm = ScriptedAgentLLM()
+        agent = OntologyAgent(ro_db, llm, model=llm.model)
         reply = agent.ask(
             "In this meeting we discussed AI Data Center Power Bottleneck. What are the related companies?"
         )
@@ -260,7 +261,8 @@ def test_agent_tool_error_and_max_rounds_guard(tmp_path: Path) -> None:
     _seed_db(db_path)
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
-        agent = OntologyAgent(ro_db, ScriptedAgentLLM(loop_forever=True))
+        llm = ScriptedAgentLLM(loop_forever=True)
+        agent = OntologyAgent(ro_db, llm, model=llm.model)
         err_res = agent.execute_tool("nonexistent_tool", {})
         assert "error" in err_res
 
@@ -392,7 +394,8 @@ def test_agent_ux3_query_entity_signals_negative_rumors_and_news(tmp_path: Path)
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
         before_stats = ro_db.get_stats()
-        agent = OntologyAgent(ro_db, ScriptedAgentLLM())
+        llm = ScriptedAgentLLM()
+        agent = OntologyAgent(ro_db, llm, model=llm.model)
         reply = agent.ask("How many negative rumors or news have we heard about NVDA?")
 
         assert "Found 3 negative rumor/news items for NVIDIA" in reply
@@ -430,27 +433,16 @@ def test_agent_ux3_query_entity_signals_negative_rumors_and_news(tmp_path: Path)
 class ExtraToolsetLLM(ScriptedAgentLLM):
     """Scripted model that calls a non-ontology tool only when the agent offers it."""
 
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
-        last_msg = messages[-1]
-        if last_msg["role"] == "user":
-            offered = {schema["name"] for schema in tool_schemas}
+    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        last = _last_part(messages)
+        if isinstance(last, UserPromptPart):
+            offered = {tool.name for tool in info.function_tools}
             if "get_house_view" not in offered:
-                return AgentTurn(text="House view tool was not offered.")
-            return AgentTurn(
-                tool_calls=[
-                    ToolCall(name="get_house_view", args={"ticker": "NVDA"}, call_id="call_hv")
-                ]
-            )
-        if last_msg["role"] == "tool":
-            resp = last_msg["responses"][0]
-            return AgentTurn(text=f"House view from {resp['name']}: {json.dumps(resp['response'])}")
-        return AgentTurn(text="No action.")
+                return _text("House view tool was not offered.")
+            return _call("get_house_view", {"ticker": "NVDA"}, call_id="call_hv")
+        if isinstance(last, ToolReturnPart):
+            return _text(f"House view from {last.tool_name}: {json.dumps(last.content)}")
+        return _text("No action.")
 
 
 def test_agent_runs_tools_from_extra_pydantic_ai_toolset(tmp_path: Path) -> None:
@@ -465,9 +457,11 @@ def test_agent_runs_tools_from_extra_pydantic_ai_toolset(tmp_path: Path) -> None
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
         before_stats = ro_db.get_stats()
+        llm = ExtraToolsetLLM()
         agent = OntologyAgent(
             ro_db,
-            ExtraToolsetLLM(),
+            llm,
+            model=llm.model,
             toolsets=[FunctionToolset([get_house_view])],
         )
         reply = agent.ask("What is the house view on NVDA?")
@@ -480,25 +474,26 @@ def test_agent_runs_tools_from_extra_pydantic_ai_toolset(tmp_path: Path) -> None
 
 
 class RecordingAgentLLM(ScriptedAgentLLM):
-    """Scripted model that records every request the agent sends to the `LLMClient` layer."""
+    """Scripted model that records every request the agent sends to its Pydantic AI model."""
 
-    def __init__(self, turns: list[AgentTurn]) -> None:
+    def __init__(self, turns: list[ModelResponse]) -> None:
         super().__init__()
         self.turns = list(turns)
         self.requests: list[dict[str, Any]] = []
 
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
+    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         self.requests.append(
             {
-                "system_instruction": system_instruction,
-                "messages": [dict(m) for m in messages],
-                "tool_schemas": tool_schemas,
+                "instructions": info.instructions,
+                "messages": list(messages),
+                "tool_schemas": [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters_json_schema,
+                    }
+                    for tool in info.function_tools
+                ],
             }
         )
         return self.turns.pop(0)
@@ -511,74 +506,30 @@ def test_agent_offers_ontology_tools_with_existing_schemas_and_prompt(tmp_path: 
     _seed_db(db_path)
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
-        llm = RecordingAgentLLM([AgentTurn(text="Hello.")])
-        agent = OntologyAgent(ro_db, llm, language="zh")
+        llm = RecordingAgentLLM([_text("Hello.")])
+        agent = OntologyAgent(ro_db, llm, model=llm.model, language="zh")
         assert agent.ask("hi") == "Hello."
 
     request = llm.requests[0]
     assert request["tool_schemas"] == TOOL_SCHEMAS
-    assert request["system_instruction"] == build_agent_system_prompt("zh")
-    assert request["messages"] == [{"role": "user", "text": "hi"}]
-
-
-def test_pydantic_ai_model_round_trips_raw_content_call_ids_and_provider(tmp_path: Path) -> None:
-    from pydantic_ai.messages import ModelResponse
-
-    raw = object()  # Stands in for a Gemini `types.Content` that must be replayed as-is.
-    db_path = tmp_path / "agent.db"
-    _seed_db(db_path)
-
-    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
-        llm = RecordingAgentLLM(
-            [
-                AgentTurn(
-                    tool_calls=[ToolCall(name="list_catalog", args={})],
-                    raw_content=raw,
-                    provider="gemini",
-                    model="gemini-x",
-                    fallback_used=True,
-                ),
-                AgentTurn(text="Catalog has NVIDIA."),
-            ]
-        )
-        agent = OntologyAgent(ro_db, llm)
-        reply = agent.ask("What is in the catalog?")
-
-    assert reply == "Catalog has NVIDIA."
-    assert [entry["tool"] for entry in agent.tool_trace] == ["list_catalog"]
-    # A turn without provider info keeps the last reported provider, as before.
-    assert (agent.last_provider, agent.last_model, agent.last_fallback_used) == ("gemini", "gemini-x", True)
-
-    second = llm.requests[1]["messages"]
-    assert [m["role"] for m in second] == ["user", "model", "tool"]
-    model_msg, tool_msg = second[1], second[2]
-    assert model_msg["raw_content"] is raw
-    assert model_msg["text"] is None
-    # A provider call id of None stays None rather than becoming a framework-generated id.
-    assert model_msg["tool_calls"] == [{"name": "list_catalog", "args": {}, "call_id": None}]
-    assert tool_msg["responses"][0]["name"] == "list_catalog"
-    assert tool_msg["responses"][0]["call_id"] is None
-    assert tool_msg["responses"][0]["response"] == agent.tool_trace[0]["result"]
-
-    first_response = agent.messages[1]
-    assert isinstance(first_response, ModelResponse)
-    assert first_response.provider_details["raw_content"] is raw
+    assert request["instructions"] == build_agent_system_prompt("zh")
+    [only] = request["messages"]
+    assert isinstance(only, ModelRequest)
+    assert [(type(p), p.content) for p in only.parts] == [(UserPromptPart, "hi")]
 
 
 class ProviderStampedAgentLLM(ScriptedAgentLLM):
-    """Scripted model that stamps each model turn with a distinct provider, model and fallback flag."""
+    """Scripted model that stamps each model call with a distinct provider."""
 
     def __init__(self) -> None:
         super().__init__()
         self.calls = 0
 
-    def generate_agent_reply(self, **kwargs: Any) -> AgentTurn:
-        turn = super().generate_agent_reply(**kwargs)
+    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        response = super().respond(messages, info)
         self.calls += 1
-        turn.provider = f"prov-{self.calls}"
-        turn.model = f"model-{self.calls}"
-        turn.fallback_used = self.calls == 4
-        return turn
+        response.provider_name = f"prov-{self.calls}"
+        return response
 
 
 def test_agent_chat_returns_immutable_turn_contract(tmp_path: Path) -> None:
@@ -588,8 +539,20 @@ def test_agent_chat_returns_immutable_turn_contract(tmp_path: Path) -> None:
     _seed_db(db_path)
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
-        agent = OntologyAgent(ro_db, ProviderStampedAgentLLM())
+        from pydantic_ai.exceptions import ModelHTTPError
+        from pydantic_ai.models.fallback import FallbackModel
+
+        def rate_limited(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelHTTPError(429, "model-x", {"error": "quota"})
+
+        llm = ProviderStampedAgentLLM()
+        agent = OntologyAgent(ro_db, llm, model=FunctionModel(llm.respond, model_name="model-a"))
         first = agent.chat("Does this meeting change our NVDA consensus?", ())
+        # The second turn's first model is rate limited, so a fallback answers it.
+        agent.model = FallbackModel(
+            FunctionModel(rate_limited, model_name="model-x"),
+            FunctionModel(llm.respond, model_name="model-b"),
+        )
         second = agent.chat(
             "In this meeting we discussed AI Data Center Power Bottleneck. Related companies?",
             first.history,
@@ -623,8 +586,8 @@ def test_agent_chat_returns_immutable_turn_contract(tmp_path: Path) -> None:
     assert second.tools_used == ("find_theme_companies",)
 
     # Provider fields come from the turn's final model call.
-    assert (first.provider, first.model, first.fallback_used) == ("prov-2", "model-2", False)
-    assert (second.provider, second.model, second.fallback_used) == ("prov-4", "model-4", True)
+    assert (first.provider, first.model, first.fallback_used) == ("prov-2", "model-a", False)
+    assert (second.provider, second.model, second.fallback_used) == ("prov-4", "model-b", True)
 
 
 def test_prompt_and_tool_schema_vocab_lists_come_from_vocab() -> None:
@@ -693,7 +656,9 @@ def _seed_search_db(db_path: Path) -> None:
 
 def _tool_response(llm: RecordingAgentLLM) -> dict[str, Any]:
     """The tool result the agent handed back to the model on the second request."""
-    return llm.requests[1]["messages"][-1]["responses"][0]["response"]
+    part = _last_part(llm.requests[1]["messages"])
+    assert isinstance(part, ToolReturnPart)
+    return part.content
 
 
 def test_agent_search_nodes_returns_entity_first_with_match_reasons(tmp_path: Path) -> None:
@@ -703,11 +668,11 @@ def test_agent_search_nodes_returns_entity_first_with_match_reasons(tmp_path: Pa
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
         llm = AppleNearestSearchLLM(
             [
-                AgentTurn(tool_calls=[ToolCall(name="search_nodes", args={"query": "nvidia"})]),
-                AgentTurn(text="done"),
+                _call("search_nodes", {"query": "nvidia"}),
+                _text("done"),
             ]
         )
-        turn = OntologyAgent(ro_db, llm).chat("nvidia", ())
+        turn = OntologyAgent(ro_db, llm, model=llm.model).chat("nvidia", ())
 
     assert turn.tools_used == ("search_nodes",)
     results = _tool_response(llm)["results"]
@@ -737,12 +702,12 @@ def test_agent_search_notes_greps_only_supported_notes_inside_data_dir(tmp_path:
         before_stats = ro_db.get_stats()
         llm = AppleNearestSearchLLM(
             [
-                AgentTurn(tool_calls=[ToolCall(name="search_notes", args={"query": "nvidia"})]),
-                AgentTurn(text="done"),
+                _call("search_notes", {"query": "nvidia"}),
+                _text("done"),
             ]
         )
         try:
-            agent = OntologyAgent(ro_db, llm, data_dir=data_dir)  # type: ignore[call-arg]
+            agent = OntologyAgent(ro_db, llm, model=llm.model, data_dir=data_dir)
         except TypeError as exc:
             pytest.fail(f"OntologyAgent does not accept data_dir for note search: {exc}")
         turn = agent.chat("nvidia", ())
@@ -758,3 +723,98 @@ def test_agent_search_notes_greps_only_supported_notes_inside_data_dir(tmp_path:
     dumped = json.dumps(passages)
     for marker in ("OUTSIDE-MARKER-1", "HIDDEN-FILE-MARKER-3", "UNSUPPORTED-MARKER-4"):
         assert marker not in dumped
+
+
+class _NoChatLLM:
+    """`LLMClient` for tool embeddings only; records any chat call so a test can assert there was none."""
+
+    def __init__(self) -> None:
+        self.chat_calls = 0
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [_unit_vec(15) for _ in texts]
+
+    def extract_document(self, **kwargs: Any) -> ExtractionResult:
+        raise NotImplementedError
+
+    def synthesize_consensus(self, **kwargs: Any) -> ConsensusSynthesis:
+        raise NotImplementedError
+
+    def generate_agent_reply(self, **kwargs: Any) -> Any:
+        self.chat_calls += 1
+        raise AssertionError("the agent must answer through its Pydantic AI model, not LLMClient")
+
+
+def test_agent_answers_through_native_model_with_model_settings(tmp_path: Path) -> None:
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from stock_ontology.agent import build_agent_system_prompt
+
+    db_path = tmp_path / "agent.db"
+    _seed_db(db_path)
+    seen: list[AgentInfo] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info)
+        returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart("list_catalog", {})], provider_name="gemini")
+        return ModelResponse(parts=[TextPart("Catalog has " + ", ".join(sorted(e["name"] for e in returns[-1].content["entities"])))], provider_name="gemini")
+
+    llm = _NoChatLLM()
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
+        agent = OntologyAgent(
+            ro_db,
+            llm,
+            model=FunctionModel(respond, model_name="gemini-test"),
+            model_settings={"max_tokens": 123},
+        )
+        turn = agent.chat("What is in the catalog?", ())
+
+    # Every model request (tool round and final answer) carries the agent's model settings.
+    assert len(seen) == 2
+    assert all((info.model_settings or {}).get("max_tokens") == 123 for info in seen)
+    # The system prompt reaches the native model as Pydantic AI instructions.
+    assert all(info.instructions == build_agent_system_prompt() for info in seen)
+    # Tools still run and the answer comes from the native model; LLMClient made no chat call.
+    assert turn.tools_used == ("list_catalog",)
+    assert turn.reply == "Catalog has NVIDIA, TSMC, Vertiv"
+    assert (turn.provider, turn.model, turn.fallback_used) == ("gemini", "gemini-test", False)
+    assert llm.chat_calls == 0
+
+
+def test_agent_falls_back_to_next_native_model_and_stamps_answering_provider(tmp_path: Path) -> None:
+    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+    from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    db_path = tmp_path / "agent.db"
+    _seed_db(db_path)
+    calls: list[str] = []
+
+    def rate_limited(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append("gemini")
+        raise ModelHTTPError(429, "gemini-test", {"error": "quota"})
+
+    def answers(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append("dashscope")
+        return ModelResponse(parts=[TextPart("Answered by the fallback.")], provider_name="dashscope")
+
+    llm = _NoChatLLM()
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
+        agent = OntologyAgent(
+            ro_db,
+            llm,
+            model=FallbackModel(
+                FunctionModel(rate_limited, model_name="gemini-test"),
+                FunctionModel(answers, model_name="qwen-test"),
+            ),
+        )
+        turn = agent.chat("Anything new on NVDA?", ())
+
+    assert calls == ["gemini", "dashscope"]
+    assert turn.reply == "Answered by the fallback."
+    assert (turn.provider, turn.model, turn.fallback_used) == ("dashscope", "qwen-test", True)
+    assert llm.chat_calls == 0

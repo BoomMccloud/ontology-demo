@@ -138,7 +138,8 @@ def client(tmp_path: Path) -> TestClient:
         encoding="utf-8",
     )
     settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=data_dir)
-    return TestClient(create_app(settings, llm=FakeWebLLM()))
+    llm = FakeWebLLM()
+    return TestClient(create_app(settings, llm=llm, agent_model=llm.model))
 
 
 def _all_routes(routes: list[Any]) -> list[Any]:

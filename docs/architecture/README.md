@@ -10,7 +10,7 @@ worker, which are described below.
 | Data pipeline | `pipeline.py`, `llm/prompts.py` | [pipeline.md](pipeline.md) |
 | LLM layer | `llm/` | [llm.md](llm.md) |
 | Search | `search.py` | [search.md](search.md) |
-| Agent | `agent.py`, `llm/pydantic_ai_model.py` | [agent.md](agent.md) |
+| Agent | `agent.py`, `llm/agent_model.py` | [agent.md](agent.md) |
 | Web app | `web/` | [web.md](web.md) |
 | Governance | `audit.py`, `repair.py` | [governance.md](governance.md) |
 | Services | `services/` | [Services and worker](#services-and-worker) |

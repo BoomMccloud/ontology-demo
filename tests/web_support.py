@@ -9,10 +9,19 @@ from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from stock_ontology.config import Settings
 from stock_ontology.db import OntologyDB
-from stock_ontology.llm import AgentTurn, ToolCall
 from stock_ontology.models import ConsensusSynthesis, Edge, ExtractionResult, Node
 from stock_ontology.web import create_app
 
@@ -145,27 +154,29 @@ class FakeWebLLM:
     def synthesize_consensus(self, **kwargs: Any) -> ConsensusSynthesis:
         raise NotImplementedError
 
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
-        self.seen_system_instructions.append(system_instruction)
-        last = messages[-1]
-        if last["role"] == "user":
-            return AgentTurn(
-                tool_calls=[ToolCall(name="get_entity_overview", args={"entity_name_or_id": "NVDA"})]
+    @property
+    def model(self) -> FunctionModel:
+        """The Clippy agent's chat model, for `create_app(..., agent_model=llm.model)`."""
+        return FunctionModel(self.respond, model_name="fake-web")
+
+    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        self.seen_system_instructions.append(info.instructions or "")
+        last = next(m for m in reversed(messages) if isinstance(m, ModelRequest)).parts[-1]
+        if isinstance(last, UserPromptPart):
+            return ModelResponse(parts=[ToolCallPart("get_entity_overview", {"entity_name_or_id": "NVDA"})])
+        if isinstance(last, ToolReturnPart):
+            stance = last.content["consensus"]["facets"]["stance"]
+            prior_turns = sum(
+                1
+                for m in messages
+                if isinstance(m, ModelRequest)
+                for p in m.parts
+                if isinstance(p, UserPromptPart)
             )
-        if last["role"] == "tool":
-            payload = last["responses"][0]["response"]
-            stance = payload["consensus"]["facets"]["stance"]
-            prior_turns = sum(1 for m in messages if m["role"] == "user")
-            return AgentTurn(
-                text=f"NVDA consensus is {stance}. Conversation user turns={prior_turns}."
+            return ModelResponse(
+                parts=[TextPart(f"NVDA consensus is {stance}. Conversation user turns={prior_turns}.")]
             )
-        return AgentTurn(text="Ready.")
+        return ModelResponse(parts=[TextPart("Ready.")])
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +321,7 @@ def search_client(tmp_path: Path, llm: Any) -> tuple[TestClient, Path, Path]:
     data_dir = tmp_path / "data"
     seed_search_notes(data_dir)
     settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=data_dir)
-    return TestClient(create_app(settings, llm=llm)), db_path, data_dir
+    return TestClient(create_app(settings, llm=llm, agent_model=llm.model)), db_path, data_dir
 
 
 def note_tree(root: Path) -> dict[str, bytes]:

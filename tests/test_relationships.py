@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from typer.testing import CliRunner
 
 from stock_ontology.agent import OntologyAgent
@@ -20,7 +22,6 @@ from stock_ontology.cli import app as cli_app
 from stock_ontology.config import Settings
 from stock_ontology.db import OntologyDB
 from stock_ontology.i18n import LOCALES_DIR, SUPPORTED_LANGUAGE_CODES, load_catalogs
-from stock_ontology.llm import AgentTurn, ToolCall
 from stock_ontology.models import (
     ConsensusSynthesis,
     Edge,
@@ -128,34 +129,23 @@ class _FakeWebAndAgentLLM:
     def synthesize_consensus(self, **_: Any) -> ConsensusSynthesis:
         raise NotImplementedError
 
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
-        last = messages[-1]
-        if last["role"] == "user":
-            return AgentTurn(
-                tool_calls=[
-                    ToolCall(
-                        name="get_entity_overview",
-                        args={"entity_name_or_id": self.script_overview_entity},
-                    )
-                ]
+    @property
+    def model(self) -> FunctionModel:
+        return FunctionModel(self.respond)
+
+    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        request = next(m for m in reversed(messages) if isinstance(m, ModelRequest))
+        last = request.parts[-1]
+        if not isinstance(last, ToolReturnPart):
+            return ModelResponse(
+                parts=[ToolCallPart("get_entity_overview", {"entity_name_or_id": self.script_overview_entity})]
             )
-        if last["role"] == "tool":
-            payload = last["responses"][0]["response"]
-            theme_rels = [t.get("relation") for t in payload.get("themes", [])]
-            peer_rels = [r.get("relation") for r in payload.get("related_entities", [])]
-            return AgentTurn(
-                text=(
-                    f"themes={len(theme_rels)}:{theme_rels}; "
-                    f"peers={len(peer_rels)}:{peer_rels}"
-                )
-            )
-        return AgentTurn(text="OK")
+        payload = last.content
+        theme_rels = [t.get("relation") for t in payload.get("themes", [])]
+        peer_rels = [r.get("relation") for r in payload.get("related_entities", [])]
+        return ModelResponse(
+            parts=[TextPart(f"themes={len(theme_rels)}:{theme_rels}; peers={len(peer_rels)}:{peer_rels}")]
+        )
 
 
 def _seed_read_consolidation_db(db_path: Path) -> None:
@@ -730,12 +720,12 @@ def test_guardrail_read_only_agent_web_inspect_and_audit(
         nodes_before = [tuple(r) for r in rw_db.conn.execute("SELECT * FROM nodes ORDER BY id").fetchall()]
         edges_before = [tuple(r) for r in rw_db.conn.execute("SELECT * FROM edges ORDER BY id").fetchall()]
         with pytest.raises(ValueError, match="read-only"):
-            OntologyAgent(rw_db, _FakeWebAndAgentLLM())
+            OntologyAgent(rw_db, _FakeWebAndAgentLLM(), model=_FakeWebAndAgentLLM().model)
 
     llm = _FakeWebAndAgentLLM(script_overview_entity="Vertiv")
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro_db:
         assert ro_db.conn.execute("PRAGMA query_only").fetchone()[0] == 1
-        agent = OntologyAgent(ro_db, llm)
+        agent = OntologyAgent(ro_db, llm, model=llm.model)
         reply = agent.ask("Summarize Vertiv relationships")
         assert "EXPOSED_TO" in reply
         assert "BUY" in reply
@@ -743,7 +733,7 @@ def test_guardrail_read_only_agent_web_inspect_and_audit(
         assert audit_rep.summary.total_edges > 0
 
     settings = Settings(db_path=db_path, embedding_dim=DIM, data_dir=tmp_path, registry_path=reg_path)
-    client = TestClient(create_app(settings, llm=llm))
+    client = TestClient(create_app(settings, llm=llm, agent_model=llm.model))
     for path in ("/entity/ent_vrt", "/theme/thm_power", "/ontology", "/ontology?tab=edges", "/ontology?tab=audit"):
         assert client.get(path).status_code == 200
     assert client.post("/api/chat", json={"message": "Check Vertiv"}).status_code == 200

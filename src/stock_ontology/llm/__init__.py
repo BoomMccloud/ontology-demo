@@ -1,7 +1,6 @@
 """Unified multi-LLM provider package with automatic fallback routing."""
 
 from stock_ontology.llm.base import (
-    AgentTurn,
     AllProvidersFailedError,
     BaseLLMProvider,
     ErrorKind,
@@ -9,7 +8,6 @@ from stock_ontology.llm.base import (
     LLMProviderError,
     ProviderAttempt,
     ProviderConfigError,
-    ToolCall,
     classify_error,
 )
 from stock_ontology.llm.prompts import (
@@ -36,7 +34,6 @@ DashScopeClient = DashScopeProvider
 GeminiClient = GeminiProvider
 
 __all__ = [
-    "AgentTurn",
     "AllProvidersFailedError",
     "AnthropicProvider",
     "BaseLLMProvider",
@@ -55,7 +52,6 @@ __all__ = [
     "OpenAIProvider",
     "ProviderAttempt",
     "ProviderConfigError",
-    "ToolCall",
     "build_consensus_prompt",
     "build_extraction_prompt",
     "build_stage_prompt",

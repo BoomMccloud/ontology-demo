@@ -10,7 +10,6 @@ from typing import Any, TypeVar
 
 from stock_ontology.config import ProviderName, Settings
 from stock_ontology.llm.base import (
-    AgentTurn,
     AllProvidersFailedError,
     BaseLLMProvider,
     ProviderAttempt,
@@ -252,27 +251,6 @@ class LLMRouter:
             is_embedding=True,
         )
         return result
-
-    def generate_agent_reply(
-        self,
-        *,
-        system_instruction: str,
-        messages: list[dict[str, Any]],
-        tool_schemas: list[dict[str, Any]],
-    ) -> AgentTurn:
-        turn, provider, used_fallback = self._execute(
-            self.chat_providers,
-            "generate_agent_reply",
-            lambda p: p.generate_agent_reply(
-                system_instruction=system_instruction,
-                messages=messages,
-                tool_schemas=tool_schemas,
-            ),
-        )
-        turn.provider = turn.provider or provider.name
-        turn.model = turn.model or provider.chat_model
-        turn.fallback_used = used_fallback
-        return turn
 
     def describe(self) -> dict[str, Any]:
         """Return safe diagnostics about configured chains and runtime state."""
