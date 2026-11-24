@@ -12,6 +12,7 @@ never extend it or emit shell navigation, and every literal class token is defin
 from __future__ import annotations
 
 import re
+from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -35,31 +36,31 @@ NOTE_FILE = "NVDA/2026-10-15_q3.md"
 VARIANTS: list[tuple[str, str, str, str | None]] = [
     ("/", "research", "overview", None),
     ("/companies", "research", "companies", None),
-    ("/companies?kind=other", "research", "companies", None),
+    ("/companies?kind=other", "research", "other_entities", None),
     ("/themes", "research", "themes", None),
-    ("/catalog", "notes", "notes_by_company", None),
-    ("/catalog?view=company", "notes", "notes_by_company", None),
-    ("/catalog?view=author", "notes", "notes_by_author", None),
-    ("/catalog?view=person", "notes", "notes_by_author", None),
-    ("/catalog?view=all", "notes", "notes_all", None),
-    ("/catalog?view=company&dir=NVDA", "notes", "notes_by_company", "NVIDIA"),
-    ("/catalog?view=author&author=Kenji+Sato", "notes", "notes_by_author", "Kenji Sato"),
-    (f"/catalog?file={NOTE_FILE}", "notes", "notes_by_company", "NVDA Q3 Preview"),
-    (f"/catalog?view=all&file={NOTE_FILE}", "notes", "notes_all", "NVDA Q3 Preview"),
-    ("/notes/new", "notes", "notes_new", None),
-    ("/search", "research", "search", None),
-    ("/search?q=Blackwell", "research", "search", None),
-    ("/search?in=notes", "notes", "notes_search", None),
-    ("/search?in=notes&q=Blackwell", "notes", "notes_search", None),
+    ("/catalog", "notes", "notes_library", None),
+    ("/catalog?view=company", "notes", "notes_library", None),
+    ("/catalog?view=author", "notes", "notes_library", None),
+    ("/catalog?view=person", "notes", "notes_library", None),
+    ("/catalog?view=all", "notes", "notes_library", None),
+    ("/catalog?view=company&dir=NVDA", "notes", "notes_library", "NVIDIA"),
+    ("/catalog?view=author&author=Kenji+Sato", "notes", "notes_library", "Kenji Sato"),
+    (f"/catalog?file={NOTE_FILE}", "notes", "notes_library", "parent-only"),
+    (f"/catalog?view=all&file={NOTE_FILE}", "notes", "notes_library", "parent-only"),
+    ("/notes/new", "notes", "notes_library", None),
+    ("/search", "research", "overview", None),
+    ("/search?q=Blackwell", "research", "overview", None),
+    ("/search?in=notes", "notes", "notes_library", None),
+    ("/search?in=notes&q=Blackwell", "notes", "notes_library", None),
     ("/entity/ent_nvda", "research", "companies", "NVIDIA"),
-    ("/entity/ent_kenji", "research", "companies", "Kenji Sato"),
+    ("/entity/ent_kenji", "research", "other_entities", "Kenji Sato"),
     ("/theme/thm_power", "research", "themes", "AI Data Center Power Bottleneck"),
-    ("/ontology", "ontology", "entity", None),
-    ("/ontology?tab=entity", "ontology", "entity", None),
-    ("/ontology?tab=event", "ontology", "event", None),
-    ("/ontology?tab=view", "ontology", "view", None),
-    ("/ontology?tab=theme", "ontology", "theme", None),
-    ("/ontology?tab=edges", "ontology", "edges", None),
+    ("/ontology", "ontology", "graph", None),
+    ("/ontology?tab=entity", "ontology", "graph", None),
+    ("/ontology?tab=event", "ontology", "graph", None),
+    ("/ontology?tab=view", "ontology", "graph", None),
+    ("/ontology?tab=theme", "ontology", "graph", None),
+    ("/ontology?tab=edges", "ontology", "graph", None),
     ("/ontology?tab=registry", "ontology", "registry", None),
     ("/ontology?tab=audit", "ontology", "audit", None),
 ]
@@ -190,6 +191,10 @@ def test_page_marks_workflow_section_breadcrumb_and_dock(
 
     assert "breadcrumb" in page.seen, url
     crumbs = page.crumbs
+    if last_crumb == "parent-only":
+        assert len(crumbs) == 1, (url, crumbs)
+        assert crumbs[0]["link"] and not crumbs[0]["current"], (url, crumbs)
+        return
     assert len(crumbs) >= 2, (url, crumbs)
     first, *middle, last = crumbs
     assert first["link"] is True and first["text"] == workflow.capitalize(), (url, crumbs)
@@ -313,3 +318,96 @@ def test_navigation_registry_lookup() -> None:
 
     with pytest.raises(KeyError):
         resolve_nav("/not-registered", {}, {})
+
+
+def test_library_has_one_workspace_per_workflow_and_one_shared_theme_control(client: TestClient) -> None:
+    expected = {
+        "/": ("research", "overview", ["companies", "themes", "other_entities"]),
+        "/companies?kind=other": ("research", "other_entities", ["overview", "companies", "themes"]),
+        "/catalog?view=author": ("notes", "notes_library", []),
+        "/ontology?tab=event": ("ontology", "graph", ["registry", "audit"]),
+    }
+    for url, (workflow, owner, rail_links) in expected.items():
+        text = client.get(url).text
+        parser = _parse(text)
+        assert parser.current["top-nav"] == [workflow], url
+        assert parser.current["side-nav"] == [owner], url
+        rail = text.split('id="side-nav"', 1)[1].split("</nav>", 1)[0]
+        assert re.findall(r'<a [^>]*data-nav="([^"]+)"', rail) == rail_links, url
+        assert text.count('href="/search"') == 1, url
+        assert 'href="/static/library-modern.css"' in text
+        assert '<select id="library-theme">' in text
+        assert '<option value="modern">Modern</option>' in text
+        assert '<option value="classic">Classic</option>' in text
+        assert 'src="/static/library-theme.js"' in text
+
+
+def test_note_reader_uses_single_contextual_parent_and_local_panes(client: TestClient) -> None:
+    paths = (
+        ("/catalog?view=company&dir=NVDA&alpha=N", "/catalog?view=company&dir=NVDA&alpha=N"),
+        ("/entity/ent_nvda", "/entity/ent_nvda#sec-evidence"),
+        ("/entity/ent_nvda", "/entity/ent_nvda#sec-events"),
+        ("/entity/ent_nvda", "/entity/ent_nvda#sec-views"),
+        ("/entity/ent_kenji", "/entity/ent_kenji#sec-authored"),
+        ("/search?q=Blackwell&in=notes", "/search?q=Blackwell&in=notes"),
+    )
+    for start, expected_parent in paths:
+        listing = client.get(start)
+        links = list(map(unescape, re.findall(r'href="([^"]+)"', listing.text)))
+        href = next(
+            link for link in links
+            if (url := urlparse(link)).path == "/catalog" and parse_qs(url.query).get("file") == [NOTE_FILE]
+            and (not start.startswith("/entity/") or parse_qs(url.query).get("from") == [expected_parent])
+        )
+        response = client.get(href)
+        assert response.status_code == 200
+        assert len(re.findall(r"<h1(?:\s|>)", response.text)) == 1
+        assert "NVDA Q3 Preview" in response.text
+        page = _parse(response.text)
+        assert [crumb.get("href") for crumb in page.crumbs] == [expected_parent]
+        assert 'class="note-toolbar"' not in response.text
+        assert 'id="note-source"' in response.text and 'id="note-extraction"' in response.text
+        pane_href = next(
+            link for link in map(unescape, re.findall(r'href="([^"]+)"', response.text))
+            if parse_qs(urlparse(link).query).get("pane") == ["extraction"]
+        )
+        extraction = client.get(pane_href).text
+        assert re.search(r'id="note-source"[^>]*\bhidden\b', extraction)
+        assert not re.search(r'id="note-extraction"[^>]*\bhidden\b', extraction)
+        assert [_crumb["href"] for _crumb in _parse(extraction).crumbs] == [expected_parent]
+        if start.startswith("/search"):
+            assert "#L5" in href
+            assert 'id="L5"' in response.text
+            assert 'data-best-match' not in listing.text
+
+
+def test_note_reader_ignores_untrusted_return_destination(client: TestClient) -> None:
+    text = client.get("/catalog", params={"file": NOTE_FILE, "from": "//example.test/path"}).text
+    page = _parse(text)
+    assert len(page.crumbs) == 1
+    assert urlparse(page.crumbs[0]["href"]).path == "/catalog"
+
+
+def test_modern_primary_nav_orders_destinations_and_marks_the_record_owner(client: TestClient) -> None:
+    expected = [
+        ("overview", "/", "Overview"),
+        ("companies", "/companies", "Companies"),
+        ("themes", "/themes", "Themes"),
+        ("other_entities", "/companies?kind=other", "Other entities"),
+        ("notes_library", "/catalog?view=all", "Notes"),
+    ]
+    cases = {
+        "/": "overview",
+        "/entity/ent_nvda": "companies",
+        "/theme/thm_power": "themes",
+        "/entity/ent_kenji": "other_entities",
+        f"/catalog?view=all&file={NOTE_FILE}": "notes_library",
+    }
+    for url, current in cases.items():
+        page = client.get(url).text
+        nav = re.search(r'<nav id="modern-nav"[^>]*>(.*?)</nav>', page, re.S)
+        assert nav is not None, url
+        links = re.findall(r'<a href="([^"]+)" data-nav="([^"]+)"([^>]*)>([^<]+)</a>', nav[1])
+        assert [(key, unescape(href), unescape(label)) for href, key, _, label in links] == expected
+        assert [key for _, key, attrs, _ in links if 'aria-current="page"' in attrs] == [current]
+        assert page.count('id="library-theme"') == 1

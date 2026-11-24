@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stock Ontology · Information architecture prototypes</title>
+  <link rel="stylesheet" href="prototype.css">
+  <script src="prototype.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="review" id="review" aria-label="Prototype comparison"></header>
+  <div class="app" id="app"></div>
+  <dialog id="assistant" aria-labelledby="assistant-title">
+    <form method="dialog"><button class="close" aria-label="Close assistant">×</button></form>
+    <h2 id="assistant-title">Research assistant</h2>
+    <p id="context" class="muted"></p>
+    <form id="ask-form">
+      <label for="question">Your question</label>
+      <input id="question" required placeholder="What are the key debates?">
+      <button class="button primary">Ask</button>
+    </form>
+    <p id="answer" role="status"></p>
+  </dialog>
+</body>
+</html>

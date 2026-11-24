@@ -552,12 +552,14 @@ def test_web_nav_and_advanced_search_filters(tmp_path: Path) -> None:
     assert ">Ontology<" in r_home.text
     assert ">Search<" in r_home.text
     assert "advanced-search-panel" not in r_home.text
-    assert 'id="rail-q"' in r_home.text
+    assert r_home.text.count('href="/search"') == 1
+    assert 'id="rail-q"' not in r_home.text
 
     # /search expands the integrated Advanced Search panel
     r_search_blank = client.get("/search")
     assert r_search_blank.status_code == 200
-    assert ">Overview<" in r_search_blank.text
+    assert 'data-nav="overview"' in r_search_blank.text
+    assert 'class="portal-topnav-search portal-tool-active"' in r_search_blank.text
     assert '<details class="advanced-search-panel" open>' in r_search_blank.text
 
     # Filter-only searches (empty q)
@@ -746,7 +748,7 @@ def test_web_catalog_screen_by_company_and_person_and_safety(tmp_path: Path) -> 
     # 3. Safe Markdown rendered note view (XSS escaped, full-width reading pane)
     r_note = client.get("/catalog", params={"file": "NVDA/2026-10-15_q3.md"})
     assert r_note.status_code == 200
-    assert "<h1>NVDA Q3 Preview</h1>" in r_note.text
+    assert re.search(r"<h1[^>]*>\s*NVDA Q3 Preview\s*</h1>", r_note.text)
     assert '<table class="catalog-table note-table">' in r_note.text
     assert "Strong<br>Sequential" in r_note.text
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in r_note.text
@@ -1148,11 +1150,11 @@ def test_web_ontology_view_connected_to_registry_and_audit(tmp_path: Path) -> No
     assert health_reg["official_relations"] == 11
     assert health_reg["pending_suggestions"] == {"relations": 1, "companies": 2, "themes": 1}
 
-    # 2. /ontology renders Registry overview KPIs, badges, and bidirectional SVG entity<->theme count.
+    # 2. Graph Explorer retains registry status and the SVG. Governance owns the overview card.
     r_ont = client.get("/ontology")
     assert r_ont.status_code == 200
     assert "REGISTRY v1" in r_ont.text
-    assert "Official Ontology Registry &amp; Live Audit" in r_ont.text
+    assert "Official Ontology Registry &amp; Live Audit" not in r_ont.text
     assert "OFFICIAL" in r_ont.text
     assert "UNMAPPED" in r_ont.text
     assert "BENEFITS_FROM ↔ (1)" in html.unescape(r_ont.text)
@@ -1187,6 +1189,7 @@ def test_web_ontology_view_connected_to_registry_and_audit(tmp_path: Path) -> No
     # 6. Official Registry tab lists official definitions + live DB match links.
     r_reg = client.get("/ontology", params={"tab": "registry"})
     assert r_reg.status_code == 200
+    assert "Official Ontology Registry &amp; Live Audit" in r_reg.text
     assert "Official Edge Relations (11)" in r_reg.text
     assert "BUY" in r_reg.text
     assert "WORKS_AT" in r_reg.text
@@ -1924,8 +1927,16 @@ def test_web_search_note_links_jump_to_the_matching_line(tmp_path: Path) -> None
 
     page = client.get("/search", params={"q": "nvidia"}).text
     # A grepped passage, and the event folded onto its own note, both link to the raw note at that line.
-    assert f"/catalog?file={_SEARCH_NOTE_FILE}&amp;format=raw#L3" in page
-    assert f"/catalog?file={_SEARCH_EVENT_FILE}&amp;format=raw#L3" in page
+    from urllib.parse import parse_qs, urlparse
+
+    citations = [urlparse(html.unescape(href)) for href in re.findall(r'href="([^"]+)"', page)]
+    for file in (_SEARCH_NOTE_FILE, _SEARCH_EVENT_FILE):
+        assert any(
+            link.path == "/catalog"
+            and link.fragment == "L3"
+            and parse_qs(link.query) == {"file": [file], "format": ["raw"], "from": ["/search?q=nvidia"]}
+            for link in citations
+        )
 
     raw = client.get("/catalog", params={"file": _SEARCH_NOTE_FILE, "format": "raw"}).text
     assert '<span id="L3" class="note-line">Channel check: NVIDIA lead times shortened.' in raw
@@ -2116,35 +2127,39 @@ def test_note_page_templates_only_see_presentation_models(tmp_path: Path) -> Non
     client = TestClient(create_app(settings, llm=FakeWebLLM()))
     note_file = "NVDA/2026-10-15_q3.md"
 
-    def reader(params: dict[str, str]) -> str:
+    def reader(params: dict[str, str]) -> tuple[str, str]:
         """The note reader section, with whitespace runs squashed so markup layout does not matter."""
         page = client.get("/catalog", params=params)
         assert page.status_code == 200
-        assert 'class="portal-jumpbar"' not in page.text
+        assert f'aria-label="{translate("catalog.view_mode_aria", lang="en")}"' not in page.text
+        assert 'id="note-extraction"' in page.text and 'id="note-source"' in page.text
+        assert 'class="note-toolbar"' not in page.text
         assert translate("catalog.page_desc", lang="en") not in page.text
         section = page.text.split('<section aria-label="Raw Note Reader">', 1)[1].split("</section>", 1)[0]
-        return re.sub(r"\s+>", ">", re.sub(r"[ \t\n]+", " ", section))
+        return re.sub(r"\s+>", ">", re.sub(r"[ \t\n]+", " ", section)), page.text
 
     # 1. The rendered note page still shows the note, its chips and its navigation.
-    rendered = reader({"file": note_file})
+    rendered, page = reader({"file": note_file})
     assert '<h1 class="u-m-0 u-fs-1p55rem"> NVDA Q3 Preview </h1>' in rendered
     assert 'Company: <a href="/entity/ent_nvda"> NVIDIA (NVDA) </a>' in rendered
     assert 'Author: <a href="/entity/ent_kenji">Kenji Sato</a> </span>' in rendered
-    assert '<a href="/catalog?view=company&amp;dir=NVDA" class="retro-link-btn">← Back to NVIDIA</a>' in rendered
-    assert '<div class="note-rendered"><h1>NVDA Q3 Preview</h1>' in rendered
+    assert '<a href="/catalog?view=company&amp;dir=NVDA">← Back to NVIDIA</a>' in page
+    assert '<div class="note-rendered">' in rendered
+    assert "<h3>NVDA Q3 Preview</h3>" not in rendered
+    assert len(re.findall(r"<h1(?:\s|>)", page)) == 1
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered and "<script>" not in rendered
     assert '&laquo; <a href="/catalog?view=company&amp;dir=NVDA&amp;file=NVDA/2026-11-01_new.md"> NVDA Newer Note </a>' in rendered
     assert '<a href="/catalog?view=company&amp;dir=NVDA&amp;file=NVDA/2026-09-01_old.md"> NVDA Older Note </a> &raquo;' in rendered
 
-    raw = reader({"view": "author", "author": "Kenji Sato", "file": note_file, "format": "raw"})
-    assert '<a href="/catalog?view=author&amp;author=ent_kenji" class="retro-link-btn">← Back to Kenji Sato</a>' in raw
+    raw, page = reader({"view": "author", "author": "Kenji Sato", "file": note_file, "format": "raw"})
+    assert '<a href="/catalog?view=author&amp;author=ent_kenji">← Back to Kenji Sato</a>' in page
     assert '<span id="L3" class="note-line">Blackwell &lt;script&gt;alert(1)&lt;/script&gt; ramp. </span>' in raw
     assert '<span id="L5" class="note-line">Third &amp; last. </span></pre>' in raw
     assert "note-rendered" not in raw
     assert '<span class="source-cite">Start of list</span>' in raw and '<span class="source-cite">End of list</span>' in raw
 
-    all_view = reader({"view": "all", "file": note_file})
-    assert '<a href="/catalog?view=all" class="retro-link-btn">← Back to All Notes</a>' in all_view
+    all_view, page = reader({"view": "all", "file": note_file})
+    assert '<a href="/catalog?view=all">← Back to All Notes</a>' in page
     assert '<a href="/catalog?view=all&amp;file=NVDA/2026-11-01_new.md">' in all_view
 
     # 2. The view model hands the note reader one frozen presentation model, with no raw dicts or lists.

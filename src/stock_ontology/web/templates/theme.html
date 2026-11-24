@@ -20,6 +20,13 @@
   <p class="u-m-10px-0-0">{{ theme.summary }}</p>
 </section>
 
+<nav class="portal-jumpbar" aria-label="{{ t('nav.record_sections') }}">
+  [ <a href="#sec-exposure">{{ t('nav.exposure') }}</a>
+  {% if events %} | <a href="#sec-events">{{ t('nav.events') }}</a>{% endif %}
+  {% if views %} | <a href="#sec-views">{{ t('nav.views') }}</a>{% endif %}
+  | <a href="#sec-evidence">{{ t('nav.evidence_notes') }}</a> ]
+</nav>
+<div id="sec-exposure">
 {% with facet_table_title=t('theme.facets_heading') %}
   {% include "partials/facet_generic_table.html" %}
 {% endwith %}
@@ -83,7 +90,7 @@
                         <span class="badge badge-{{ note.sentiment }}">{{ t_enum('sentiment', note.sentiment) }}</span>
                       {% endif %}
                       {% if note.source.label %}
-                        <span class="source-cite">{% if note.source.exists %}<a href="/catalog?file={{ note.source.file | urlencode }}">{{ note.source.label }}</a>{% else %}{{ note.source.label }}{% endif %}</span>
+                        <span class="source-cite">{% if note.source.href %}<a href="{{ note.source.href }}">{{ note.source.label }}</a>{% else %}{{ note.source.label }}{% endif %}</span>
                       {% endif %}
                     </li>
                   {% endfor %}
@@ -128,8 +135,10 @@
 </section>
 {% endif %}
 
+</div>
 {% include "partials/section_events.html" %}
 {% include "partials/section_views.html" %}
+{% include "partials/section_evidence_notes.html" %}
 
 <p class="portal-more-link">
   <a href="/ask?context={{ page_context | urlencode }}" data-clippy-context="{{ page_context }}">{{ t('ask.link_from_theme', name=theme.name) }}</a>

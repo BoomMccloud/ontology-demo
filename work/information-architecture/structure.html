@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stock Research Library · App structure</title>
+  <link rel="stylesheet" href="../../src/stock_ontology/web/static/library.css">
+  <link rel="stylesheet" href="structure.css">
+  <script src="structure.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <div class="portal-frame">
+    <header id="shell"></header>
+    <div class="portal-grid">
+      <aside class="portal-rail" id="rail"></aside>
+      <main class="portal-pane" id="content" tabindex="-1"></main>
+    </div>
+  </div>
+  <div class="clippy-dock">
+    <div class="clippy-launcher"><a class="retro-link-btn portal-btn-primary" id="ask-link" href="#page=ask">Ask Clippy</a></div>
+  </div>
+</body>
+</html>

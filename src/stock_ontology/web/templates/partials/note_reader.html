@@ -1,4 +1,5 @@
 <section aria-label="{{ t('catalog.reader_aria') }}">
+  {% set extraction = active_note.extraction %}
   <div class="note-reader-header">
     <div class="entry-title-row">
       <h1 class="u-m-0 u-fs-1p55rem">
@@ -6,49 +7,49 @@
       </h1>
     </div>
 
-    {% if active_note.company or active_note.authors %}
-      <div class="note-entity-chips">
-        {% if active_note.company %}
-          <span class="facet-chip">
-            {{ t('catalog.company_chip') }}
-            <a href="{{ active_note.company.href }}">
-              {{ active_note.company.label }}
-            </a>
-          </span>
-        {% endif %}
-        {% for author in active_note.authors %}
-          <span class="facet-chip">
-            {{ t('catalog.author_chip') }}
-            {% if author.href %}
-              <a href="{{ author.href }}">{{ author.name }}</a>
-            {% else %}
-              {{ author.name }}
-            {% endif %}
-          </span>
-        {% endfor %}
-      </div>
-    {% endif %}
-
-    <div class="note-toolbar">
-      <a href="{{ active_note.back_link.href }}" class="retro-link-btn">{{ active_note.back_link.label }}</a>
+    <div class="note-entity-chips">
+      {% if active_note.company %}
+        <span class="facet-chip">
+          {{ t('catalog.company_chip') }}
+          <a href="{{ active_note.company.href }}">
+            {{ active_note.company.label }}
+          </a>
+        </span>
+      {% endif %}
+      {% for author in active_note.authors %}
+        <span class="facet-chip">
+          {{ t('catalog.author_chip') }}
+          {% if author.href %}
+            <a href="{{ author.href }}">{{ author.name }}</a>
+          {% else %}
+            {{ author.name }}
+          {% endif %}
+        </span>
+      {% endfor %}
+      <span class="facet-chip">{{ t('note_reader.extracted' if active_note.extraction.status == 'extracted' else 'note_reader.not_processed') }}</span>
     </div>
+    {% if extraction.job_state %}
+      <p class="note-job-status" role="status" data-job-state="{{ extraction.job_state }}">{{ t('note_reader.job_' ~ extraction.job_state) }}</p>
+    {% endif %}
   </div>
 
-  {% set extraction = active_note.extraction %}
+  <nav class="portal-jumpbar" aria-label="{{ t('nav.record_sections') }}">
+    [ <a href="{{ active_note.source_href }}"{% if not active_note.show_extraction %} aria-current="page"{% endif %}>{{ t('nav.note_source') }}</a>
+    |
+    <a href="{{ active_note.extraction_href }}"{% if active_note.show_extraction %} aria-current="page"{% endif %}>{{ t('nav.note_extraction') }}</a> ]
+  </nav>
+
   {% set can_add_entity = extraction.actions_enabled and extraction.choices | length > extraction.entities | length %}
   {% set note_entity_ids = extraction.entities | map(attribute='id') | list %}
   {% set can_correct_relationship = extraction.actions_enabled and extraction.relations %}
   {% set can_add_relationship = can_correct_relationship and extraction.endpoint_choices | length > 1 %}
-  <div class="section-block note-extraction" data-note-reader data-file="{{ active_note.rel_path }}" data-hash="{{ extraction.content_hash }}"
+  <div id="note-extraction" class="section-block note-extraction"{% if not active_note.show_extraction %} hidden{% endif %} data-note-reader data-file="{{ active_note.rel_path }}" data-hash="{{ extraction.content_hash }}"
        data-failed-label="{{ t('note_reader.action_failed') }}" data-queued-label="{{ t('note_reader.job_queued') }}">
     <h2>{{ t('note_reader.extraction') }}</h2>
     <p class="note-status" data-note-status="{{ extraction.status }}">
       <span class="note-status-icon" aria-hidden="true"></span>
       {{ t('note_reader.extracted' if extraction.status == 'extracted' else 'note_reader.not_processed') }}
     </p>
-    {% if extraction.job_state %}
-      <p class="note-job-status" role="status" data-job-state="{{ extraction.job_state }}">{{ t('note_reader.job_' ~ extraction.job_state) }}</p>
-    {% endif %}
     {% if extraction.status == 'not-processed' %}
       {% if extraction.actions_enabled %}
         <form data-note-action="process">
@@ -237,13 +238,16 @@
     <p class="note-action-status" role="status" data-note-feedback data-busy-label="{{ t('note_reader.working') }}" hidden></p>
   </div>
 
-  <h2>{{ t('note_reader.original') }}</h2>
-  {% if active_note.show_raw %}
-    <pre class="note-raw-pre">{% for line in active_note.raw_lines %}<span id="L{{ loop.index }}" class="note-line">{{ line }}
+  <div id="note-source"{% if active_note.show_extraction %} hidden{% endif %}>
+    <h2>{{ t('note_reader.original') }}</h2>
+    <p class="portal-more-link"><a href="{{ active_note.alternate_source_href }}">{{ t('nav.note_rendered' if active_note.show_raw else 'nav.note_plain_text') }}</a></p>
+    {% if active_note.show_raw %}
+      <pre class="note-raw-pre">{% for line in active_note.raw_lines %}<span id="L{{ loop.index }}" class="note-line">{{ line }}
 </span>{% endfor %}</pre>
-  {% else %}
-    <div class="note-rendered">{{ active_note.body_html | safe }}</div>
-  {% endif %}
+    {% else %}
+      <div class="note-rendered">{{ active_note.body_html | safe }}</div>
+    {% endif %}
+  </div>
 
   <div class="note-sibling-bar">
     <div>

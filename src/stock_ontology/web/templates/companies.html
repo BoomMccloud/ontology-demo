@@ -1,26 +1,10 @@
 {% extends "base.html" %}
 
-{% block title %}{{ t('companies.page_title') }}{% endblock %}
+{% block title %}{{ t('companies.tab_other' if active_kind == 'other' else 'companies.page_title') }}{% endblock %}
 
 {% block content %}
-<h1>{{ t('rail.companies') }}</h1>
-<p class="portal-intro">{{ t('companies.page_desc') }}</p>
-
-<div class="portal-jumpbar">
-  [
-  {% if active_kind == 'companies' %}
-    <strong>{{ t('companies.tab_companies') }}</strong>
-  {% else %}
-    <a href="/companies?kind=companies">{{ t('companies.tab_companies') }}</a>
-  {% endif %}
-  |
-  {% if active_kind == 'other' %}
-    <strong>{{ t('companies.tab_other') }}</strong>
-  {% else %}
-    <a href="/companies?kind=other">{{ t('companies.tab_other') }}</a>
-  {% endif %}
-  ]
-</div>
+<h1>{{ t('companies.tab_other' if active_kind == 'other' else 'rail.companies') }}</h1>
+<p class="portal-intro">{{ t('nav.other_entities_desc' if active_kind == 'other' else 'companies.page_desc') }}</p>
 
 {% if active_kind == 'companies' %}
   {% if companies %}
