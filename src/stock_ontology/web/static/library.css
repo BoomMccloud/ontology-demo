@@ -1349,7 +1349,43 @@ code,
   padding: 4px 6px;
 }
 
+
+.ontology-browse {
+  max-width: 960px;
+  overflow-wrap: anywhere;
+}
+
+.ontology-browse > h1 {
+  margin-top: 0;
+}
+
+.ontology-filter {
+  margin-bottom: 12px;
+}
+
+.ontology-fields {
+  display: grid;
+  grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr);
+  gap: 4px 16px;
+}
+
+.ontology-fields dt {
+  font-weight: bold;
+}
+
+.ontology-fields dd {
+  margin: 0;
+}
+
 @media (max-width: 740px) {
+  .ontology-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ontology-fields dd:not(:last-child) {
+    margin-bottom: 6px;
+  }
+
   .portal-grid,
   .structure-grid {
     grid-template-columns: 1fr;
@@ -1470,4 +1506,44 @@ code,
   padding: 4px 6px;
   border: 1px dashed #8a6d1a;
   background: #fbf3d9;
+}
+
+.ontology-editor {
+  margin: 8px 0;
+}
+
+.ontology-editor summary {
+  color: var(--link-blue);
+  cursor: pointer;
+}
+
+.ontology-edit-form {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  margin: 8px 0;
+}
+
+.ontology-edit-form label:not(.ontology-inline-check),
+.ontology-edit-form [data-ontology-relation-fields] {
+  display: grid;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.ontology-edit-form textarea, .ontology-edit-form input, .ontology-edit-form select {
+  max-width: 100%;
+}
+
+.ontology-edit-form [role="status"]:empty {
+  display: none;
+}
+
+.ontology-edit-form [data-ontology-diff] button {
+  margin-inline-end: 8px;
+}
+
+.ontology-pending {
+  border-inline-start: 2px solid var(--burgundy);
+  padding-inline-start: 8px;
 }

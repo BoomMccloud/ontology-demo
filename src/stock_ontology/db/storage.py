@@ -674,6 +674,17 @@ class OntologyDB:
         )
         return [row_to_node(row) for row in rows]
 
+    def note_entity_doc_ids(self, entity_id: str) -> set[str]:
+        """Return recorded extraction documents that contain the canonical entity."""
+        exists = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'note_entities'"
+        ).fetchone()
+        if exists is None:
+            return set()
+        return {str(row["doc_id"]) for row in self.conn.execute(
+            "SELECT doc_id FROM note_entities WHERE entity_id = ?", (entity_id,)
+        )}
+
     def add_note_entities(self, doc_id: str, entity_ids: tuple[str, ...]) -> None:
         with self.transaction():
             self.conn.executemany(

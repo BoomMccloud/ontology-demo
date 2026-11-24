@@ -11,6 +11,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, parse_qsl, urlparse
 
 from fastapi.testclient import TestClient
 import pytest
@@ -784,8 +785,8 @@ def test_web_ontology_view_screen_4_structures_and_tabs(tmp_path: Path) -> None:
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro:
         before_stats = ro.get_stats()
 
-    # Default /ontology screen (Entity tab + 4 structure cards + SVG blueprint)
-    r_ont = client.get("/ontology")
+    # Explicit Entity explorer (4 structure cards and SVG blueprint)
+    r_ont = client.get("/ontology", params={"tab": "entity"})
     assert r_ont.status_code == 200
     assert "4-Node Stock Ontology &amp; Unified Edges" in r_ont.text
     assert "<svg" in r_ont.text
@@ -825,6 +826,127 @@ def test_web_ontology_view_screen_4_structures_and_tabs(tmp_path: Path) -> None:
     # Strictly read-only verification
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as ro:
         assert ro.get_stats() == before_stats
+
+
+def test_ontology_registry_schema_browse_records_and_sources(tmp_path: Path) -> None:
+    db_path = tmp_path / "ontology.db"
+    registry_path = tmp_path / "registry.json"
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    note = notes / "supplier.md"
+    note.write_text("# Supplier note\n\nSourced purchasing evidence.\n", encoding="utf-8")
+    spaced_note = notes / " shifted.md"
+    spaced_note.write_text("# Logged source\n\nEvidence from the space-prefixed note.\n", encoding="utf-8")
+    competing_note = notes / "shifted.md"
+    competing_note.write_text("# Unrelated note\n\nDifferent evidence.\n", encoding="utf-8")
+    fixture_notes = (note, spaced_note, competing_note)
+    registry = create_minimal_registry()
+    registry.facet_schema["node"]["entity:person"] = {
+        "organization": {"kind": "text", "required": True},
+    }
+    save_registry(registry, registry_path)
+    _seed_web_db(db_path)
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
+        db.upsert_ingestion_log(note.name, "doc_1", hashlib.sha256(note.read_bytes()).hexdigest())
+        db.upsert_ingestion_log("missing.md", "doc_missing", "old")
+        db.upsert_ingestion_log(spaced_note.name, "doc_spaced", hashlib.sha256(spaced_note.read_bytes()).hexdigest())
+        db.upsert_node(
+            Node(id="ent_nvda_legacy", node_type="entity", name="Nvidia Corporation", summary="",
+                 facets={"entity_type": "company", "ticker": "NVDA", "sector": "Semiconductors"}),
+            embedding=_unit_vec(8),
+        )
+        db.upsert_edge(Edge(
+            id="alternate-purchasing-edge", from_id="ent_nvda_legacy", to_id="ent_tsmc",
+            relation="BUY", source_doc_id="doc_missing", facets={"basis": "extracted"},
+        ))
+        db.upsert_edge(Edge(
+            id="competitor-edge", from_id="ent_nvda_legacy", to_id="ent_tsmc",
+            relation="COMPETE", source_doc_id="doc_spaced", facets={"basis": "extracted"},
+        ))
+        db.record_registry_adoption(registry, from_revision=None, plan="test")
+    registry.version = 2
+    save_registry(registry, registry_path)
+
+    client = TestClient(create_app(
+        Settings(db_path=db_path, registry_path=registry_path, data_dir=notes, embedding_dim=DIM),
+        llm=FakeWebLLM(),
+    ))
+    before = (_db_digest(db_path), registry_path.read_bytes(), *(path.read_bytes() for path in fixture_notes))
+
+    def link(page: str, label: str) -> str:
+        anchor = re.search(r'<a\b[^>]*href="([^"]+)"[^>]*>\s*' + re.escape(html.escape(label)) + r'\s*</a>', page)
+        assert anchor is not None, f"Missing visible link: {label}"
+        return html.unescape(anchor[1])
+
+    def search(url: str, query: str) -> str:
+        params = dict(parse_qsl(urlparse(url).query))
+        return client.get(url, params={**params, "q": query}).text
+
+    landing = client.get("/ontology")
+    assert landing.status_code == 200
+    registry_browser = landing.text.split('id="structure-explorer"', 1)[-1]
+    companies_url = link(registry_browser, "Companies")
+    themes_url = link(registry_browser, "Themes")
+    people_url = link(registry_browser, "People")
+    company_results = search(companies_url, "NVDA")
+    assert "Microsoft" not in company_results
+    company_url = link(company_results, "NVIDIA")
+    company = client.get(company_url)
+    assert company.status_code == 200
+    assert "<h1>NVIDIA</h1>" in company.text
+    assert "Semiconductors" in company.text and "Nvidia Corporation" in company.text
+    note_url = link(company.text, "supplier.md")
+    cited = client.get(note_url)
+    assert cited.status_code == 200 and "Sourced purchasing evidence." in cited.text
+    record_return_url = link(cited.text, translate("catalog.back_to_previous"))
+    assert record_return_url == company_url
+    returned_record = client.get(record_return_url)
+    assert returned_record.status_code == 200 and "<h1>NVIDIA</h1>" in returned_record.text
+    assert link(returned_record.text, "supplier.md") == note_url
+    breadcrumb = re.search(r'<nav id="breadcrumb".*?</nav>', returned_record.text, re.S)
+    assert breadcrumb is not None
+    registry_return_url = link(breadcrumb[0], "Registry")
+    assert parse_qs(urlparse(registry_return_url).query) == {
+        "tab": ["registry"], "kind": ["companies"], "q": ["NVDA"],
+    }
+    returned_search = client.get(registry_return_url)
+    assert returned_search.status_code == 200
+    assert "Microsoft" not in returned_search.text
+    assert link(returned_search.text, "NVIDIA") == company_url
+    assert "BUY" in company.text
+    competitor_row = next(row for row in re.findall(r"<tr>(.*?)</tr>", company.text, re.S)
+                          if "<strong>COMPETE</strong>" in row)
+    assert "Nvidia Corporation" in competitor_row and "TSMC" in competitor_row
+    assert "/catalog?" not in competitor_row
+    assert "missing.md" not in company.text and "shifted.md" not in company.text
+
+    theme = client.get(link(search(themes_url, "AI Data Center Power Bottleneck"), "AI Data Center Power & Cooling"))
+    assert theme.status_code == 200
+    assert "AI Data Center Power Bottleneck" in theme.text
+    person = client.get(link(search(people_url, "Kenji"), "Kenji Sato"))
+    assert person.status_code == 200
+    assert "Taiwan ODM" in person.text
+    assert "supply_chain_engineer" in person.text
+    orphan = client.get(link(client.get(companies_url).text, "Microsoft"))
+    assert orphan.status_code == 200
+    assert "Technology" in orphan.text
+    assert "/catalog?file=" not in orphan.text
+
+    schema = client.get(link(landing.text, "Schema"))
+    assert schema.status_code == 200
+    assert "Published registry v2. The database still uses v1." in schema.text
+    person_schema = client.get(link(schema.text, "Person"))
+    field_rows = re.findall(r"<tr>(.*?)</tr>", person_schema.text, re.S)
+    for field in ("entity_type", "organization"):
+        field_row = next(row for row in field_rows if f"<code>{field}</code>" in row)
+        cells = re.findall(r"<td>(.*?)</td>", field_row, re.S)
+        assert cells[2].strip() == "Required", f"{field} must be Required in its own row"
+    relation = client.get(link(schema.text, "WORKS_AT"))
+    paragraph_text = [" ".join(html.unescape(text).split()) for text in re.findall(r"<p>([^<]+)</p>", relation.text)]
+    assert "Person → Company, Institution" in paragraph_text
+    assert "Directed" in paragraph_text
+    assert "Personas" in client.get("/ontology", params={"kind": "people", "lang": "es"}).text
+    assert (_db_digest(db_path), registry_path.read_bytes(), *(path.read_bytes() for path in fixture_notes)) == before
 
 
 @pytest.mark.parametrize("lang", SUPPORTED_LANGUAGE_CODES)
@@ -924,7 +1046,7 @@ def test_web_multilingual_pages_preserve_original_notes(tmp_path: Path, lang: st
         assert "catalog.all_notes" not in r_tab.text
 
     # 6. Ontology view page
-    r_ont = client.get("/ontology", params={"lang": lang})
+    r_ont = client.get("/ontology", params={"tab": "entity", "lang": lang})
     assert r_ont.status_code == 200
     ont_text = html.unescape(r_ont.text)
     assert translate("ontology.structures_heading", lang=lang) in ont_text
@@ -1148,8 +1270,8 @@ def test_web_ontology_view_connected_to_registry_and_audit(tmp_path: Path) -> No
     assert health_reg["official_relations"] == 11
     assert health_reg["pending_suggestions"] == {"relations": 1, "companies": 2, "themes": 1}
 
-    # 2. /ontology renders Registry overview KPIs, badges, and bidirectional SVG entity<->theme count.
-    r_ont = client.get("/ontology")
+    # 2. The explicit Entity explorer retains its registry KPIs and SVG relationship counts.
+    r_ont = client.get("/ontology", params={"tab": "entity"})
     assert r_ont.status_code == 200
     assert "REGISTRY v1" in r_ont.text
     assert "Official Ontology Registry &amp; Live Audit" in r_ont.text
@@ -1184,16 +1306,22 @@ def test_web_ontology_view_connected_to_registry_and_audit(tmp_path: Path) -> No
     assert "HAS_EMPLOYEE" in r_edges.text
     assert "PRODUCES" in r_edges.text
 
-    # 6. Official Registry tab lists official definitions + live DB match links.
+    # 6. Registry opens each record, and Schema owns the shared definitions.
     r_reg = client.get("/ontology", params={"tab": "registry"})
     assert r_reg.status_code == 200
-    assert "Official Edge Relations (11)" in r_reg.text
-    assert "BUY" in r_reg.text
-    assert "WORKS_AT" in r_reg.text
-    assert "/entity/ent_nvda" in r_reg.text
-    assert "/entity/ent_vrt" in r_reg.text
-    assert "/theme/thm_power" in r_reg.text
-    assert "catalyst_to_watch" in r_reg.text
+    assert "NVIDIA" in r_reg.text and "Vertiv" in r_reg.text
+    assert "Official Edge Relations (11)" not in r_reg.text
+    for kind, name, target in (
+        ("companies", "NVIDIA", "/entity/ent_nvda"),
+        ("companies", "Vertiv", "/entity/ent_vrt"),
+        ("themes", "AI Data Center Power & Cooling", "/theme/thm_power"),
+    ):
+        record = client.get("/ontology", params={"tab": "registry", "kind": kind, "record": name})
+        assert record.status_code == 200 and target in record.text
+        assert client.get(target).status_code == 200
+    schema = client.get("/ontology", params={"tab": "schema"})
+    assert schema.status_code == 200
+    assert all(definition in schema.text for definition in ("BUY", "WORKS_AT", "catalyst_to_watch"))
 
     # 7. Audit & Suggestions tab lists unmapped items, reversed edges, suspicious aliases, ticker & facet drift.
     r_audit = client.get("/ontology", params={"tab": "audit"})
@@ -2992,3 +3120,368 @@ def test_web_note_actions_return_job_references_and_open_the_db_read_only(
     assert client.get(f"/api/jobs/{job_id}").json()["state"] == "succeeded"
     reader = client.get("/catalog", params={"file": "focus.md", "lang": "en"}).text
     assert 'data-job-state="succeeded"' in reader and 'data-note-status="extracted"' in reader
+
+
+def _finish_registry_edit_job(
+    client: TestClient, settings: Settings, response: Any, *, state: str = "succeeded",
+) -> dict[str, Any]:
+    from stock_ontology.worker import Worker
+
+    assert response.status_code == 202, response.text
+    job_url = f"/api/jobs/{response.json()['job_id']}"
+    assert client.get(job_url).json()["state"] == "queued"
+    Worker(settings, llm_factory=lambda _settings: FakeWebLLM()).run_once(scan=False)
+    job = client.get(job_url).json()
+    assert job["state"] == state, job
+    return job
+
+
+@pytest.mark.parametrize(
+    ("kind", "record", "node_id", "field", "old", "new"),
+    [
+        pytest.param("companies", "NVIDIA", "company", "sector", "Semiconductors", "Compute Systems", id="company"),
+        pytest.param("themes", "AI Infrastructure & Capex", "theme", "stage", "accelerating", "emerging", id="theme"),
+    ],
+)
+def test_ontology_registry_editing_operator_two_decisions(
+    tmp_path: Path, kind: str, record: str, node_id: str, field: str, old: str, new: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inspect import signature
+    import secrets
+
+    from stock_ontology.registry import load_registry
+    from stock_ontology.worker import Worker
+
+    settings = Settings(db_path=tmp_path / "graph.db", registry_path=tmp_path / "registry.json",
+                        data_dir=tmp_path, embedding_dim=DIM)
+    registry = create_minimal_registry()
+    save_registry(registry, settings.registry_path)
+    facets = {"entity_type": "company", "ticker": "NVDA"} if kind == "companies" else {}
+    node = Node(id=node_id, name=record, summary="Research summary", aliases=["Research alias"],
+                node_type="entity" if kind == "companies" else "theme", facets={**facets, field: old})
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        db.upsert_node(node)
+        db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+
+    origin = "http://127.0.0.1:8000"
+    # The accepted browsing baseline has no operator switch. Exercise HTTP on both revisions.
+    opt_in = {"registry_origin": origin} if "registry_origin" in signature(create_app).parameters else {}
+    llm = FakeWebLLM()
+    enabled_app = create_app(settings, llm=llm, note_actions=True, **opt_in)
+    disabled_app = create_app(settings, llm=llm, note_actions=True)
+    client = TestClient(enabled_app, base_url=origin, client=("127.0.0.1", 50000))
+    disabled = TestClient(disabled_app, base_url=origin, client=("127.0.0.1", 50000))
+    remote = TestClient(enabled_app, base_url=origin, client=("192.0.2.10", 50000))
+    headers = {"Origin": origin}
+    record_params = {"tab": "registry", "kind": kind, "record": record, "lang": "en"}
+    prefix = "/api/ontology/registry"
+    publish_preview = f"{prefix}/publish/preview"
+    publish_confirm = f"{prefix}/publish/confirm"
+    apply_preview = f"{prefix}/apply/preview"
+    apply_confirm = f"{prefix}/apply/confirm"
+    edit = {"kind": kind, "record": record, "changes": {field: new}}
+
+    def public_state(applied: str, displayed: str) -> None:
+        with OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True) as db:
+            assert db.applied_registry().revision() == applied
+            stored = db.get_node(node_id)
+            assert stored.facets[field] == displayed
+            assert (stored.summary, stored.aliases) == (node.summary, node.aliases)
+        page = client.get("/ontology", params=record_params)
+        assert page.status_code == 200
+        shown_values = [html.unescape(re.sub(r"<[^>]+>", "", value)).strip().casefold()
+                        for value in re.findall(r"<dd\b[^>]*>(.*?)</dd>", page.text, re.S)]
+        assert displayed.casefold() in shown_values
+        assert (new if displayed == old else old).casefold() not in shown_values
+
+    public_state(registry.revision(), old)
+    abandoned = client.post(publish_preview, json=edit, headers=headers)
+    assert abandoned.status_code == 200 and abandoned.json()["confirmation"]
+    client.get("/ontology", params=record_params)
+    assert Worker(settings, llm_factory=lambda _settings: llm).run_once(scan=False) == 0
+    assert load_registry(settings.registry_path).revision() == registry.revision()
+    public_state(registry.revision(), old)
+    preview = client.post(publish_preview, json=edit, headers=headers)
+    assert preview.status_code == 200, preview.text
+    publication = preview.json()
+    assert all(value.casefold() in str(publication["diff"]).casefold() for value in (field, old, new))
+    assert publication["confirmation"]
+    assert "Edit details" in client.get("/ontology", params=record_params).text
+    assert "Edit details" not in disabled.get("/ontology", params=record_params).text
+    assert "Edit details" not in remote.get("/ontology", params=record_params).text
+
+    def denied(response: Any) -> None:
+        assert 400 <= response.status_code < 500, response.text
+
+    for request_client, request_headers in (
+        (disabled, headers), (remote, {**headers, "X-Forwarded-For": "127.0.0.1"}),
+        (remote, headers),
+        (client, {}), (client, {"Origin": "http://localhost:8000"}),
+        (client, {**headers, "Host": "localhost:8000"}),
+        (client, {**headers, "Forwarded": "for=127.0.0.1"}),
+    ):
+        denied(request_client.post(publish_preview, headers=request_headers, json=edit))
+        denied(request_client.post(publish_confirm, headers=request_headers,
+                                   json={"confirmation": publication["confirmation"]}))
+        denied(request_client.post(apply_preview, headers=request_headers, json={}))
+        denied(request_client.post(apply_confirm, headers=request_headers,
+                                   json={"confirmation": publication["confirmation"]}))
+    denied(client.post(publish_confirm, headers=headers, json={"confirmation": "unreviewed"}))
+    denied(client.post(publish_preview, headers=headers, json={**edit, "proposal_path": "anything.json"}))
+    assert Worker(settings, llm_factory=lambda _settings: llm).run_once(scan=False) == 0
+    assert load_registry(settings.registry_path).revision() == registry.revision()
+    public_state(registry.revision(), old)
+
+    _finish_registry_edit_job(client, settings, client.post(
+        publish_confirm, headers=headers, json={"confirmation": publication["confirmation"]},
+    ))
+    published = load_registry(settings.registry_path)
+    selected = next(item for item in getattr(published, kind) if item.name == record)
+    assert published.version == registry.version + 1 and getattr(selected, field) == new
+    public_state(registry.revision(), old)
+    denied(client.post(publish_confirm, headers=headers, json={"confirmation": publication["confirmation"]}))
+    denied(client.post(apply_confirm, headers=headers, json={"confirmation": publication["confirmation"]}))
+
+    abandoned_apply = client.post(apply_preview, headers=headers, json={})
+    assert _finish_registry_edit_job(client, settings, abandoned_apply)["result"]["confirmation"]
+    client.get("/ontology", params=record_params)
+    assert Worker(settings, llm_factory=lambda _settings: llm).run_once(scan=False) == 0
+    assert load_registry(settings.registry_path).revision() == published.revision()
+    public_state(registry.revision(), old)
+
+    # Know the genuine opaque reference before the server reveals it in the completed result.
+    early_reference = "worker-preview-reference-before-completion"
+    with monkeypatch.context() as entropy:
+        entropy.setattr(secrets, "token_urlsafe", lambda _size: early_reference)
+        queued_preview = client.post(apply_preview, headers=headers, json={})
+    assert queued_preview.status_code == 202, queued_preview.text
+    pending = client.get(f"/api/jobs/{queued_preview.json()['job_id']}").json()
+    assert pending["state"] == "queued" and not pending["result"]
+    assert early_reference not in str(pending)
+    denied(client.post(apply_confirm, headers=headers, json={"confirmation": early_reference}))
+    denied(client.post(apply_confirm, headers=headers, json={"confirmation": queued_preview.json()["job_id"]}))
+    reviewed = _finish_registry_edit_job(client, settings, queued_preview)["result"]
+    assert reviewed["confirmation"] == early_reference
+    diff = str(reviewed["diff"]).casefold()
+    assert all(value.casefold() in diff for value in (field, old, new))
+    assert node_id in diff or record.casefold() in diff
+    public_state(registry.revision(), old)
+
+    # A graph edit after review makes the exact old plan stale.
+    with OntologyDB(settings.db_path, embedding_dim=DIM) as db:
+        db.upsert_node(node.model_copy(update={"summary": "New research summary"}))
+    rejected = client.post(apply_confirm, headers=headers, json={"confirmation": reviewed["confirmation"]})
+    if rejected.status_code == 202:
+        _finish_registry_edit_job(client, settings, rejected, state="failed")
+    else:
+        denied(rejected)
+    with OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True) as db:
+        assert db.applied_registry().revision() == registry.revision()
+        assert db.get_node(node_id).facets[field] == old
+    node = node.model_copy(update={"summary": "New research summary"})
+
+    fresh = _finish_registry_edit_job(client, settings, client.post(apply_preview, headers=headers, json={}))
+    confirmation = {"confirmation": fresh["result"]["confirmation"]}
+    _finish_registry_edit_job(client, settings, client.post(apply_confirm, headers=headers, json=confirmation))
+    denied(client.post(apply_confirm, headers=headers, json=confirmation))
+    assert Worker(settings, llm_factory=lambda _settings: llm).run_once(scan=False) == 0
+    public_state(published.revision(), new)
+    assert load_registry(settings.registry_path).revision() == published.revision()
+
+
+@pytest.mark.parametrize("case", ["person", "relationship", "wrong-owner", "stale-note"])
+def test_ontology_registry_editing_note_correction(tmp_path: Path, case: str) -> None:
+    from stock_ontology.worker import Worker
+
+    settings = Settings(db_path=tmp_path / "graph.db", registry_path=tmp_path / "registry.json",
+                        data_dir=tmp_path, embedding_dim=DIM)
+    registry = create_minimal_registry()
+    registry.facet_schema.setdefault("relation", {})["WORKS_AT"] = {"role": {"kind": "text", "required": False}}
+    save_registry(registry, settings.registry_path)
+    old, new = "Process Engineer", "Fabrication Director"
+    note_sources = {"selected.md": "Selected employment source.\n", "other.md": "Independent employment source.\n"}
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        db.upsert_node(Node(id="person", name="Robin Lee", summary="", node_type="entity",
+                            facets={"entity_type": "person", "role": old, "organization": "NVIDIA"}))
+        db.upsert_node(Node(id="company", name="NVIDIA", summary="", node_type="entity",
+                            facets={"entity_type": "company", "ticker": "NVDA"}))
+        for index, (file, content) in enumerate(note_sources.items()):
+            (tmp_path / file).write_text(content, encoding="utf-8")
+            db.upsert_ingestion_log(file, f"doc-{index}", hashlib.sha256(content.encode()).hexdigest(),
+                                    entity_ids=("person", "company"))
+            db.upsert_edge(Edge(id=f"employment-{index}", from_id="person", to_id="company",
+                                relation="WORKS_AT", source_doc_id=f"doc-{index}",
+                                facets={"basis": "extracted", "role": old}))
+        db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+
+    client = TestClient(create_app(settings, llm=FakeWebLLM(), note_actions=True))
+    preview_url = "/api/ontology/corrections/preview"
+    confirm_url = "/api/ontology/corrections/confirm"
+    record_params = {"tab": "registry", "kind": "people", "record": "person", "lang": "en"}
+    page = client.get("/ontology", params=record_params)
+    assert page.status_code == 200 and old in page.text and "selected.md" in page.text
+    if case in {"person", "stale-note"}:
+        edit = {"kind": "person", "file": "selected.md", "record": "person", "changes": {"role": new}}
+    else:
+        edit = {"kind": "relationship", "file": "selected.md", "edge_id": "employment-0",
+                "changes": {"facets": {"role": new}}}
+    review = client.post(preview_url, json=edit)
+    assert review.status_code == 200, review.text
+    assert all(value in str(review.json()["diff"]) for value in (old, new))
+    if case == "wrong-owner":
+        unrelated = client.post(preview_url, json={**edit, "file": "other.md"})
+        assert 400 <= unrelated.status_code < 500, unrelated.text
+        assert Worker(settings, llm_factory=lambda _settings: FakeWebLLM()).run_once(scan=False) == 0
+    else:
+        if case == "stale-note":
+            note_sources["selected.md"] += "Changed after review.\n"
+        response = client.post(confirm_url, json={"confirmation": review.json()["confirmation"]})
+        if case == "stale-note":
+            # Race the queued correction: the worker must recheck the supporting file at commit.
+            assert response.status_code == 202, response.text
+            (tmp_path / "selected.md").write_text(note_sources["selected.md"], encoding="utf-8")
+        _finish_registry_edit_job(client, settings, response, state="failed" if case == "stale-note" else "succeeded")
+
+    expected_role = new if case == "person" else old
+    with OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True) as db:
+        assert db.get_node("person").facets["role"] == expected_role
+        assert [person.id for person in db.list_nodes(node_type="entity")
+                if person.facets.get("entity_type") == "person"] == ["person"]
+        for index, role in enumerate((new if case in {"person", "relationship"} else old, old)):
+            retained, = db.list_note_edges(f"doc-{index}")
+            assert (retained["edge_id"], retained["from_id"], retained["to_id"], retained["relation"]) == (
+                f"employment-{index}", "person", "company", "WORKS_AT",
+            )
+            assert retained["facets"] == {"basis": "extracted", "role": role}
+            assert {entity.id for entity in db.list_note_entities(f"doc-{index}")} == {"person", "company"}
+    for file, content in note_sources.items():
+        assert (tmp_path / file).read_bytes() == content.encode()
+    record = client.get("/ontology", params=record_params).text
+    assert expected_role in record
+    if case == "relationship":
+        assert new in record
+
+
+@pytest.mark.parametrize("case", ["source-options", "unrelated-http", "authorized", "ownership-race"])
+def test_ontology_registry_editing_relationship_add_source(tmp_path: Path, case: str) -> None:
+    from stock_ontology.worker import Worker
+
+    settings = Settings(db_path=tmp_path / "graph.db", registry_path=tmp_path / "registry.json",
+                        data_dir=tmp_path, embedding_dim=DIM)
+    registry = create_minimal_registry()
+    save_registry(registry, settings.registry_path)
+    note_sources = {
+        "related.md": ("Anchor employment source.\n", "person"),
+        "unrelated.md": ("Research about another company.\n", "other"),
+    }
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        for node_id, name, entity_type in (
+            ("person", "Robin Lee", "person"), ("company", "NVIDIA", "company"), ("other", "TSMC", "company"),
+        ):
+            db.upsert_node(Node(id=node_id, name=name, summary="", node_type="entity", facets={"entity_type": entity_type}))
+        for file, (content, member) in note_sources.items():
+            (tmp_path / file).write_text(content, encoding="utf-8")
+            db.upsert_ingestion_log(file, file, hashlib.sha256(content.encode()).hexdigest(), entity_ids=(member,))
+        db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+
+    llm = FakeWebLLM()
+    client = TestClient(create_app(settings, llm=llm, note_actions=True))
+    preview_url = "/api/ontology/corrections/preview"
+    confirm_url = "/api/ontology/corrections/confirm"
+    record_params = {"tab": "registry", "kind": "people", "record": "person", "lang": "en"}
+    edit = {"kind": "relationship_add", "record": "person", "file": "related.md",
+            "changes": {"from_id": "person", "to_id": "company", "relation": "WORKS_AT"}}
+    review = client.post(preview_url, json=edit)
+    assert review.status_code == 200, review.text
+    assert "WORKS_AT" in str(review.json()["diff"])
+
+    if case == "source-options":
+        page = client.get("/ontology", params=record_params)
+        assert page.status_code == 200
+        form = re.search(r'<form\b[^>]*\bdata-kind="relationship_add"[^>]*>(.*?)</form>', page.text, re.S)
+        assert form is not None
+        offered = re.findall(r'<option\b[^>]*\bvalue="([^"]+)"', form[1])
+        assert offered == ["related.md"]
+    elif case == "unrelated-http":
+        denied = client.post(preview_url, json={**edit, "file": "unrelated.md"})
+        assert 400 <= denied.status_code < 500, denied.text
+        assert Worker(settings, llm_factory=lambda _settings: llm).run_once(scan=False) == 0
+    else:
+        confirmed = client.post(confirm_url, json={"confirmation": review.json()["confirmation"]})
+        if case == "ownership-race":
+            assert confirmed.status_code == 202, confirmed.text
+            with OntologyDB(settings.db_path, embedding_dim=DIM) as db:
+                assert db.remove_note_entity("related.md", "person")
+        _finish_registry_edit_job(client, settings, confirmed, state="failed" if case == "ownership-race" else "succeeded")
+
+    with OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True) as db:
+        assert {node.id for node in db.list_note_entities("unrelated.md")} == {"other"}
+        assert db.list_note_edges("unrelated.md") == []
+        expected_members = {"person", "company"} if case == "authorized" else {"person"}
+        if case == "ownership-race":
+            expected_members = set()
+        assert {node.id for node in db.list_note_entities("related.md")} == expected_members
+        edges = db.list_note_edges("related.md")
+        if case == "authorized":
+            edge, = edges
+            assert (edge["from_id"], edge["relation"], edge["to_id"]) == ("person", "WORKS_AT", "company")
+        else:
+            assert edges == []
+    for file, (content, _) in note_sources.items():
+        assert (tmp_path / file).read_text(encoding="utf-8") == content
+    if case == "authorized":
+        page = client.get("/ontology", params=record_params)
+        assert "NVIDIA" in page.text and "related.md" in page.text
+
+
+@pytest.mark.parametrize(
+    ("kind", "record", "changed", "replacement", "blank"),
+    [
+        pytest.param("companies", "Independent Foundry", "ticker", "INDP", "sector", id="company"),
+        pytest.param("people", "person", "role", "Thermal Architect", "organization", id="person"),
+    ],
+)
+def test_ontology_registry_editing_optional_details(
+    tmp_path: Path, kind: str, record: str, changed: str, replacement: str, blank: str,
+) -> None:
+    from inspect import signature
+
+    from stock_ontology.registry import CompanySpec
+
+    settings = Settings(db_path=tmp_path / "graph.db", registry_path=tmp_path / "registry.json",
+                        data_dir=tmp_path, embedding_dim=DIM)
+    registry = create_minimal_registry()
+    registry.companies.append(CompanySpec(name="Independent Foundry", ticker="IFND"))
+    save_registry(registry, settings.registry_path)
+    source = tmp_path / "profile.md"
+    source.write_text("Role research.\n", encoding="utf-8")
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        db.upsert_node(Node(id="person", name="Robin Lee", summary="", node_type="entity",
+                            facets={"entity_type": "person", "role": "Engineer"}))
+        db.upsert_ingestion_log(source.name, "profile", hashlib.sha256(source.read_bytes()).hexdigest(),
+                                entity_ids=("person",))
+        db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+
+    origin = "http://127.0.0.1:8000"
+    opt_in = {"registry_origin": origin} if "registry_origin" in signature(create_app).parameters else {}
+    client = TestClient(create_app(settings, llm=FakeWebLLM(), note_actions=True, **opt_in),
+                        base_url=origin, client=("127.0.0.1", 50000))
+    page = client.get("/ontology", params={"tab": "registry", "kind": kind, "record": record, "lang": "en"})
+    assert page.status_code == 200
+    edit = {"record": record, "changes": {changed: replacement}}
+    if kind == "people":
+        preview = client.post("/api/ontology/corrections/preview", json={**edit, "kind": "person", "file": source.name})
+    else:
+        preview = client.post("/api/ontology/registry/publish/preview", json={**edit, "kind": kind}, headers={"Origin": origin})
+    assert preview.status_code == 200, preview.text
+    assert replacement in str(preview.json()["diff"])
+    assert blank not in str(preview.json()["diff"])
+
+    details = re.search(r'<summary>\s*Edit details\s*</summary>\s*(<form\b.*?</form>)', page.text, re.S)
+    assert details is not None
+    assert re.search(rf'<input\b[^>]*\bdata-edit-field="{changed}"', details[1])
+    optional = re.search(rf'<input\b[^>]*\bdata-edit-field="{blank}"[^>]*>', details[1])
+    assert optional is not None and 'value=""' in optional[0]
+    assert not re.search(r'\srequired(?:\s|=|>)', optional[0], re.I), optional[0]
+    assert re.search(r'<button\b[^>]*\btype="submit"', details[1])

@@ -1,0 +1,125 @@
+{% macro field_table(fields) %}
+  <table class="portal-table">
+    <thead>
+      <tr>
+        <th scope="col">{{ t('ontology.schema_field') }}</th>
+        <th scope="col">{{ t('common.kind') }}</th>
+        <th scope="col">{{ t('ontology.col_status') }}</th>
+        <th scope="col">{{ t('ontology.schema_values') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for key, kind, required, values in fields %}
+        <tr>
+          <td><code>{{ key }}</code></td><td><code>{{ kind }}</code></td>
+          <td>{{ t('ontology.schema_required' if required else 'ontology.schema_optional') }}</td>
+          <td>{{ values | join(', ') or t('common.none') }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endmacro %}
+
+{% macro endpoints(relation) %}
+  {{ relation.from_types | join(', ') or t('ontology.schema_any_type') }}
+  {% if relation.symmetric %}&harr;{% else %}&rarr;{% endif %}
+  {{ relation.to_types | join(', ') or t('ontology.schema_any_type') }}
+{% endmacro %}
+
+<section id="structure-explorer" class="section-block ontology-browse">
+  <h1>{{ schema_detail_label or t('nav.ontology_schema') }}</h1>
+  {% if not registry_available %}
+    <p>{{ t('ontology.registry_badge_missing') }}</p>
+  {% else %}
+    {% if applied_version is not none %}
+      <p class="source-cite">{{ t('ontology.schema_revision_difference', published=published_version, applied=applied_version) }}</p>
+    {% endif %}
+    {% if schema_node %}
+      <section class="facet-card">
+        <h2>{{ t('ontology.schema_fields') }}</h2>
+        {{ field_table(schema_node.fields) }}
+      </section>
+      {% if schema_metadata %}
+        <section class="facet-card">
+          <h2>{{ t('ontology.schema_metadata') }}</h2>
+          <dl class="ontology-fields">
+            {% for key, limit in schema_metadata.items() %}
+              <dt><code>{{ key }}</code></dt><dd>{{ t('ontology.schema_character_limit', limit=limit) }}</dd>
+            {% endfor %}
+          </dl>
+        </section>
+      {% endif %}
+    {% elif schema_relation %}
+      {% if schema_relation.description %}<p>{{ schema_relation.description }}</p>{% endif %}
+      <section class="facet-card">
+        <h2>{{ t('ontology.col_domain_range') }}</h2>
+        <p>{{ endpoints(schema_relation) }}</p>
+        <p>{{ t('ontology.schema_symmetric' if schema_relation.symmetric else 'ontology.schema_directed') }}</p>
+        {% if schema_relation.aliases or schema_relation.inverse_aliases %}
+          <dl class="ontology-fields">
+            {% if schema_relation.aliases %}
+              <dt>{{ t('ontology.badge_alias') }}</dt><dd>{{ schema_relation.aliases | join(', ') }}</dd>
+            {% endif %}
+            {% if schema_relation.inverse_aliases %}
+              <dt>{{ t('ontology.badge_inverse') }}</dt><dd>{{ schema_relation.inverse_aliases | join(', ') }}</dd>
+            {% endif %}
+          </dl>
+        {% endif %}
+      </section>
+      {% if schema_edge_fields %}
+        <section class="facet-card">
+          <h2>{{ t('ontology.schema_fields') }}</h2>
+          {{ field_table(schema_edge_fields) }}
+        </section>
+      {% endif %}
+    {% else %}
+      <section class="facet-card">
+        <h2>{{ t('ontology.schema_node_types') }}</h2>
+        <table class="portal-table">
+          <thead>
+            <tr><th scope="col">{{ t('ontology.col_node_type') }}</th><th scope="col">{{ t('ontology.schema_required_fields') }}</th></tr>
+          </thead>
+          <tbody>
+            {% for node in schema_nodes.values() %}
+              <tr>
+                <td><a href="{{ node.href }}">{{ node.label }}</a></td>
+                <td>
+                  {% for key, kind, required, values in node.fields if required %}<code>{{ key }}</code>{% if not loop.last %}, {% endif %}
+                  {% else %}{{ t('common.none') }}{% endfor %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+      <section class="facet-card">
+        <h2>{{ t('ontology.schema_relationship_types') }}</h2>
+        <table class="portal-table">
+          <thead>
+            <tr><th scope="col">{{ t('ontology.col_relation') }}</th><th scope="col">{{ t('ontology.col_domain_range') }}</th></tr>
+          </thead>
+          <tbody>
+            {% for relation in schema_relations.values() %}
+              <tr>
+                <td><a href="{{ relation.href }}">{{ relation.name }}</a></td>
+                <td>{{ endpoints(relation) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+      {% if schema_facet_aliases %}
+        <section class="facet-card">
+          <h2>{{ t('ontology.registry_facets_heading', count=schema_facet_aliases.values() | map('length') | sum) }}</h2>
+          <dl class="ontology-fields">
+            {% for owner, aliases in schema_facet_aliases.items() %}
+              {% for key, canonical in aliases.items() %}
+                <dt><code>{{ owner }}.{{ key }}</code></dt><dd><code>{{ canonical }}</code></dd>
+              {% endfor %}
+            {% endfor %}
+          </dl>
+        </section>
+      {% endif %}
+    {% endif %}
+  {% endif %}
+</section>

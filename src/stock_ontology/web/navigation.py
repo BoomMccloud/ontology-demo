@@ -75,6 +75,13 @@ LEFT_NAV: dict[str, tuple[NavGroup, ...]] = {
     ),
     "ontology": (
         NavGroup(
+            None,
+            (
+                NavItem("registry", "nav.registry", "/ontology?tab=registry"),
+                NavItem("schema", "nav.ontology_schema", "/ontology?tab=schema"),
+            ),
+        ),
+        NavGroup(
             "nav.model",
             (
                 NavItem("entity", "nav.entities", "/ontology?tab=entity"),
@@ -87,7 +94,6 @@ LEFT_NAV: dict[str, tuple[NavGroup, ...]] = {
         NavGroup(
             "nav.governance",
             (
-                NavItem("registry", "nav.registry", "/ontology?tab=registry"),
                 NavItem("audit", "nav.audit", "/ontology?tab=audit"),
             ),
         ),
@@ -182,8 +188,21 @@ _ONTOLOGY_TABS = {item.key for group in LEFT_NAV["ontology"] for item in group.i
 
 
 def _ontology(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
-    tab = str(ctx.get("active_tab") or "entity")
-    return NavState("ontology", tab if tab in _ONTOLOGY_TABS else "entity", "page")
+    tab = str(ctx.get("active_tab") or "registry")
+    root = Crumb(label_key="rail.ontology", href="/ontology")
+    if record := ctx.get("registry_record"):
+        return NavState("ontology", "registry", "component", [
+            root,
+            Crumb(label_key="nav.registry", href=ctx["registry_browse_url"]),
+            Crumb(label=record.name),
+        ])
+    if label := ctx.get("schema_detail_label"):
+        return NavState("ontology", "schema", "component", [
+            root,
+            Crumb(label_key="nav.ontology_schema", href="/ontology?tab=schema"),
+            Crumb(label=label),
+        ])
+    return NavState("ontology", tab if tab in _ONTOLOGY_TABS else "registry", "page")
 
 
 NAV_ROUTES: dict[str, Resolver] = {

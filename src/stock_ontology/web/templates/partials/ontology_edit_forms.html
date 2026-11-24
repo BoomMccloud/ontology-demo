@@ -1,0 +1,88 @@
+{% macro source_choices(files) %}
+  <label>
+    <span>{{ t('ontology.source_note') }}</span>
+    <select name="file" required>
+      {% if files | length != 1 %}<option value="">{{ t('ontology_edit.choose_note') }}</option>{% endif %}
+      {% for file in files %}<option value="{{ file }}">{{ file }}</option>{% endfor %}
+    </select>
+  </label>
+{% endmacro %}
+
+{% macro editor(section, kind, values, record, person_notes, stages) %}
+  <details class="ontology-editor">
+    <summary>{{ t('ontology_edit.details' if section == 'details' else 'ontology_edit.identity') }}</summary>
+    <form class="ontology-edit-form" data-ontology-review="{{ 'correction' if kind == 'people' else 'publish' }}" data-kind="{{ 'person' if kind == 'people' else kind }}">
+      <input type="hidden" name="record" value="{{ record }}">
+      {% if kind == 'people' %}{{ source_choices(person_notes) }}{% endif %}
+      {% if section == 'identity' %}
+        <label><span>{{ t('ontology.canonical_name') }}</span><input data-edit-field="name" value="{{ values.name }}" required></label>
+        <label><span>{{ t('ontology.alternate_names') }}</span>
+          <textarea data-edit-field="aliases" rows="3">{{ values.aliases | join('\n') }}</textarea>
+        </label>
+        <label class="ontology-inline-check"><input type="checkbox" name="keep_previous_name" checked> {{ t('ontology_edit.keep_name') }}</label>
+      {% elif kind == 'companies' %}
+        <label><span>{{ t('ontology.col_ticker') }}</span><input data-edit-field="ticker" value="{{ values.ticker or '' }}"></label>
+        <label><span>{{ t('ontology.col_sector') }}</span><input data-edit-field="sector" value="{{ values.sector or '' }}"{% if values.sector %} required{% endif %}></label>
+      {% elif kind == 'themes' %}
+        <label><span>{{ t('ontology.col_stage') }}</span><select data-edit-field="stage" required>
+          {% for stage in stages %}<option value="{{ stage }}"{% if stage == values.stage %} selected{% endif %}>{{ t_enum('stage', stage) }}</option>{% endfor %}
+        </select></label>
+        <label><span>{{ t('ontology.col_description') }}</span><textarea data-edit-field="description" rows="3">{{ values.description }}</textarea></label>
+      {% else %}
+        <label><span>{{ t('facet.role') }}</span><input data-edit-field="role" value="{{ values.role or '' }}"{% if values.role %} required{% endif %}></label>
+        <label><span>{{ t('facet.organization') }}</span><input data-edit-field="organization" value="{{ values.organization or '' }}"{% if values.organization %} required{% endif %}></label>
+      {% endif %}
+      <button type="submit" class="retro-link-btn">{{ t('ontology_edit.review') }}</button>
+      <p role="status" data-ontology-status></p>
+      <div data-ontology-diff hidden></div>
+    </form>
+  </details>
+{% endmacro %}
+
+{% macro relationship_editor(edge, anchor, files) %}
+  <details class="ontology-editor">
+    <summary>{{ t('ontology_edit.correct_relationship' if edge else 'note_reader.add_relationship') }}</summary>
+    <form class="ontology-edit-form" data-ontology-review="correction" data-kind="{{ 'relationship' if edge else 'relationship_add' }}"
+      data-endpoints="{{ (edge or {}) | tojson | forceescape }}" data-anchor="{{ anchor }}">
+      {% if edge %}
+        <input type="hidden" name="edge_id" value="{{ edge.edge_id }}">
+        <input type="hidden" name="file" value="{{ edge.source }}">
+      {% else %}
+        <input type="hidden" name="record" value="{{ anchor }}">
+        {{ source_choices(files) }}
+      {% endif %}
+      <label><span>{{ t('note_reader.from') }}</span><select data-edit-field="from_id" required></select></label>
+      <label><span>{{ t('note_reader.relationship') }}</span><select data-edit-field="relation" required></select></label>
+      <label><span>{{ t('note_reader.to') }}</span><select data-edit-field="to_id" required></select></label>
+      <div data-ontology-relation-fields></div>
+      <button type="submit" class="retro-link-btn">{{ t('ontology_edit.review') }}</button>
+      <p role="status" data-ontology-status></p>
+      <div data-ontology-diff hidden></div>
+    </form>
+  </details>
+{% endmacro %}
+
+{% macro pending(changes, section, version) %}
+  {% set identity_fields = ['name', 'aliases'] %}
+  {% set affected = namespace(items=[]) %}
+  {% for change in changes %}
+    {% if (change.field in identity_fields) == (section == 'identity') %}
+      {% set affected.items = affected.items + [change] %}
+    {% endif %}
+  {% endfor %}
+  {% if affected.items %}
+    <div class="ontology-pending">
+      <p>{{ t('ontology_edit.pending', version=version) }}</p>
+      <ul>
+        {% for change in affected.items %}
+          <li>
+            <strong>{{ t({'name': 'ontology.canonical_name', 'aliases': 'ontology.alternate_names', 'ticker': 'ontology.col_ticker', 'sector': 'ontology.col_sector', 'stage': 'ontology.col_stage', 'description': 'ontology.col_description'}[change.field]) }}</strong>
+            {% if change.field == 'aliases' %}{{ change.after | join(', ') or t('common.none') }}
+            {% elif change.field == 'stage' %}{{ t_enum('stage', change.after) }}
+            {% else %}{{ change.after or t('common.none') }}{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+{% endmacro %}

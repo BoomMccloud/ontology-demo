@@ -641,3 +641,129 @@ def test_consensus_attempt_whose_lease_expired_during_synthesis_cannot_publish(t
     assert llm.extract_calls == ["a.md"]
     status = ProcessingService(settings).get_status(ref.job_id)
     assert (status["state"], status["attempts"]) == ("succeeded", 2)
+
+
+@pytest.mark.parametrize(("graph_matches", "outcome"), [(0, "registry_only"), (2, "ambiguous")])
+def test_browser_registry_edit_rollout_preserves_unmatched_graph(
+    tmp_path: Path, graph_matches: int, outcome: str,
+) -> None:
+    from stock_ontology.services.registry import RegistryService
+
+    settings = _workspace(tmp_path)
+    registry = create_minimal_registry()
+    save_registry(registry, settings.registry_path)
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        for index in range(graph_matches):
+            db.upsert_node(Node(
+                id=f"nvda-{index}", name="NVIDIA", summary=f"Research {index}", node_type="entity",
+                facets={"entity_type": "company", "ticker": "NVDA", "sector": "Semiconductors"},
+            ))
+        db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+        expected_rows = db.registry_rollout_rows()
+
+    jobs = ProcessingService(settings)
+    service = RegistryService(settings)
+    with _read(settings) as db:
+        review = service.review_record_edit(db, "companies", "NVIDIA", {"sector": "Compute Systems"})
+    submitted = jobs.submit_operator("registry.publish", review["payload"])
+    worker = Worker(settings, llm_factory=lambda _settings: _ScriptLLM())
+    worker.run_once(scan=False)
+    assert jobs.get_status(submitted.job_id)["state"] == "succeeded"
+    preview = jobs.submit_operator("registry.apply.preview", {"confirmation": "fixture-confirmation"})
+    worker.run_once(scan=False)
+    reviewed = jobs.get_status(preview.job_id)
+    assert reviewed["state"] == "succeeded", reviewed
+    assert reviewed["result"]["diff"][0]["effect"] == outcome
+    assert "_plan" not in reviewed["result"]
+    job = jobs.submit_reviewed_rollout(preview.job_id, "fixture-confirmation")
+    worker.run_once(scan=False)
+    assert jobs.get_status(job.job_id)["state"] == "succeeded"
+    with _read(settings) as db:
+        assert db.registry_rollout_rows() == expected_rows
+        assert db.applied_registry().resolve_company("NVIDIA").spec.sector == "Compute Systems"
+
+
+def test_browser_registry_preview_does_not_adopt_cli_publication(tmp_path: Path) -> None:
+    settings = _workspace(tmp_path)
+    registry = create_minimal_registry()
+    save_registry(registry, settings.registry_path)
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+    proposal = settings.registry_path.with_name("cli-proposal.json")
+    update = registry.model_copy(update={"version": registry.version + 1})
+    save_registry(update, proposal)
+    jobs = ProcessingService(settings)
+    publication = jobs.submit_operator("registry.publish", {
+        "registry_path": str(settings.registry_path), "proposal_path": str(proposal),
+        "proposed_revision": update.revision(), "current_revision": registry.revision(),
+    })
+    worker = Worker(settings, llm_factory=lambda _settings: _ScriptLLM())
+    worker.run_once(scan=False)
+    assert jobs.get_status(publication.job_id)["state"] == "succeeded"
+    preview = jobs.submit_operator("registry.apply.preview", {"confirmation": "unrelated"})
+    worker.run_once(scan=False)
+    assert jobs.get_status(preview.job_id)["state"] == "failed"
+    with _read(settings) as db:
+        assert db.applied_registry().revision() == registry.revision()
+
+
+def test_serve_registry_actions_require_loopback_and_disable_proxy_headers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import uvicorn
+
+    settings = _workspace(tmp_path)
+    with OntologyDB(settings.db_path, embedding_dim=DIM):
+        pass
+    monkeypatch.setattr(cli_module, "_load_settings", lambda **_kwargs: settings)
+    monkeypatch.setattr(cli_module, "create_llm_client", lambda _settings: _JourneyLLM())
+    calls = []
+    monkeypatch.setattr(uvicorn, "run", lambda _app, **options: calls.append(options))
+    runner = CliRunner()
+    denied = runner.invoke(cli_module.app, ["serve", "--registry-actions", "--host", "0.0.0.0"])
+    assert denied.exit_code != 0 and "literal loopback" in denied.output
+    assert not calls
+    enabled = runner.invoke(cli_module.app, ["serve", "--registry-actions", "--host", "127.0.0.1"])
+    assert enabled.exit_code == 0, enabled.output
+    assert calls == [{"host": "127.0.0.1", "port": 8000, "proxy_headers": False}]
+
+
+def test_browser_registry_relationship_sources_include_theme_provenance(tmp_path: Path) -> None:
+    import hashlib
+    import re
+
+    from stock_ontology.models import Edge
+
+    settings = _workspace(tmp_path)
+    registry = create_minimal_registry()
+    save_registry(registry, settings.registry_path)
+    name = registry.themes[0].name
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        db.upsert_node(Node(id="theme", name=name, summary="", node_type="theme",
+                            source_doc_id="direct", facets={"stage": "accelerating"}))
+        for key in ("anchor", "peer"):
+            db.upsert_node(Node(id=key, name=key.title(), summary="", node_type="entity",
+                                facets={"entity_type": "company"}))
+        for key in ("direct", "evidence", "membership", "synthetic", "unrelated"):
+            note = _note(settings, f"{key}.md", f"Source: {key}.\n")
+            db.upsert_ingestion_log(note.name, key, hashlib.sha256(note.read_bytes()).hexdigest(),
+                                    entity_ids=("theme",) if key == "membership" else ())
+        for doc, basis in (("evidence", "extracted"), ("synthetic", "synthesized")):
+            db.upsert_edge(Edge(id=doc, from_id="peer", to_id="theme", relation="EXPOSED_TO",
+                                source_doc_id=doc, facets={"basis": basis, "sentiment": "positive"}))
+        db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+
+    client = TestClient(create_app(settings, llm=_ScriptLLM(), note_actions=True))
+    page = client.get("/ontology", params={"tab": "registry", "kind": "themes", "record": name})
+    form = re.search(r'<form\b[^>]*\bdata-kind="relationship_add"[^>]*>(.*?)</form>', page.text, re.S)
+    assert form is not None, page.text
+    assert re.findall(r'<option\b[^>]*\bvalue="([^"]+)"', form[1]) == [
+        "direct.md", "evidence.md", "membership.md",
+    ]
+    for doc in ("direct", "evidence", "membership", "synthetic", "unrelated"):
+        review = client.post("/api/ontology/corrections/preview", json={
+            "kind": "relationship_add", "record": "theme", "file": f"{doc}.md",
+            "changes": {"from_id": "anchor", "to_id": "theme", "relation": "EXPOSED_TO",
+                        "facets": {"sentiment": "positive"}},
+        })
+        assert review.status_code == (200 if doc in {"direct", "evidence", "membership"} else 409), review.text

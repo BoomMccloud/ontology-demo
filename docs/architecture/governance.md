@@ -45,6 +45,14 @@ changes, applied version, and a new rollout receipt commit together. If the resu
 from the preview or fails validation, the transaction rolls back. The local
 workflow records confirmations under the shared account.
 
+The opted-in loopback browser also supports company and theme record edits.
+Publication validates an inline record edit and leaves the applied revision
+and graph intact. A separate worker preview describes registry values and any
+unambiguously linked graph metadata updates. The brief browser rollout can
+only apply an outstanding browser record publication. Schema changes and
+other registry proposals use the full CLI rollout. The worker preserves
+research summaries, graph IDs, and note evidence during a browser rollout.
+
 ## Repair
 
 The CLI `repair` previews changes on a copy and asks for confirmation, then

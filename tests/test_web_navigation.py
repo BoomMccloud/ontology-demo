@@ -55,7 +55,7 @@ VARIANTS: list[tuple[str, str, str, str | None]] = [
     ("/entity/ent_nvda", "research", "companies", "NVIDIA"),
     ("/entity/ent_kenji", "research", "companies", "Kenji Sato"),
     ("/theme/thm_power", "research", "themes", "AI Data Center Power Bottleneck"),
-    ("/ontology", "ontology", "entity", None),
+    ("/ontology", "ontology", "registry", None),
     ("/ontology?tab=entity", "ontology", "entity", None),
     ("/ontology?tab=event", "ontology", "event", None),
     ("/ontology?tab=view", "ontology", "view", None),

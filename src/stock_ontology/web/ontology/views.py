@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from stock_ontology.audit import (
     AuditReport,
@@ -30,6 +32,8 @@ from stock_ontology.search import (
     resolve_safe_note_path,
 )
 from stock_ontology.services import GraphStore
+from stock_ontology.services.corrections import relationship_source_evidence
+from stock_ontology.services.registry import RegistryService, changed_fields
 from stock_ontology.web.shared import (
     format_facet_value,
     resolve_result_href,
@@ -134,119 +138,335 @@ def _build_diagram_links(
     }
 
 
-def _build_registry_view(
-    registry: OntologyRegistry,
-    audit_report: AuditReport,
-    all_edges: list[dict[str, Any]],
-) -> dict[str, Any]:
-    rel_counts: dict[str, dict[str, int]] = {
-        spec.name: {"exact": 0, "alias": 0, "inverse": 0, "issue": 0}
-        for spec in registry.relations
-    }
-    for edge in all_edges:
-        cls = classify_edge_against_registry(
-            registry,
-            edge["relation"],
-            from_type=edge["from_type"],
-            from_entity_type=edge["from_entity_type"],
-            to_type=edge["to_type"],
-            to_entity_type=edge["to_entity_type"],
-        )
-        if cls.canonical_relation is None or cls.canonical_relation not in rel_counts:
-            continue
-        bucket = rel_counts[cls.canonical_relation]
-        if cls.issue_type is not None:
-            bucket["issue"] += 1
-        elif cls.match_kind in bucket:
-            bucket[cls.match_kind] += 1
+_REGISTRY_LABELS = {
+    "companies": "rail.companies",
+    "themes": "rail.themes",
+    "people": "ontology.people",
+}
 
-    relations_rows: list[dict[str, Any]] = []
-    for spec in registry.relations:
-        cnt = rel_counts[spec.name]
-        total = cnt["exact"] + cnt["alias"] + cnt["inverse"] + cnt["issue"]
-        relations_rows.append(
-            {
-                "name": spec.name,
-                "description": spec.description,
-                "from_types": list(spec.from_types),
-                "to_types": list(spec.to_types),
-                "aliases": list(spec.aliases),
-                "inverse_aliases": list(spec.inverse_aliases),
-                "traversal_group": spec.traversal_group,
-                "exact_count": cnt["exact"],
-                "alias_count": cnt["alias"],
-                "inverse_count": cnt["inverse"],
-                "issue_count": cnt["issue"],
-                "total_count": total,
-            }
-        )
 
-    co_matches_by_official: dict[str, list[dict[str, Any]]] = {}
-    for m in audit_report.mapped_companies:
-        co_matches_by_official.setdefault(m.official_name, []).append(
-            {
-                "id": m.node_id,
-                "name": m.db_name,
-                "href": f"/entity/{m.node_id}",
-                "match_kind": m.match_kind,
-                "raw_ticker": m.raw_ticker,
-            }
-        )
+def _ontology_url(tab: str, **params: str) -> str:
+    return "/ontology?" + urlencode({"tab": tab, **{key: value for key, value in params.items() if value}})
 
-    companies_rows = [
-        {
-            "name": spec.name,
-            "ticker": spec.ticker,
-            "sector": spec.sector,
-            "aliases": list(spec.aliases),
-            "db_matches": co_matches_by_official.get(spec.name, []),
-        }
-        for spec in registry.companies
-    ]
 
-    thm_matches_by_official: dict[str, list[dict[str, Any]]] = {}
-    for m in audit_report.mapped_themes:
-        thm_matches_by_official.setdefault(m.official_name, []).append(
-            {
-                "id": m.node_id,
-                "name": m.db_name,
-                "href": f"/theme/{m.node_id}",
-                "match_kind": m.match_kind,
-            }
-        )
+@dataclass(frozen=True)
+class RegistryRecord:
+    key: str
+    name: str
+    aliases: tuple[str, ...]
+    fields: tuple[tuple[str, str], ...]
+    description: str = ""
+    graph_ids: tuple[str, ...] = ()
 
-    themes_rows = [
-        {
-            "name": spec.name,
-            "stage": spec.stage,
-            "description": spec.description,
-            "aliases": list(spec.aliases),
-            "db_matches": thm_matches_by_official.get(spec.name, []),
-        }
-        for spec in registry.themes
-    ]
 
-    facet_hit_map = {
-        (fh.node_type, fh.raw_key): fh.count for fh in audit_report.facet_alias_hits
-    }
-    facet_rows: list[dict[str, Any]] = []
-    for ntype in sorted(registry.facet_aliases.keys()):
-        for raw_key, canon_key in sorted(registry.facet_aliases[ntype].items()):
-            facet_rows.append(
-                {
-                    "node_type": ntype,
-                    "raw_key": raw_key,
-                    "canonical_key": canon_key,
-                    "hit_count": facet_hit_map.get((ntype, raw_key), 0),
-                }
+def _registry_records(
+    db: GraphStore, registry: OntologyRegistry | None, kind: str, lang: str
+) -> list[RegistryRecord]:
+    if kind == "people":
+        return [
+            RegistryRecord(
+                node.id, node.name, tuple(node.aliases),
+                (("facet.role", format_facet_value(node.facets.get("role"), lang=lang)),
+                 ("facet.organization", format_facet_value(node.facets.get("organization"), lang=lang))),
+                graph_ids=(node.id,),
             )
+            for node in db.list_nodes(node_type="entity", limit=-1) if node_subtype(node) == "person"
+        ]
+    if registry is None:
+        return []
+    if kind == "companies":
+        return [
+            RegistryRecord(
+                item.name, item.name,
+                tuple(alias for alias in item.aliases if not item.ticker or alias.casefold() != item.ticker.casefold()),
+                (("ontology.col_ticker", item.ticker or ""), ("ontology.col_sector", item.sector or "")),
+            )
+            for item in registry.companies
+        ]
+    return [
+        RegistryRecord(
+            item.name, item.name, tuple(item.aliases),
+            (("ontology.col_stage", translate_enum("stage", item.stage, lang=lang)),), item.description,
+        )
+        for item in registry.themes
+    ]
 
-    return {
-        "relations": relations_rows,
-        "companies": companies_rows,
-        "themes": themes_rows,
-        "facet_aliases": facet_rows,
+
+def _registry_record_key(registry: OntologyRegistry | None, kind: str, key: str) -> str:
+    if registry is None or kind == "people":
+        return key
+    if kind == "companies":
+        match = registry.resolve_company(key) or registry.resolve_company("", ticker=key)
+    else:
+        match = registry.resolve_theme(key)
+    return match.spec.name if match else key
+
+
+def _registry_graph_ids(
+    db: GraphStore, registry: OntologyRegistry | None, kind: str, record: RegistryRecord,
+) -> tuple[str, ...]:
+    if registry is None or kind == "people":
+        return record.graph_ids
+    report = run_ontology_audit(db, registry)
+    matches = report.mapped_companies if kind == "companies" else report.mapped_themes
+    return tuple(match.node_id for match in matches if match.official_name == record.key)
+
+
+def _registry_relationships(
+    db: GraphStore, graph_ids: tuple[str, ...], record_url: str, data_dir: Path, lang: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    nodes = {node.id: node for node in db.get_nodes(list(graph_ids))}
+    edges = {
+        edge["edge_id"]: (node, edge)
+        for node in nodes.values()
+        for edge in db.get_incident_edges(node.id)
     }
+    note_paths = {entry["doc_id"]: file for file, entry in db.get_ingestion_log().items()} if edges else {}
+    relationships = []
+    for node, edge in edges.values():
+        neighbor = edge["neighbor"]["name"]
+        outgoing = edge["direction"] == "outgoing"
+        start, end = (node.name, neighbor) if outgoing else (neighbor, node.name)
+        file = note_paths.get(edge["source_doc_id"], "")
+        reader_file = file.strip()
+        source_path = resolve_safe_note_path(data_dir, file)
+        # The catalog strips the file query. Link only when that lookup keeps the logged source.
+        available = source_path is not None and (
+            reader_file == file or resolve_safe_note_path(data_dir, reader_file) == source_path
+        )
+        relation = db.registry.resolve_relation(edge["relation"])
+        relationships.append({
+            "start": start,
+            "end": end,
+            "relation": edge["relation"],
+            "relation_label": translate_enum("relation", edge["relation"], lang=lang),
+            "symmetric": bool(relation and relation.spec.symmetric),
+            "source": file if available else "",
+            "source_url": "/catalog?" + urlencode({"file": reader_file, "back": record_url}) if available else "",
+            "edge_id": edge["edge_id"],
+            "from_id": node.id if outgoing else edge["neighbor"]["id"],
+            "to_id": edge["neighbor"]["id"] if outgoing else node.id,
+            "editable_facets": {
+                key: value for key, value in edge["facets"].items()
+                if key in db.registry.edge_facet_keys(edge["relation"]) - {"basis"}
+            },
+        })
+    research_links = [
+        {"name": node.name, "href": resolve_result_href(db, node)} for node in nodes.values()
+    ]
+    return relationships, research_links
+
+
+def _registry_record_matches(
+    record: RegistryRecord, query: str, record_key: str,
+) -> bool:
+    terms = (record.name, *record.aliases, *(value for _, value in record.fields))
+    return (
+        not query
+        or record.key == record_key
+        or any(query.casefold() in value.casefold() for value in terms)
+    )
+
+
+def build_registry_context(
+    db: GraphStore, registry: OntologyRegistry | None, *,
+    kind: str, key: str, query: str, data_dir: Path, lang: str,
+) -> dict[str, Any]:
+    kind = kind if kind in _REGISTRY_LABELS else "companies"
+    query = query.strip()
+    records = _registry_records(db, registry, kind, lang)
+    record_key = _registry_record_key(registry, kind, key or query)
+    record = next((item for item in records if item.key == record_key), None) if key else None
+    if key and record is None:
+        raise KeyError(key)
+
+    browse_url = _ontology_url("registry", kind=kind, q=query)
+    ctx: dict[str, Any] = {
+        "active_tab": "registry",
+        "page_context": translate("nav.registry", lang=lang),
+        "registry_available": registry is not None,
+        "registry_kind": kind,
+        "registry_query": query,
+        "registry_browse_url": browse_url,
+        "registry_record": record,
+    }
+    if record is not None:
+        ctx["page_context"] = record.name
+        used_ids = _registry_graph_ids(db, registry, kind, record)
+        ctx["registry_graph_ids"] = used_ids
+        record_url = _ontology_url("registry", kind=kind, q=query, record=record.key)
+        ctx["registry_relationships"], ctx["registry_research_links"] = _registry_relationships(
+            db, used_ids, record_url, data_dir, lang,
+        )
+        return ctx
+
+    ctx["registry_groups"] = [
+        (item, label, _ontology_url("registry", kind=item)) for item, label in _REGISTRY_LABELS.items()
+    ]
+    ctx["registry_rows"] = [
+        (item, _ontology_url("registry", kind=kind, q=query, record=item.key))
+        for item in sorted(records, key=lambda item: (item.name.casefold(), item.key))
+        if _registry_record_matches(item, query, record_key)
+    ]
+    return ctx
+
+
+def _record_note_choices(
+    db: GraphStore, data_dir: Path, documents: set[str], log: dict[str, dict[str, Any]],
+) -> list[str]:
+    choices = []
+    root = data_dir.resolve()
+    for file, entry in sorted(log.items()):
+        if entry["doc_id"] not in documents:
+            continue
+        path = resolve_safe_note_path(root, file)
+        state = db.get_note_state(file)
+        if path is not None and path.relative_to(root).as_posix() == file and state and state["entities_recorded"]:
+            choices.append(file)
+    return choices
+
+
+def build_registry_edit_context(
+    db: GraphStore, ctx: dict[str, Any], *, applied: OntologyRegistry | None,
+    published: OntologyRegistry | None, data_dir: Path, operator_allowed: bool, corrections_allowed: bool,
+) -> dict[str, Any]:
+    """Expose actions only for the current record and a valid workflow."""
+    kind = ctx["registry_kind"]
+    record = ctx["registry_record"]
+    actions: dict[str, Any] = {"registry_operator_edit": False}
+    pending = applied is not None and published is not None and applied.revision() != published.revision()
+    if kind in {"companies", "themes"} and applied is not None:
+        before = next(item for item in getattr(applied, kind) if item.name == record.key)
+        actions.update(
+            registry_operator_edit=operator_allowed and published is not None and not pending,
+            registry_edit_values=before.model_dump(),
+            theme_stage_choices=tuple(applied._vocabulary("theme", "stage").get("members", {})),
+        )
+        if pending and published is not None:
+            browser_revision = RegistryService.browser_publication(db, published, applied)
+            if browser_revision:
+                index = getattr(applied, kind).index(before)
+                after = getattr(published, kind)[index]
+            else:
+                after = next((item for item in getattr(published, kind) if item.name == before.name), None)
+            if after is not None:
+                diff = changed_fields(before.model_dump(), after.model_dump())
+                if diff:
+                    actions.update(registry_pending=diff, registry_pending_version=published.version,
+                                   registry_can_apply=operator_allowed and browser_revision,
+                                   registry_next_record=after.name)
+    if not corrections_allowed or not ctx["registry_graph_ids"]:
+        return actions
+
+    log = db.get_ingestion_log()
+    if kind == "people":
+        node = db.get_node(record.key)
+        if node is not None:
+            actions["person_note_choices"] = _record_note_choices(db, data_dir, db.note_entity_doc_ids(node.id), log)
+            actions["registry_edit_values"] = {
+                "name": node.name, "aliases": node.aliases, "role": node.facets.get("role", ""),
+                "organization": node.facets.get("organization", ""),
+            }
+    anchor_ids = ctx["registry_graph_ids"]
+    anchor = anchor_ids[0] if len(anchor_ids) == 1 else ""
+    actions["relationship_anchor"] = anchor
+    if anchor:
+        documents = set(relationship_source_evidence(db, anchor))
+        actions["relationship_note_choices"] = _record_note_choices(db, data_dir, documents, log)
+    actions["registry_note_actions"] = True
+    actions["relationship_editor_config"] = {
+        "nodes": [
+            {"id": node.id, "name": node.name,
+             "type": node_type_label(node.node_type, node.facets.get("entity_type"))}
+            for node in db.list_all_nodes()
+        ],
+        "relations": [
+            {"name": relation.name, "from": relation.from_types, "to": relation.to_types,
+             "symmetric": relation.symmetric,
+             "fields": [
+                 {"name": name, "kind": field["kind"], "required": field["required"],
+                  "options": list(db.registry._vocabulary(None, name).get("members", {}))}
+                 for name, field in db.registry._facet_specs(None, relation=relation.name).items() if name != "basis"
+             ]}
+            for relation in db.registry.relations
+        ],
+    }
+    return actions
+
+
+def _schema_type_label(key: str, lang: str) -> str:
+    node_type, _, subtype = key.partition(":")
+    group, value = ("entity_type", subtype) if subtype else ("node_type", node_type)
+    label = translate_enum(group, value, lang=lang)
+    return label[:1].upper() + label[1:]
+
+
+def _schema_fields(
+    registry: OntologyRegistry, node_type: str | None,
+    *, subtype: str = "", relation: str = "",
+) -> list[tuple[str, str, bool, dict[str, str]]]:
+    return [
+        (key, spec["kind"], spec["required"], registry._vocabulary(node_type, key).get("members", {}))
+        for key, spec in registry._facet_specs(node_type, subtype, relation).items()
+    ]
+
+
+def build_schema_context(
+    db: GraphStore, registry: OntologyRegistry | None, *,
+    node_key: str, relation_key: str, lang: str,
+) -> dict[str, Any]:
+    ctx: dict[str, Any] = {
+        "active_tab": "schema",
+        "page_context": translate("nav.ontology_schema", lang=lang),
+        "registry_available": registry is not None,
+    }
+    if registry is None:
+        if node_key or relation_key:
+            raise KeyError(node_key or relation_key)
+        return ctx
+
+    node_keys = [
+        *registry.facet_schema["node"],
+        *(f"entity:{key}" for key in registry._vocabulary("entity", "entity_type")["members"]),
+    ]
+    node_defs = {
+        key: {
+            "label": _schema_type_label(key, lang),
+            "fields": _schema_fields(registry, key.partition(":")[0], subtype=key.partition(":")[2]),
+            "href": _ontology_url("schema", node=key),
+        }
+        for key in dict.fromkeys(node_keys)
+    }
+    relation_defs = {
+        item.name: {
+            "name": item.name,
+            "description": item.description,
+            "from_types": tuple(_schema_type_label(key, lang) for key in item.from_types),
+            "to_types": tuple(_schema_type_label(key, lang) for key in item.to_types),
+            "symmetric": item.symmetric,
+            "aliases": item.aliases,
+            "inverse_aliases": item.inverse_aliases,
+            "href": _ontology_url("schema", relation=item.name),
+        }
+        for item in registry.relations
+    }
+    applied = db.applied_registry()
+    ctx.update(
+        schema_nodes=node_defs,
+        schema_relations=relation_defs,
+        schema_metadata=registry.metadata_max_length,
+        schema_facet_aliases=registry.facet_aliases,
+        published_version=registry.version,
+        applied_version=applied.version if applied and applied.revision() != registry.revision() else None,
+    )
+    if node_key:
+        ctx["schema_node"] = node_defs[node_key]
+        ctx["schema_detail_label"] = node_defs[node_key]["label"]
+    elif relation_key:
+        ctx["schema_relation"] = relation_defs[relation_key]
+        ctx["schema_detail_label"] = relation_key
+        ctx["schema_edge_fields"] = _schema_fields(registry, None, relation=relation_key)
+    return ctx
 
 
 def _build_audit_view(
@@ -341,7 +561,7 @@ def build_ontology_context(
 ) -> dict[str, Any]:
     """Prepare the 4-structure Ontology View architectural explorer context."""
     active_tab = tab.strip().lower()
-    if active_tab not in ("entity", "event", "view", "theme", "edges", "registry", "audit"):
+    if active_tab not in ("entity", "event", "view", "theme", "edges", "audit"):
         active_tab = "entity"
     active_subtype = subtype.strip().lower()
     raw_reg_status = reg_status.strip().lower()
@@ -542,24 +762,15 @@ def build_ontology_context(
     active_subtypes: list[dict[str, Any]] = []
     edge_samples: list[dict[str, Any]] = []
     edge_schema_detailed: list[dict[str, Any]] = []
-    registry_view: dict[str, Any] | None = None
     audit_view: dict[str, Any] | None = None
 
-    all_edges_with_endpoints: list[dict[str, Any]] = []
-    if active_tab in ("edges", "registry"):
-        all_edges_with_endpoints = db.list_edges_with_endpoints()
-
-    if active_tab == "registry":
-        if registry is not None and audit_report is not None:
-            registry_view = _build_registry_view(
-                registry, audit_report, all_edges_with_endpoints
-            )
-    elif active_tab == "audit":
+    if active_tab == "audit":
         if audit_report is not None:
             audit_view = _build_audit_view(
                 audit_report, rel_sug_by_key, co_sug_by_key, thm_sug_by_key
             )
     elif active_tab == "edges":
+        all_edges_with_endpoints = db.list_edges_with_endpoints()
         sig_groups: dict[tuple[str, str | None, str, str, str | None], int] = {}
         for e in all_edges_with_endpoints:
             gkey = (
@@ -780,7 +991,6 @@ def build_ontology_context(
         "edge_schema": edge_schema,
         "edge_schema_detailed": edge_schema_detailed,
         "registry_summary": registry_summary,
-        "registry_view": registry_view,
         "audit_view": audit_view,
         "active_tab": active_tab,
         "active_subtype": active_subtype,

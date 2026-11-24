@@ -772,10 +772,12 @@ def chat(
                 console.print(f"[red]{err_prefix}[/red] {exc}")
 
 
-def _create_library_app(settings: Settings, llm: LLMClient) -> FastAPI:
+def _create_library_app(
+    settings: Settings, llm: LLMClient, *, registry_origin: str | None = None,
+) -> FastAPI:
     from stock_ontology.web import create_app
 
-    return create_app(settings, llm=llm, note_actions=True)
+    return create_app(settings, llm=llm, note_actions=True, registry_origin=registry_origin)
 
 
 @app.command()
@@ -792,9 +794,27 @@ def serve(
         str | None,
         typer.Option("--lang", "-l", help="Default web UI language (en, zh, ko, ja, es, fr)."),
     ] = None,
+    registry_actions: Annotated[
+        bool, typer.Option("--registry-actions", help="Enable operator registry confirmations on a literal loopback bind."),
+    ] = False,
 ) -> None:
     """Start the research library, note reader, and read-only Clippy chat."""
     import uvicorn
+
+    registry_origin = None
+    if registry_actions:
+        from ipaddress import ip_address
+
+        requirement = "Registry actions require a literal loopback address."
+        try:
+            bind = ip_address(host)
+        except ValueError as exc:
+            raise typer.BadParameter(requirement) from exc
+        if not bind.is_loopback:
+            raise typer.BadParameter(requirement)
+        origin_host = f"[{bind}]" if bind.version == 6 else str(bind)
+        origin_port = f":{port}" if port != 80 else ""
+        registry_origin = f"http://{origin_host}{origin_port}"
 
     settings = _load_settings(db=db, data_dir=data_dir)
     resolved_lang = _resolve_cli_lang(settings, lang)
@@ -810,7 +830,11 @@ def serve(
         f"[cyan]{translate('cli.serve_starting', lang=resolved_lang, host=host, port=port, db_path=settings.db_path, language=resolved_lang)}[/cyan]\n"
         f"[cyan]{translate('cli.llm_chain', lang=resolved_lang)}[/cyan] {llm.format_chain_summary()}"
     )
-    uvicorn.run(_create_library_app(settings, llm), host=host, port=port)
+    if registry_origin:
+        uvicorn.run(_create_library_app(settings, llm, registry_origin=registry_origin),
+                    host=host, port=port, proxy_headers=False)
+    else:
+        uvicorn.run(_create_library_app(settings, llm), host=host, port=port)
 
 
 def _render_audit_report(

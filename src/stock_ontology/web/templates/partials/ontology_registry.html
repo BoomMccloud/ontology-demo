@@ -1,0 +1,144 @@
+{% from "partials/ontology_edit_forms.html" import editor, relationship_editor, pending with context %}
+{% set can_edit = registry_operator_edit or person_note_choices %}
+<section id="structure-explorer" class="section-block ontology-browse">
+  {% if registry_record %}
+    <h1>{{ registry_record.name }}</h1>
+    {% if can_edit or registry_note_actions or registry_can_apply %}
+      <div data-ontology-edit-labels="{{ {
+        'publish': t('ontology_edit.publish'), 'apply': t('ontology_edit.apply'),
+        'correction': t('note_reader.save'), 'cancel': t('ontology_edit.cancel'),
+        'working': t('note_reader.working'), 'error': t('ontology_edit.error'),
+        'select_node': t('note_reader.select_node'), 'select_relation': t('note_reader.select_relationship'),
+        'linked': t('ontology_edit.linked'), 'ambiguous': t('ontology_edit.ambiguous'),
+        'registry_only': t('ontology_edit.registry_only'), 'version_only': t('ontology_edit.version_only'),
+        'name':t('ontology.canonical_name'), 'aliases':t('ontology.alternate_names'),
+        'ticker':t('ontology.col_ticker'), 'sector':t('ontology.col_sector'), 'stage':t('ontology.col_stage'),
+        'description':t('ontology.col_description'), 'role':t('facet.role'), 'organization':t('facet.organization'),
+        'relation':t('note_reader.relationship'), 'from_id':t('note_reader.from'), 'to_id':t('note_reader.to'),
+        'facets':t('ontology.schema_fields')
+      } | tojson | forceescape }}"></div>
+      {% if registry_note_actions %}
+        <script type="application/json" id="ontology-relationship-editor">{{ relationship_editor_config | tojson }}</script>
+      {% endif %}
+    {% endif %}
+    <section class="facet-card">
+      <h2>{{ t('ontology.record_details') }}</h2>
+      <dl class="ontology-fields">
+        {% for label, value in registry_record.fields %}
+          <dt>{{ t(label) }}</dt><dd>{{ value or t('common.none') }}</dd>
+        {% endfor %}
+        {% if registry_record.description %}
+          <dt>{{ t('ontology.col_description') }}</dt><dd>{{ registry_record.description }}</dd>
+        {% endif %}
+      </dl>
+      {% if registry_pending %}{{ pending(registry_pending, 'details', registry_pending_version) }}{% endif %}
+      {% if can_edit %}{{ editor('details', registry_kind, registry_edit_values, registry_record.key, person_note_choices, theme_stage_choices) }}{% endif %}
+    </section>
+    <section class="facet-card">
+      <h2>{{ t('ontology.record_identity') }}</h2>
+      <dl class="ontology-fields">
+        <dt>{{ t('ontology.canonical_name') }}</dt><dd>{{ registry_record.name }}</dd>
+        <dt>{{ t('ontology.alternate_names') }}</dt><dd>{{ registry_record.aliases | join(', ') or t('common.none') }}</dd>
+      </dl>
+      {% if registry_pending %}{{ pending(registry_pending, 'identity', registry_pending_version) }}{% endif %}
+      {% if can_edit %}{{ editor('identity', registry_kind, registry_edit_values, registry_record.key, person_note_choices, theme_stage_choices) }}{% endif %}
+    </section>
+    {% if registry_can_apply %}
+      <form data-ontology-review="apply" data-next-record="{{ registry_next_record }}" class="ontology-edit-form">
+        <button type="submit" class="retro-link-btn">{{ t('ontology_edit.review_apply') }}</button>
+        <p role="status" data-ontology-status></p>
+        <div data-ontology-diff hidden></div>
+      </form>
+    {% endif %}
+    {% if registry_relationships or relationship_anchor and relationship_note_choices %}
+      <section class="facet-card">
+        <h2>{{ t('ontology.record_relationships') }}</h2>
+        {% if registry_relationships %}
+        <table class="portal-table">
+          <thead>
+            <tr>
+              <th scope="col">{{ t('ontology.record_relationships') }}</th>
+              <th scope="col">{{ t('ontology.source_note') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for edge in registry_relationships %}
+              <tr>
+                <td>
+                  {{ edge.start }} <strong>{{ edge.relation_label }}</strong>
+                  {% if edge.symmetric %}&harr;{% else %}&rarr;{% endif %} {{ edge.end }}
+                  {% if edge.editable_facets %}
+                    <dl class="ontology-fields">
+                      {% for field, value in edge.editable_facets.items() %}
+                        <dt>{{ t('facet.' ~ field) }}</dt><dd>{{ value }}</dd>
+                      {% endfor %}
+                    </dl>
+                  {% endif %}
+                  {% if registry_note_actions and edge.source %}{{ relationship_editor(edge, '', []) }}{% endif %}
+                </td>
+                <td>
+                  {% if edge.source_url %}<a href="{{ edge.source_url }}">{{ edge.source }}</a>
+                  {% else %}{{ t('common.none') }}{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+        {% if relationship_anchor and relationship_note_choices %}
+          {{ relationship_editor(none, relationship_anchor, relationship_note_choices) }}
+        {% endif %}
+      </section>
+    {% endif %}
+    {% if registry_research_links %}
+      <section class="facet-card">
+        <h2>{{ t('nav.research') }}</h2>
+        <ul>
+          {% for link in registry_research_links %}<li><a href="{{ link.href }}">{{ link.name }}</a></li>{% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+  {% else %}
+    <h1>{{ t('nav.registry') }}</h1>
+    <nav class="tab-bar" aria-label="{{ t('ontology.registry_tabs_aria') }}">
+      {% for kind, label, href in registry_groups %}
+        <a href="{{ href }}" class="tab-btn{% if kind == registry_kind %} tab-btn-active{% endif %}"{% if kind == registry_kind %} aria-current="page"{% endif %}>{{ t(label) }}</a>
+      {% endfor %}
+    </nav>
+    <form action="/ontology" method="get" class="search-form ontology-filter">
+      <input type="hidden" name="tab" value="registry">
+      <input type="hidden" name="kind" value="{{ registry_kind }}">
+      <label for="registry-query">{{ t('ontology.find_record') }}</label>
+      <input id="registry-query" type="text" name="q" value="{{ registry_query }}">
+      <button type="submit">{{ t('nav.search') }}</button>
+    </form>
+    {% if not registry_available and registry_kind != 'people' %}
+      <p>{{ t('ontology.registry_badge_missing') }}</p>
+    {% elif not registry_rows %}
+      <p>{{ t('ontology.no_records') }}</p>
+    {% else %}
+      <table class="portal-table">
+        <thead>
+          <tr>
+            <th scope="col">
+              {%- if registry_kind == 'companies' -%}{{ t('theme.col_company') }}
+              {%- elif registry_kind == 'themes' -%}{{ t('section.themes_col_theme') }}
+              {%- else -%}{{ t('ontology.person') }}{%- endif -%}
+            </th>
+            {% for label, value in registry_rows[0][0].fields %}<th scope="col">{{ t(label) }}</th>{% endfor %}
+            {% if registry_kind != 'people' %}<th scope="col">{{ t('ontology.alternate_names') }}</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for record, href in registry_rows %}
+            <tr>
+              <td><a href="{{ href }}">{{ record.name }}</a></td>
+              {% for label, value in record.fields %}<td>{{ value or t('common.none') }}</td>{% endfor %}
+              {% if registry_kind != 'people' %}<td>{{ record.aliases | join(', ') or t('common.none') }}</td>{% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  {% endif %}
+</section>

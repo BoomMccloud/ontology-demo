@@ -36,12 +36,14 @@ class LanguageRequest(BaseModel):
 
 def create_app(
     settings: Settings, llm: LLMClient | None = None, *, note_actions: bool = False,
+    registry_origin: str | None = None,
 ) -> FastAPI:
     """Create the library. `note_actions` enables Process and corrections, which queue worker jobs."""
     app = FastAPI(title="Stock Ontology Library", version="0.1.0")
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     shell = WebShell(
-        settings, llm if llm is not None else create_llm_client(settings), note_actions=note_actions
+        settings, llm if llm is not None else create_llm_client(settings), note_actions=note_actions,
+        registry_origin=registry_origin,
     )
     for build_router in (
         build_research_router,

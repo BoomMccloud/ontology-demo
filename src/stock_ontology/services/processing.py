@@ -32,8 +32,10 @@ BACKOFF_SECONDS = 60
 CORRECTION_KINDS = frozenset({
     "note.relink", "note.entity.add", "note.entity.delete",
     "note.relationship", "note.relationship.add", "note.relationship.delete",
+    "note.ontology.correction",
 })
-OPERATOR_KINDS = frozenset({"ingest", "reembed", "repair", "registry.publish", "registry.apply"})
+OPERATOR_KINDS = frozenset({"ingest", "reembed", "repair", "registry.publish", "registry.apply",
+                           "registry.apply.preview"})
 PROCESS_KIND = "process"
 
 
@@ -130,6 +132,16 @@ class ProcessingService:
             raise ServiceError("invalid", f"Unknown operator job: {kind}")
         return self._submit(f"job_{uuid.uuid4().hex}", kind, "", "", params)
 
+    def submit_reviewed_rollout(self, preview_job_id: str, confirmation: str) -> JobRef:
+        """Queue the private plan from a completed worker preview owned by the caller's review."""
+        job = self._job(preview_job_id)
+        if (
+            job is None or job.kind != "registry.apply.preview" or job.state != "succeeded"
+            or not job.result or job.result.get("confirmation") != confirmation
+        ):
+            raise ServiceError("conflict", "The worker has not completed this registry preview.")
+        return self.submit_operator("registry.apply", job.result["_plan"])
+
     def retry(self, job_id: str) -> JobRef:
         status = self.get_status(job_id)
         if status["state"] != "failed":
@@ -159,6 +171,8 @@ class ProcessingService:
         spooled = self._spooled(job_id)
         if job is not None:
             status = job.to_status()
+            if job.kind == "registry.apply.preview" and job.result:
+                status["result"] = {key: job.result[key] for key in ("confirmation", "diff", "version")}
             if status["state"] == "failed" and any(s.op == "retry" for s in spooled):
                 status["state"] = "queued"
             return status

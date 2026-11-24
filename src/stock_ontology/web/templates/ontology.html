@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 
-{% block title %}{{ t('ontology.page_title') }}{% endblock %}
+{% block title %}
+  {% if active_tab == 'registry' %}
+    {{ t('entity.page_title', name=registry_record.name if registry_record else t('nav.registry')) }}
+  {% elif active_tab == 'schema' %}
+    {{ t('entity.page_title', name=schema_detail_label or t('nav.ontology_schema')) }}
+  {% else %}
+    {{ t('ontology.page_title') }}
+  {% endif %}
+{% endblock %}
 
 {% macro render_edge_cls(cls, sug_status='') %}
   {% if cls %}
@@ -30,6 +38,11 @@
 {% endmacro %}
 
 {% block content %}
+{% if active_tab == 'registry' %}
+  {% include "partials/ontology_registry.html" %}
+{% elif active_tab == 'schema' %}
+  {% include "partials/ontology_schema.html" %}
+{% else %}
 <section class="facet-card" aria-label="{{ t('ontology.header_aria') }}">
   <div class="entry-title-row">
     <div>
@@ -318,149 +331,7 @@
     >{% if registry_summary.loaded %}{{ t('ontology.tab_audit_count', count=registry_summary.pending_total) }}{% else %}{{ t('ontology.tab_audit') }}{% endif %}</a>
   </div>
 
-  {% if active_tab == 'registry' %}
-    {% if not registry_summary.loaded or not registry_view %}
-      <div class="facet-card">
-        <p>{{ t('ontology.registry_missing_notice', path=registry_summary.path) }}</p>
-      </div>
-    {% else %}
-      <div class="facet-card">
-        <h3 class="u-m-0-0-8px u-fs-1p02rem">{{ t('ontology.registry_relations_heading', count=registry_view.relations | length) }}</h3>
-        <table class="catalog-table">
-          <thead>
-            <tr>
-              <th>{{ t('ontology.col_relation') }}</th>
-              <th>{{ t('ontology.col_domain_range') }}</th>
-              <th>{{ t('ontology.col_aliases_inverses') }}</th>
-              <th>{{ t('ontology.col_live_usage') }}</th>
-              <th>{{ t('ontology.col_description') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for r in registry_view.relations %}
-              <tr>
-                <td>
-                  <span class="badge badge-official">{{ t_enum('relation', r.name) }}</span>
-                  <div class="source-cite">{{ r.traversal_group }}</div>
-                </td>
-                <td class="mono u-fs-0p82rem">
-                  {{ r.from_types | join(' | ') or '*' }} &rarr; {{ r.to_types | join(' | ') or '*' }}
-                </td>
-                <td class="mono u-fs-0p8rem">
-                  {% if r.aliases %}<div>{{ t('ontology.badge_alias') }}: {{ r.aliases | join(', ') }}</div>{% endif %}
-                  {% if r.inverse_aliases %}<div>{{ t('ontology.badge_inverse') }}: {{ r.inverse_aliases | join(', ') }}</div>{% endif %}
-                  {% if not r.aliases and not r.inverse_aliases %}{{ t('common.none') }}{% endif %}
-                </td>
-                <td class="mono u-fs-0p82rem">
-                  <strong>{{ r.total_count }}</strong>
-                  <div class="source-cite">
-                    {{ t('ontology.registry_usage_summary', exact=r.exact_count, alias=r.alias_count, inverse=r.inverse_count) }}
-                    {% if r.issue_count %}
-                      <span class="badge badge-danger">{{ t('ontology.registry_usage_issues', count=r.issue_count) }}</span>
-                    {% endif %}
-                  </div>
-                </td>
-                <td>{{ r.description }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="facet-card">
-        <h3 class="u-m-0-0-8px u-fs-1p02rem">{{ t('ontology.registry_companies_heading', count=registry_view.companies | length) }}</h3>
-        <table class="catalog-table">
-          <thead>
-            <tr>
-              <th>{{ t('theme.col_company') }}</th>
-              <th>{{ t('ontology.col_ticker') }}</th>
-              <th>{{ t('ontology.col_sector') }}</th>
-              <th>{{ t('ontology.col_aliases_inverses') }}</th>
-              <th>{{ t('ontology.col_live_db_match') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for c in registry_view.companies %}
-              <tr>
-                <td><strong>{{ c.name }}</strong></td>
-                <td class="mono">{{ c.ticker or t('common.none') }}</td>
-                <td>{{ c.sector or t('common.none') }}</td>
-                <td class="mono u-fs-0p82rem">{{ c.aliases | join(', ') or t('common.none') }}</td>
-                <td>
-                  {% for m in c.db_matches %}
-                    <div>
-                      <a href="{{ m.href }}"><strong>{{ m.name }}</strong></a>
-                      <span class="badge badge-official">{{ m.match_kind }}</span>
-                    </div>
-                  {% else %}
-                    <span class="source-cite">{{ t('ontology.registry_not_in_db') }}</span>
-                  {% endfor %}
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="facet-card">
-        <h3 class="u-m-0-0-8px u-fs-1p02rem">{{ t('ontology.registry_themes_heading', count=registry_view.themes | length) }}</h3>
-        <table class="catalog-table">
-          <thead>
-            <tr>
-              <th>{{ t('section.themes_col_theme') }}</th>
-              <th>{{ t('ontology.col_stage') }}</th>
-              <th>{{ t('ontology.col_aliases_inverses') }}</th>
-              <th>{{ t('ontology.col_live_db_match') }}</th>
-              <th>{{ t('ontology.col_description') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for th in registry_view.themes %}
-              <tr>
-                <td><strong>{{ th.name }}</strong></td>
-                <td><span class="badge badge-{{ th.stage }}">{{ t_enum('stage', th.stage) }}</span></td>
-                <td class="mono u-fs-0p82rem">{{ th.aliases | join(', ') or t('common.none') }}</td>
-                <td>
-                  {% for m in th.db_matches %}
-                    <div>
-                      <a href="{{ m.href }}"><strong>{{ m.name }}</strong></a>
-                      <span class="badge badge-official">{{ m.match_kind }}</span>
-                    </div>
-                  {% else %}
-                    <span class="source-cite">{{ t('ontology.registry_not_in_db') }}</span>
-                  {% endfor %}
-                </td>
-                <td>{{ th.description }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="facet-card">
-        <h3 class="u-m-0-0-8px u-fs-1p02rem">{{ t('ontology.registry_facets_heading', count=registry_view.facet_aliases | length) }}</h3>
-        <table class="catalog-table">
-          <thead>
-            <tr>
-              <th>{{ t('ontology.col_node_type') }}</th>
-              <th>{{ t('ontology.col_facet_alias') }}</th>
-              <th>{{ t('ontology.col_live_usage') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for fa in registry_view.facet_aliases %}
-              <tr>
-                <td class="mono">{{ t_enum('node_type', fa.node_type) }}</td>
-                <td class="mono">{{ fa.raw_key }} &rarr; <strong>{{ fa.canonical_key }}</strong></td>
-                <td class="mono">{{ fa.hit_count }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% endif %}
-
-  {% elif active_tab == 'audit' %}
+  {% if active_tab == 'audit' %}
     {% if not registry_summary.loaded or not audit_view %}
       <div class="facet-card">
         <p>{{ t('ontology.registry_missing_notice', path=registry_summary.path) }}</p>
@@ -925,4 +796,11 @@
     {% endif %}
   {% endif %}
 </section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+  {% if registry_record and (registry_operator_edit or person_note_choices or registry_note_actions or registry_can_apply) %}
+    <script src="{{ request.url_for('static', path='ontology_edit.js') }}"></script>
+  {% endif %}
 {% endblock %}

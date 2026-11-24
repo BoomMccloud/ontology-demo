@@ -2179,3 +2179,43 @@ def test_add_note_relationship_accepts_required_fields_from_shipped_registry(tmp
                                        facets={"sentiment": "positive"})
         edge, = db.list_note_edges("note")
         assert (edge["relation"], edge["facets"]["sentiment"]) == ("EXPOSED_TO", "positive")
+
+
+def test_registry_person_identity_correction_survives_matching_extraction(tmp_path: Path) -> None:
+    from stock_ontology.config import Settings
+    from stock_ontology.registry import create_minimal_registry, save_registry
+    from stock_ontology.services.corrections import review_note_correction
+    from stock_ontology.services.processing import ProcessingService
+    from stock_ontology.worker import Worker
+
+    class PersonLLM(FakePipelineLLM):
+        def extract_document(self, **_: Any) -> ExtractionResult:
+            return ExtractionResult(entities=[ExtractedEntity(
+                temp_id="local-person", name="Old Research Name", summary="Analyst",
+                entity_type="person", facets=[FacetKV(key="role", value="Former Role")],
+            )])
+
+    settings = Settings(db_path=tmp_path / "db.sqlite", registry_path=tmp_path / "registry.json",
+                        data_dir=tmp_path, embedding_dim=DIM)
+    registry = create_minimal_registry()
+    save_registry(registry, settings.registry_path)
+    note = tmp_path / "source.md"
+    note.write_text("A note about Old Research Name.", encoding="utf-8")
+    llm = PersonLLM()
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        IngestionPipeline(db, llm, tmp_path, registry=registry).process_note(note)
+        old = db.find_by_name_or_alias("Old Research Name")
+        assert old is not None
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry, read_only=True) as db:
+        payload = review_note_correction(db, note, tmp_path, kind="person", record=old.id,
+                                         changes={"name": "Corrected Research Name"}, keep_previous_name=True)
+    jobs = ProcessingService(settings)
+    ref = jobs.submit_correction("note.ontology.correction", note.name, payload)
+    Worker(settings, llm_factory=lambda _settings: llm).run_once(scan=False)
+    assert jobs.get_status(ref.job_id)["state"] == "succeeded"
+    note.write_text("A revised note about Old Research Name.", encoding="utf-8")
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        IngestionPipeline(db, llm, tmp_path, registry=registry).process_note(note)
+        node, = db.list_nodes(node_type="entity")
+        assert (node.id, node.name) == (old.id, "Corrected Research Name")
+        assert "Old Research Name" in node.aliases

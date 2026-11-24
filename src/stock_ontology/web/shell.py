@@ -74,10 +74,13 @@ def build_next_path(request: Request) -> str:
 class WebShell:
     """Per-app services shared by every module router."""
 
-    def __init__(self, settings: Settings, llm: LLMClient, *, note_actions: bool) -> None:
+    def __init__(
+        self, settings: Settings, llm: LLMClient, *, note_actions: bool, registry_origin: str | None = None,
+    ) -> None:
         self.settings = settings
         self.llm = llm
         self.note_actions = note_actions
+        self.registry_origin = registry_origin
         self.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
     def lang(self, request: Request, explicit_lang: str | None = None) -> str:

@@ -85,6 +85,22 @@ these routes (`note_actions=True`). Corrections update the selected note's
 links in the shared graph. These writes use the local demo's
 shared account and require an access control layer before non-local hosting.
 
+`/ontology` can review source-backed person or relationship edits when note
+actions are enabled. Its correction endpoints bind the selected processed
+note, graph values, and replacement fields to a short-lived review. Confirm
+queues a worker correction. The worker checks the exact review and source
+revision again within its transaction. Adding a relationship from a record
+requires that the selected note already supports that record through extraction
+membership, the node's source, or a sourced, non-synthesized incident edge.
+The review binds the supporting association and the worker rechecks it.
+
+Company and theme Registry editing requires `serve --registry-actions` on a
+literal loopback address. The web process checks the loopback peer and exact
+Host and Origin before every review or confirmation. Forwarded requests are
+refused. Publication and application have separate confirmations. Application
+can use only a completed worker preview for an outstanding browser record edit.
+The existing CLI can review and confirm a full registry proposal or rollout.
+
 `/search` shows the functional results first: a best-match card, then
 sections for entities and themes, items connected through relationships,
 events and views, and note passages, each labeled with why it matched. The

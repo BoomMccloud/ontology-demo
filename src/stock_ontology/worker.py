@@ -17,9 +17,10 @@ import json
 import logging
 import tempfile
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -27,12 +28,15 @@ from typing import Any
 
 from stock_ontology.config import NoteConflictError, Settings
 from stock_ontology.db import TERMINAL_STATES, Job, LeaseLostError, OntologyDB, RegistryChangedError
+from stock_ontology.models import Edge, Node
 from stock_ontology.pipeline import IngestionPipeline, IngestReport, reembed_all_nodes, reembed_nodes
 from stock_ontology.registry import (
     OntologyRegistry,
     RegistryPublication,
     RegistrySuggestions,
     load_registry,
+    normalize_name_key,
+    normalize_ticker,
     save_registry_json,
 )
 from stock_ontology.repair import RepairReport, repair_ontology, validate_rollout
@@ -46,7 +50,9 @@ from stock_ontology.services import (
     job_priority,
 )
 from stock_ontology.services.notes import has_changes, note_revision
+from stock_ontology.services.corrections import review_note_correction
 from stock_ontology.services.processing import process_job_id
+from stock_ontology.services.registry import changed_fields, unique_labels
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +97,7 @@ class RolloutPlan:
     old_revision: str | None
     old_stamp: str | None
     published_revision: str
+    record_diff: list[dict[str, Any]] | None = None
 
     def job_payload(self, settings: Settings, *, adoption: bool, reembed: bool = False) -> dict[str, Any]:
         return {
@@ -100,10 +107,91 @@ class RolloutPlan:
             "before": _rows_digest(self.before), "after": _rows_digest(self.after),
             "plan": sha256(json.dumps([self.before, self.after]).encode("utf-8")).hexdigest(),
             "planned": _jsonable(asdict(self.planned)),
+            **({"browser_record": True} if self.record_diff is not None else {}),
         }
 
 
-def plan_rollout(settings: Settings, target: OntologyRegistry, *, adoption: bool) -> RolloutPlan:
+def _rollout_record_metadata(
+    db: OntologyDB, applied: OntologyRegistry, target: OntologyRegistry,
+) -> list[dict[str, Any]]:
+    """Update uniquely linked metadata without repairing unrelated data."""
+    editable = {"version", "companies", "themes"}
+    current_other = {key: value for key, value in applied.official_definitions().items() if key not in editable}
+    target_other = {key: value for key, value in target.official_definitions().items() if key not in editable}
+    if current_other != target_other or any(
+        len(getattr(applied, group)) != len(getattr(target, group)) for group in ("companies", "themes")
+    ):
+        raise ServiceError("conflict", "This revision requires a full CLI registry apply.")
+
+    diff = []
+    for group, node_type in (("companies", "entity"), ("themes", "theme")):
+        for old, new in zip(getattr(applied, group), getattr(target, group), strict=True):
+            edits = changed_fields(old.model_dump(), new.model_dump())
+            if not edits:
+                continue
+            nodes = db.list_nodes(node_type=node_type, limit=-1)
+            matches = []
+            for node in nodes:
+                if node_type == "entity":
+                    if node.facets.get("entity_type") != "company":
+                        continue
+                    ticker = node.facets.get("ticker")
+                    match = applied.resolve_company(node.name, ticker=str(ticker) if ticker else None, aliases=node.aliases)
+                else:
+                    match = applied.resolve_theme(node.name, aliases=node.aliases)
+                if match is not None and match.spec == old:
+                    matches.append(node)
+
+            entry: dict[str, Any] = {"record": old.name, "changes": edits, "effect": "registry_only"}
+            if len(matches) > 1:
+                entry["effect"] = "ambiguous"
+            elif matches:
+                node = matches[0]
+                requested = {edit["field"]: edit["after"] for edit in edits}
+                introduced = set(map(normalize_name_key, [requested.get("name", ""), *requested.get("aliases", [])])) - {""}
+                ticker = normalize_ticker(requested.get("ticker"))
+                if any(
+                    other.id != node.id and (
+                        introduced & set(map(normalize_name_key, [other.name, *other.aliases]))
+                        or ticker and node_type == "entity"
+                        and other.facets.get("entity_type") == "company"
+                        and normalize_ticker(str(other.facets.get("ticker") or "")) == ticker
+                    )
+                    for other in nodes
+                ):
+                    entry["effect"] = "ambiguous"
+                else:
+                    aliases = node.aliases
+                    name = requested.get("name", node.name)
+                    if "aliases" in requested or name != node.name:
+                        removed = set(map(normalize_name_key, old.aliases)) - set(map(normalize_name_key, new.aliases))
+                        aliases = unique_labels(
+                            [alias for alias in node.aliases if normalize_name_key(alias) not in removed]
+                            + list(requested.get("aliases", [])), excluding=name,
+                        )
+                    facets = node.facets.copy()
+                    for field in ("ticker", "sector", "stage"):
+                        if field in requested:
+                            if requested[field] is None:
+                                facets.pop(field, None)
+                            else:
+                                facets[field] = requested[field]
+                    if (name, aliases, facets) != (node.name, node.aliases, node.facets):
+                        original_values = {"name": node.name, "aliases": node.aliases, **node.facets}
+                        update_values = {"name": name, "aliases": aliases, **facets}
+                        graph_changes = changed_fields(
+                            original_values, {key: update_values.get(key) for key in ("name", "aliases", "ticker", "sector", "stage")}
+                        )
+                        with db.checking_against(target):
+                            db.upsert_node(node.model_copy(update={"name": name, "aliases": aliases, "facets": facets}))
+                        entry.update(effect="linked", graph_id=node.id, graph_changes=graph_changes)
+            diff.append(entry)
+    return diff
+
+
+def plan_rollout(
+    settings: Settings, target: OntologyRegistry, *, adoption: bool, browser_record: bool = False,
+) -> RolloutPlan:
     """Run the repair on a disposable copy of the database and report the row diff."""
     published_revision = load_registry(settings.registry_path).revision()
     if adoption and published_revision != target.revision():
@@ -125,12 +213,20 @@ def plan_rollout(settings: Settings, target: OntologyRegistry, *, adoption: bool
             ):
                 raise ValueError("Use registry-apply to review and adopt a different registry version.")  # noqa: TRY003
             before = preview.registry_rollout_rows()
-            planned = repair_ontology(preview, target, data_dir=settings.data_dir)
+            record_diff = None
+            if browser_record:
+                if not RegistryService.browser_publication(preview, target, applied):
+                    raise ServiceError("conflict", "Only an outstanding browser record edit can be applied here.")
+                assert applied is not None
+                record_diff = _rollout_record_metadata(preview, applied, target)
+                planned = RepairReport()
+            else:
+                planned = repair_ontology(preview, target, data_dir=settings.data_dir)
             validate_rollout(preview, target)
             after = preview.registry_rollout_rows()
     return RolloutPlan(
         before=before, after=after, planned=planned, applied_version=applied.version if applied else None,
-        old_revision=old_revision, old_stamp=old_stamp, published_revision=published_revision,
+        old_revision=old_revision, old_stamp=old_stamp, published_revision=published_revision, record_diff=record_diff,
     )
 
 
@@ -310,6 +406,13 @@ class Worker:
             return self._run_reembed(db, job)
         if job.kind in ("repair", "registry.apply"):
             return self._run_rollout(db, job)
+        if job.kind == "registry.apply.preview":
+            target = load_registry(self.settings.registry_path)
+            plan = plan_rollout(self.settings, target, adoption=True, browser_record=True)
+            return {
+                "confirmation": job.payload["confirmation"], "diff": (plan.record_diff or [])[:100],
+                "version": target.version, "_plan": plan.job_payload(self.settings, adoption=True),
+            }
         if job.kind == "registry.publish":
             return self._run_publish(db, job)
         raise ServiceError("invalid", f"Unknown job kind: {job.kind}")
@@ -393,6 +496,8 @@ class Worker:
         params = job.payload
         path = NotesService(self.settings, self.processing).resolve(job.target).resolve()
         pipeline = self._pipeline(db, job)
+        if job.kind == "note.ontology.correction":
+            return self._run_ontology_correction(db, job, pipeline, path)
         if job.stage == "write":
             expected = params.get("expected_hash")
             if job.kind == "note.relink":
@@ -418,6 +523,41 @@ class Worker:
                 raise ServiceError("invalid", f"Unknown correction: {job.kind}")
             self._wrote(db, job)
         updated = self._finish_consensus(db, pipeline, job)
+        return {"file": job.target, "consensus_updated_for": updated}
+
+    def _run_ontology_correction(
+        self, db: OntologyDB, job: Job, pipeline: IngestionPipeline, path: Path,
+    ) -> dict[str, Any]:
+        reviewed = job.payload
+        if job.stage == "write":
+            with db.transaction(immediate=True):
+                self._check(db, job)
+                fresh = review_note_correction(db, path, self.settings.data_dir, **reviewed["request"])
+                if fresh != reviewed:
+                    raise ServiceError("conflict", "The source or graph changed after review.")
+                doc_id = fresh["doc_id"]
+                affected = db.get_doc_affected_company_ids(doc_id)
+                if person := fresh["person"]:
+                    previous = Node.model_validate(person["before"])
+                    db.upsert_node(previous.model_copy(update={
+                        key: person[key] for key in ("name", "aliases", "facets")
+                    }))
+                for update in fresh["edges"]:
+                    before, values = update["before"], update["after"]
+                    if before:
+                        db.update_edge(before["edge_id"], **values)
+                    else:
+                        db.upsert_edge(Edge(id=f"edge_{uuid.uuid4().hex}", source_doc_id=doc_id, **values))
+                    added = {values["from_id"], values["to_id"]} - {before.get("from_id"), before.get("to_id")}
+                    db.add_note_entities(doc_id, tuple(
+                        node.id for node in db.get_nodes(sorted(added)) if node.node_type == "entity"
+                    ))
+                if pipeline._current_note_doc(path, fresh["expected_hash"]) != doc_id:
+                    raise NoteConflictError
+                affected.update(db.get_doc_affected_company_ids(doc_id))
+                pipeline._evidence_changed(affected)
+                self._wrote(db, job)
+        updated = self._finish_consensus(db, pipeline, replace(job, stage="consensus"))
         return {"file": job.target, "consensus_updated_for": updated}
 
     def _operator_settings(self, job: Job) -> Settings:
@@ -480,7 +620,14 @@ class Worker:
                 or _rows_digest(db.registry_rollout_rows()) != params["before"]
             ):
                 raise ValueError("Registry or database changed during review. Run a new preview.")  # noqa: TRY003
-            result = repair_ontology(db, target, data_dir=settings.data_dir)
+            if params.get("browser_record"):
+                if not RegistryService.browser_publication(db, target, current):
+                    raise ServiceError("conflict", "Only an outstanding browser record edit can be applied here.")
+                assert current is not None
+                _rollout_record_metadata(db, current, target)
+                result = RepairReport()
+            else:
+                result = repair_ontology(db, target, data_dir=settings.data_dir)
             validate_rollout(db, target)
             if _rows_digest(db.registry_rollout_rows()) != params["after"] or _jsonable(asdict(result)) != params["planned"]:
                 raise ValueError("The migration result changed during review. Run a new preview.")  # noqa: TRY003
@@ -498,13 +645,20 @@ class Worker:
         """Write the reviewed proposal as the published registry. It changes only the registry
         file; the job finishes in the same write transaction that serializes it with other jobs."""
         params = job.payload
-        registry_path = Path(params["registry_path"])
+        registry_path = Path(params.get("registry_path", self.settings.registry_path))
         with db.transaction(immediate=True):
             self._check(db, job)
             current = load_registry(registry_path)
             if current.revision() != params["current_revision"]:
                 raise ValueError("The published registry changed during review. Preview the proposal again.")  # noqa: TRY003
-            proposed = load_registry(Path(params["proposal_path"]))
+            browser_edit = params.get("browser_record")
+            if browser_edit:
+                expected = RegistryService(self.settings).review_record_edit(db, **browser_edit)
+                if expected["payload"]["proposed"] != params["proposed"]:
+                    raise ServiceError("conflict", "The reviewed registry record edit changed.")
+                proposed = OntologyRegistry.model_validate(params["proposed"])
+            else:
+                proposed = load_registry(Path(params["proposal_path"]))
             if proposed.revision() != params["proposed_revision"]:
                 raise ValueError("The proposal changed during review. Preview it again.")  # noqa: TRY003
             suggestion_path = registry_path.with_suffix(".suggestions.json")
