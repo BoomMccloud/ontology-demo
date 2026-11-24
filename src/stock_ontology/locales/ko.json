@@ -407,7 +407,6 @@
   "cli.none_value": "(없음)",
   "cli.watching_msg": "{interval}초마다 {data_dir} -> {db_path} 감시 중 (LLM: {llm}) (종료: Ctrl+C)",
   "cli.watch_stopped": "감시 루프를 중지했습니다.",
-  "cli.watch_failed": "감시 실패:",
   "cli.db_panel_title": "온톨로지 DB: {db_path}",
   "cli.db_stats_summary": "노드: {total_nodes} (엔티티={entity}, 이벤트={event}, 뷰={view}, 테마={theme})\n엣지: {total_edges} | 활성 컨센서스 뷰: {active_consensus} | 수집된 파일: {ingested_files}",
   "cli.table_entities": "엔티티",

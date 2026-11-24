@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from stock_ontology.i18n import translate, translate_enum, translate_subtype
 from stock_ontology.llm import LLMClient
 from stock_ontology.models import resolve_item_sentiment
 from stock_ontology.registry import (
@@ -18,6 +19,7 @@ from stock_ontology.search import (
     node_source_file,
     node_subtype,
     search_ontology,
+    split_qualified_value,
 )
 from stock_ontology.services import GraphStore, node_to_dict
 from stock_ontology.vocab import (
@@ -147,3 +149,42 @@ def build_search_results(
         "notes_truncated": found.notes_truncated,
         "count": found.count,
     }
+
+
+# Enum-valued filters shown as chips: (filter key, enum group). Labels are `search.filter_<key>`.
+_ENUM_FILTERS = (
+    ("sentiment", "sentiment"), ("stance", "stance"), ("support_strength", "support_strength"),
+    ("conviction", "conviction"), ("relation", "relation"),
+)
+# Free-text filters shown verbatim: (filter key, label key suffix).
+_TEXT_FILTERS = (("date_from", "from"), ("date_to", "to"), ("source_file", "source"))
+
+
+def build_active_filters(
+    node_type: str, filters: dict[str, str], entity_label: str, lang: str,
+) -> list[tuple[str, str]]:
+    """Label and value for each filter the search page applies, in display order."""
+
+    def label(suffix: str) -> str:
+        return translate(f"search.filter_{suffix}", lang=lang)
+
+    active: list[tuple[str, str]] = []
+    if node_type:
+        active.append((label("type"), translate_enum("node_type", node_type, lang=lang)))
+    if filters["subtype"]:
+        sub_nt, sub_value = split_qualified_value(filters["subtype"])
+        active.append((label("subtype"), translate_subtype(sub_value, lang=lang, node_type=sub_nt or node_type or None)))
+    if filters["status"]:
+        _, status_value = split_qualified_value(filters["status"])
+        active.append((label("status"), translate_enum("status", status_value, lang=lang)))
+    for key, group in _ENUM_FILTERS:
+        if filters[key]:
+            active.append((label(key), translate_enum(group, filters[key], lang=lang)))
+    if filters["entity_id"]:
+        active.append((label("entity"), entity_label))
+    for key, suffix in _TEXT_FILTERS:
+        if filters[key]:
+            active.append((label(suffix), filters[key]))
+    if filters["search_mode"] == "keyword":
+        active.append((label("mode"), translate("search.mode_keyword_short", lang=lang)))
+    return active

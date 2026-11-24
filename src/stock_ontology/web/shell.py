@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 from fastapi import HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from stock_ontology.config import Settings
@@ -31,7 +31,7 @@ from stock_ontology.i18n import (
 )
 from stock_ontology.llm import LLMClient
 from stock_ontology.registry import OntologyRegistry, load_registry
-from stock_ontology.services import GraphStore, open_graph
+from stock_ontology.services import GraphStore, ProcessingService, ServiceError, open_graph
 from stock_ontology.web.navigation import LEFT_NAV, WORKFLOWS, resolve_nav
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -41,6 +41,14 @@ LANG_COOKIE_MAX_AGE = 31536000
 
 # HTTP status for each typed service error.
 HTTP_STATUS = {"not_found": 404, "conflict": 409, "invalid": 422, "unavailable": 503}
+
+
+def http_error(exc: ServiceError) -> HTTPException:
+    return HTTPException(HTTP_STATUS.get(exc.code, 500), exc.message)
+
+
+def set_lang_cookie(resp: Response, lang: str) -> None:
+    resp.set_cookie(key=LANG_COOKIE_NAME, value=lang, max_age=LANG_COOKIE_MAX_AGE, samesite="lax", path="/")
 
 
 def sanitize_next_path(raw_next: str | None) -> str:
@@ -82,6 +90,12 @@ class WebShell:
         self.note_actions = note_actions
         self.registry_origin = registry_origin
         self.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+        self.processing = ProcessingService(settings)
+
+    def require_note_actions(self, request: Request) -> None:
+        """Process and corrections need note actions enabled and an initialized database."""
+        if not self.note_actions or not self.settings.db_path.exists():
+            raise HTTPException(503, translate("note_reader.action_failed", lang=self.lang(request)))
 
     def lang(self, request: Request, explicit_lang: str | None = None) -> str:
         return resolve_language(
@@ -155,11 +169,5 @@ class WebShell:
         resp = self.templates.TemplateResponse(request, template_name, full_ctx)
         explicit_query_lang = normalize_language(request.query_params.get("lang"))
         if explicit_query_lang is not None:
-            resp.set_cookie(
-                key=LANG_COOKIE_NAME,
-                value=explicit_query_lang,
-                max_age=LANG_COOKIE_MAX_AGE,
-                samesite="lax",
-                path="/",
-            )
+            set_lang_cookie(resp, explicit_query_lang)
         return resp

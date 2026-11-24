@@ -407,7 +407,6 @@
   "cli.none_value": "（无）",
   "cli.watching_msg": "正在每 {interval} 秒监听 {data_dir} -> {db_path}（LLM：{llm}）（按 Ctrl+C 停止）",
   "cli.watch_stopped": "已停止监听循环。",
-  "cli.watch_failed": "监听失败：",
   "cli.db_panel_title": "本体数据库：{db_path}",
   "cli.db_stats_summary": "节点：{total_nodes}（实体={entity}，事件={event}，观点={view}，主题={theme}）\n边：{total_edges} | 有效共识观点：{active_consensus} | 已导入文件：{ingested_files}",
   "cli.table_entities": "实体列表",

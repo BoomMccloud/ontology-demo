@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from stock_ontology.config import Settings
+from stock_ontology.config import Settings, note_revision
 from stock_ontology.db import Job, OntologyDB
 from stock_ontology.search import resolve_safe_note_path
 from stock_ontology.services.errors import ServiceError
@@ -72,6 +72,14 @@ class Submission:
     created_at: str = ""
 
 
+def resolve_note(data_dir: Path, file: str) -> Path:
+    """The note file at `file` under `data_dir`, or a `not_found` error."""
+    path = resolve_safe_note_path(data_dir, file)
+    if path is None or not path.is_file():
+        raise ServiceError("not_found", f"Note not found: {file}")
+    return path
+
+
 def process_job_id(file: str, revision: str) -> str:
     return "job_" + hashlib.sha256(f"{PROCESS_KIND}\0{file}\0{revision}".encode()).hexdigest()[:24]
 
@@ -104,10 +112,7 @@ class ProcessingService:
         return JobRef(job_id, "queued")
 
     def _note_revision(self, file: str) -> str:
-        path = resolve_safe_note_path(Path(self.settings.data_dir), file)
-        if path is None or not path.is_file():
-            raise ServiceError("not_found", f"Note not found: {file}")
-        return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+        return note_revision(resolve_note(Path(self.settings.data_dir), file).read_text(encoding="utf-8"))
 
     def request_processing(self, file: str) -> JobRef:
         """Queue extraction and consensus for the note's current revision."""
@@ -164,15 +169,13 @@ class ProcessingService:
             return db.jobs.get(job_id)
 
     def _spooled(self, job_id: str) -> list[Submission]:
-        return [s for s in self.read_spool() if s.job_id == job_id]
+        return self.read_spool(f"*-{job_id}.json")
 
     def _find(self, job_id: str) -> dict[str, Any] | None:
         job = self._job(job_id)
         spooled = self._spooled(job_id)
         if job is not None:
             status = job.to_status()
-            if job.kind == "registry.apply.preview" and job.result:
-                status["result"] = {key: job.result[key] for key in ("confirmation", "diff", "version")}
             if status["state"] == "failed" and any(s.op == "retry" for s in spooled):
                 status["state"] = "queued"
             return status
@@ -196,11 +199,12 @@ class ProcessingService:
         """The most recent job for a note, spooled or recorded."""
         candidates: list[dict[str, Any]] = []
         db = self._open()
+        job = None
         if db is not None:
             with db:
-                jobs = db.jobs.list(target=file)
-            if jobs:
-                candidates.append(jobs[-1].to_status())
+                job = db.jobs.latest(target=file)
+            if job is not None:
+                candidates.append(job.to_status())
         spooled = [s for s in self.read_spool() if s.op == "enqueue" and s.target == file]
         if spooled:
             found = self._find(spooled[-1].job_id)
@@ -210,11 +214,11 @@ class ProcessingService:
 
     # --- spool access for the worker
 
-    def read_spool(self) -> list[Submission]:
+    def read_spool(self, pattern: str = "*.json") -> list[Submission]:
         if not self.spool.is_dir():
             return []
         found: list[Submission] = []
-        for path in sorted(self.spool.glob("*.json")):
+        for path in sorted(self.spool.glob(pattern)):
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):

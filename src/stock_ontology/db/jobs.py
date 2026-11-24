@@ -12,7 +12,7 @@ import sqlite3
 import uuid
 from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -43,14 +43,15 @@ class Job:
     error: str | None
     created_at: str
     updated_at: str
-    extra: dict[str, Any] = field(default_factory=dict)
 
     def to_status(self) -> dict[str, Any]:
+        """Public status; result keys starting with `_` are worker-private and left out."""
+        result = {k: v for k, v in self.result.items() if not k.startswith("_")} if self.result else self.result
         return {
             "job_id": self.job_id, "kind": self.kind, "target": self.target, "revision": self.revision,
             "state": self.state, "stage": self.stage, "attempts": self.attempts,
             "next_attempt_at": self.next_attempt_at, "error_code": self.error_code, "error": self.error,
-            "companies": sorted(self.companies), "result": self.result,
+            "companies": sorted(self.companies), "result": result,
             "created_at": self.created_at, "updated_at": self.updated_at,
         }
 
@@ -106,6 +107,10 @@ class JobStore:
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         return [_row_to_job(r) for r in self._select(f"SELECT * FROM jobs {where} ORDER BY created_at, rowid", params)]  # noqa: S608
 
+    def latest(self, *, target: str) -> Job | None:
+        rows = self._select("SELECT * FROM jobs WHERE target = ? ORDER BY created_at DESC, rowid DESC LIMIT 1", (target,))
+        return _row_to_job(rows[0]) if rows else None
+
     def consensus_state(self, company_id: str) -> dict[str, Any] | None:
         rows = self._select("SELECT * FROM consensus_refresh WHERE company_id = ?", (company_id,))
         return dict(rows[0]) if rows else None
@@ -117,11 +122,19 @@ class JobStore:
         state = self.consensus_state(company_id)
         return int(state["target_revision"]) if state else 0
 
-    def unfinished_consensus(self) -> list[str]:
+    def pending_consensus(self) -> list[str]:
+        """Companies whose consensus refresh is still owed and not marked failed."""
         rows = self._select(
-            "SELECT company_id FROM consensus_refresh WHERE completed_revision < target_revision ORDER BY company_id"
+            "SELECT company_id FROM consensus_refresh "
+            "WHERE state = 'pending' AND completed_revision < target_revision ORDER BY company_id"
         )
         return [str(r["company_id"]) for r in rows]
+
+    def has_active(self, kind: str) -> bool:
+        """Whether a job of `kind` is queued or running."""
+        return bool(self._select(
+            "SELECT 1 FROM jobs WHERE kind = ? AND state IN ('queued', 'running') LIMIT 1", (kind,)
+        ))
 
     # --- writes (worker only)
 

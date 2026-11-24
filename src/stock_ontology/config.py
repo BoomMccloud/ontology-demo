@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 from typing import Literal, TypeVar
@@ -34,6 +35,11 @@ DEFAULT_PROVIDER_ORDER: tuple[ProviderName, ...] = (
 )
 # Research note file types read by ingestion and shown by the web catalog.
 SUPPORTED_EXTENSIONS = frozenset({".md", ".txt"})
+
+
+def note_revision(text: str) -> str:
+    """The content revision used by the extraction log, processing jobs, and the note reader."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 class NoteConflictError(Exception):

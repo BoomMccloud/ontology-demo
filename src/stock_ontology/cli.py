@@ -32,7 +32,6 @@ from stock_ontology.llm import LLMClient, create_llm_client
 from stock_ontology.pipeline import IngestReport, ReembedReport
 from stock_ontology.registry import (
     OntologyRegistry,
-    RegistrySuggestions,
     SuggestionSyncSummary,
     load_registry,
     save_registry_json,
@@ -99,7 +98,7 @@ def _worker(settings: Settings, *, lease_seconds: float = DEFAULT_LEASE_SECONDS,
     """A worker in this process; the LLM is built on first use from `create_llm_client`."""
     return Worker(
         settings,
-        llm_factory=(lambda _settings: llm) if llm is not None else (lambda target: create_llm_client(target)),
+        llm_factory=(lambda _settings: llm) if llm is not None else create_llm_client,
         lease_seconds=lease_seconds,
     )
 
@@ -830,11 +829,9 @@ def serve(
         f"[cyan]{translate('cli.serve_starting', lang=resolved_lang, host=host, port=port, db_path=settings.db_path, language=resolved_lang)}[/cyan]\n"
         f"[cyan]{translate('cli.llm_chain', lang=resolved_lang)}[/cyan] {llm.format_chain_summary()}"
     )
-    if registry_origin:
-        uvicorn.run(_create_library_app(settings, llm, registry_origin=registry_origin),
-                    host=host, port=port, proxy_headers=False)
-    else:
-        uvicorn.run(_create_library_app(settings, llm), host=host, port=port)
+    # Registry actions trust the loopback peer address, so a proxy must not rewrite it.
+    uvicorn.run(_create_library_app(settings, llm, registry_origin=registry_origin),
+                host=host, port=port, proxy_headers=registry_origin is None)
 
 
 def _render_audit_report(
@@ -1042,7 +1039,7 @@ def audit(
     sync_summary: SuggestionSyncSummary | None = None
     suggestion_path = settings.registry_path.with_suffix(".suggestions.json")
     if sync_suggestions:
-        reg.suggestions = _load_suggestions(suggestion_path, reg.suggestions)
+        reg.suggestions = load_suggestions(suggestion_path, reg.suggestions)
         sync_summary = reg.sync_suggestions(
             report.unmapped_relations,
             report.unmapped_companies,
@@ -1068,10 +1065,6 @@ def audit(
         sync_summary=sync_summary,
         suggestion_path=suggestion_path,
     )
-
-
-def _load_suggestions(path: Path, fallback: RegistrySuggestions) -> RegistrySuggestions:
-    return load_suggestions(path, fallback)
 
 
 def _echo_diff(before: list[str], after: list[str], from_label: str, to_label: str, *, err: bool = False) -> None:

@@ -61,7 +61,7 @@ interface touches its callers, and that's expected.
   `read_only=True`.
 
 The web-to-agent contract (`chat()` and `ChatTurn` only) is enforced by
-`tests/test_web.py::test_web_chat_endpoint_uses_only_agent_chat` and
+`tests/test_web_clippy.py::test_web_chat_endpoint_uses_only_agent_chat` and
 `tests/test_agent.py::test_agent_chat_returns_immutable_turn_contract`.
 
 ## Services and worker

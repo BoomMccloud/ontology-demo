@@ -407,7 +407,6 @@
   "cli.none_value": "（なし）",
   "cli.watching_msg": "{interval} 秒ごとに {data_dir} -> {db_path} を監視中（LLM：{llm}）（Ctrl+C で停止）",
   "cli.watch_stopped": "監視ループを停止しました。",
-  "cli.watch_failed": "監視に失敗しました：",
   "cli.db_panel_title": "オントロジー DB：{db_path}",
   "cli.db_stats_summary": "ノード：{total_nodes}（エンティティ={entity}、イベント={event}、ビュー={view}、テーマ={theme}）\nエッジ：{total_edges} | 有効なコンセンサスビュー：{active_consensus} | 取り込み済みファイル：{ingested_files}",
   "cli.table_entities": "エンティティ一覧",

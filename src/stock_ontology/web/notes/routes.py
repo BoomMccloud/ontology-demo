@@ -9,10 +9,10 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from stock_ontology.i18n import translate
-from stock_ontology.services import NoteSaveError, NotesService, ProcessingService, ServiceError
+from stock_ontology.services import NoteSaveError, NotesService, ServiceError
 from stock_ontology.web.notes.views import build_catalog_context
 from stock_ontology.web.shared import build_rail_context
-from stock_ontology.web.shell import HTTP_STATUS, WebShell
+from stock_ontology.web.shell import WebShell, http_error
 
 
 class NoteCreateRequest(BaseModel):
@@ -65,7 +65,7 @@ def build_router(shell: WebShell) -> APIRouter:
     router = APIRouter()
     settings = shell.settings
     note_actions = shell.note_actions
-    processing = ProcessingService(settings)
+    processing = shell.processing
     notes = NotesService(settings, processing)
 
     @router.get("/catalog", response_class=HTMLResponse)
@@ -131,16 +131,13 @@ def build_router(shell: WebShell) -> APIRouter:
         return {"file": ref.file, "job_id": ref.job_id}
 
     def _submitted(request: Request, file: str, submit: Any) -> JSONResponse:
-        lang = shell.lang(request)
-        if not note_actions or not settings.db_path.exists():
-            raise HTTPException(503, translate("note_reader.action_failed", lang=lang))
+        shell.require_note_actions(request)
         try:
             ref = submit()
         except ServiceError as exc:
-            detail = (
-                translate("api.raw_note_not_found", lang=lang, file=file) if exc.code == "not_found" else exc.message
-            )
-            raise HTTPException(HTTP_STATUS.get(exc.code, 500), detail) from exc
+            if exc.code == "not_found":
+                raise HTTPException(404, translate("api.raw_note_not_found", lang=shell.lang(request), file=file)) from exc
+            raise http_error(exc) from exc
         return JSONResponse({"file": file, "job_id": ref.job_id, "state": ref.state}, status_code=202)
 
     def _correction(request: Request, kind: str, payload: BaseModel) -> JSONResponse:
@@ -175,12 +172,5 @@ def build_router(shell: WebShell) -> APIRouter:
     @router.post("/api/notes/relationship/delete", status_code=202)
     def delete_note_relationship(request: Request, payload: NoteRelationshipDeleteRequest) -> JSONResponse:
         return _correction(request, "note.relationship.delete", payload)
-
-    @router.get("/api/jobs/{job_id}")
-    def job_status(request: Request, job_id: str) -> JSONResponse:
-        try:
-            return JSONResponse(processing.get_status(job_id))
-        except ServiceError as exc:
-            raise HTTPException(HTTP_STATUS.get(exc.code, 500), exc.message) from exc
 
     return router

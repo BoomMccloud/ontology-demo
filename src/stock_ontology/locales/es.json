@@ -407,7 +407,6 @@
   "cli.none_value": "(ninguno)",
   "cli.watching_msg": "Supervisando {data_dir} cada {interval}s -> {db_path} (LLM: {llm}) (Ctrl+C para detener)",
   "cli.watch_stopped": "Bucle de supervisión detenido.",
-  "cli.watch_failed": "Error en supervisión:",
   "cli.db_panel_title": "BD de Ontología: {db_path}",
   "cli.db_stats_summary": "Nodos: {total_nodes} (entidad={entity}, evento={event}, opinión={view}, tema={theme})\nEnlaces: {total_edges} | Consensos activos: {active_consensus} | Archivos ingeridos: {ingested_files}",
   "cli.table_entities": "Entidades",

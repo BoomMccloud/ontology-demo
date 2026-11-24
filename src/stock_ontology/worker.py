@@ -26,7 +26,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from stock_ontology.config import NoteConflictError, Settings
+from stock_ontology.config import NoteConflictError, Settings, note_revision
 from stock_ontology.db import TERMINAL_STATES, Job, LeaseLostError, OntologyDB, RegistryChangedError
 from stock_ontology.models import Edge, Node
 from stock_ontology.pipeline import IngestionPipeline, IngestReport, reembed_all_nodes, reembed_nodes
@@ -49,7 +49,7 @@ from stock_ontology.services import (
     ServiceError,
     job_priority,
 )
-from stock_ontology.services.notes import has_changes, note_revision
+from stock_ontology.services.notes import has_changes
 from stock_ontology.services.corrections import review_note_correction
 from stock_ontology.services.processing import process_job_id
 from stock_ontology.services.registry import changed_fields, unique_labels
@@ -326,14 +326,9 @@ class Worker:
     def _queue_scan(self) -> bool:
         """Queue one ingest scan when notes changed on disk or a consensus refresh is still pending."""
         with self.open_store() as db:
-            busy = [job for job in db.jobs.list(kind="ingest") if job.state in ("queued", "running")]
-            if busy:
+            if db.jobs.has_active("ingest"):
                 return False
-            pending = [
-                row for row in db.jobs.list_consensus_refresh()
-                if row["state"] == "pending" and row["completed_revision"] < row["target_revision"]
-            ]
-            if not pending and not has_changes(Path(self.settings.data_dir), db.get_ingestion_log()):
+            if not db.jobs.pending_consensus() and not has_changes(Path(self.settings.data_dir), db.get_ingestion_log()):
                 return False
             now = self.clock()
             db.jobs.insert(
@@ -577,11 +572,7 @@ class Worker:
             )
             self._wrote(db, job)
         # Retry refreshes an earlier run left pending (a killed worker, or newer evidence).
-        leftover = [
-            row["company_id"] for row in db.jobs.list_consensus_refresh()
-            if row["state"] == "pending" and row["completed_revision"] < row["target_revision"]
-        ]
-        pipeline._refresh_consensus(leftover, report)
+        pipeline._refresh_consensus(db.jobs.pending_consensus(), report)
         return _jsonable(asdict(report))
 
     def _run_reembed(self, db: OntologyDB, job: Job) -> dict[str, Any]:

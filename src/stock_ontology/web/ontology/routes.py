@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from stock_ontology.i18n import translate
-from stock_ontology.services import JobRef, NotesService, ProcessingService, RegistryService, ServiceError
+from stock_ontology.services import JobRef, NotesService, RegistryService, ServiceError
 from stock_ontology.services.corrections import review_note_correction
 from stock_ontology.web.ontology.views import (
     build_ontology_context,
@@ -25,7 +25,7 @@ from stock_ontology.web.ontology.views import (
     build_schema_context,
 )
 from stock_ontology.web.shared import build_rail_context
-from stock_ontology.web.shell import HTTP_STATUS, WebShell
+from stock_ontology.web.shell import WebShell, http_error
 
 
 class RegistryEdit(BaseModel):
@@ -105,7 +105,7 @@ class _Reviews:
 def build_router(shell: WebShell) -> APIRouter:
     router = APIRouter()
     settings = shell.settings
-    processing = ProcessingService(settings)
+    processing = shell.processing
     registry = RegistryService(settings)
     notes = NotesService(settings, processing)
     reviews = _Reviews()
@@ -114,14 +114,8 @@ def build_router(shell: WebShell) -> APIRouter:
         if not _operator_allowed(request, shell.registry_origin):
             raise HTTPException(403, translate("ontology_edit.authority_required", lang=shell.lang(request)))
 
-    def require_corrections(request: Request) -> None:
-        if not shell.note_actions or not settings.db_path.exists():
-            raise HTTPException(503, translate("note_reader.action_failed", lang=shell.lang(request)))
-
     def rejected(exc: Exception) -> HTTPException:
-        if isinstance(exc, ServiceError):
-            return HTTPException(HTTP_STATUS.get(exc.code, 422), exc.message)
-        return HTTPException(422, str(exc))
+        return http_error(exc) if isinstance(exc, ServiceError) else HTTPException(422, str(exc))
 
     @router.post("/api/ontology/registry/publish/preview")
     def publish_preview(request: Request, edit: RegistryEdit) -> dict[str, Any]:
@@ -166,7 +160,7 @@ def build_router(shell: WebShell) -> APIRouter:
 
     @router.post("/api/ontology/corrections/preview")
     def correction_preview(request: Request, edit: CorrectionEdit) -> dict[str, Any]:
-        require_corrections(request)
+        shell.require_note_actions(request)
         try:
             path = notes.resolve(edit.file)
             with shell.open_db(shell.lang(request)) as db:
@@ -179,7 +173,7 @@ def build_router(shell: WebShell) -> APIRouter:
 
     @router.post("/api/ontology/corrections/confirm", status_code=202)
     def correction_confirm(request: Request, review: Confirmation) -> dict[str, str]:
-        require_corrections(request)
+        shell.require_note_actions(request)
         try:
             return reviews.submit(
                 review.confirmation, "correction",

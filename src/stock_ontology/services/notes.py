@@ -8,7 +8,6 @@ and fails instead of replacing an existing file.
 
 from __future__ import annotations
 
-import hashlib
 import itertools
 import os
 import re
@@ -20,10 +19,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from stock_ontology.config import SUPPORTED_EXTENSIONS, Settings
-from stock_ontology.search import resolve_safe_note_path
-from stock_ontology.services.errors import ServiceError
-from stock_ontology.services.processing import ProcessingService
+from stock_ontology.config import SUPPORTED_EXTENSIONS, Settings, note_revision
+from stock_ontology.services.processing import ProcessingService, resolve_note
 
 DEFAULT_NOTE_FOLDER = "_general"
 MAX_NOTE_BYTES = 1_000_000
@@ -65,11 +62,6 @@ def note_slug(title: str) -> str:
     normalized = unicodedata.normalize("NFC", title).lower()
     slug = re.sub(r"\W+", "_", normalized).strip("_")
     return slug[:_MAX_SLUG_CHARS].strip("_") or _FALLBACK_SLUG
-
-
-def note_revision(text: str) -> str:
-    """The content revision used by the extraction log and processing jobs."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _publish(folder: Path, stem: str, payload: bytes) -> Path:
@@ -181,13 +173,7 @@ class NotesService:
         return NoteRef(rel_path, self.processing.request_processing(rel_path).job_id if queue else "")
 
     def resolve(self, file: str) -> Path:
-        path = resolve_safe_note_path(self.data_dir, file)
-        if path is None or not path.is_file():
-            raise ServiceError("not_found", f"Note not found: {file}")
-        return path
-
-    def revision(self, file: str) -> str:
-        return note_revision(self.resolve(file).read_text(encoding="utf-8"))
+        return resolve_note(self.data_dir, file)
 
     def list(self, log: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         return [

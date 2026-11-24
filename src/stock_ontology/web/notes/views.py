@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import html
 import re
 from collections.abc import Callable
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
 
+from stock_ontology.config import note_revision
 from stock_ontology.i18n import DEFAULT_LANGUAGE, translate, translate_enum, translate_facet_label
 from stock_ontology.search import resolve_safe_note_path
 from stock_ontology.services import GraphStore
@@ -24,7 +24,6 @@ from stock_ontology.web.shared import (
 )
 
 AUTHOR_FOLDER_ROOTS = {"authors", "analysts", "people", "persons"}
-PERSON_FOLDER_ROOTS = AUTHOR_FOLDER_ROOTS
 
 _ANALYST_ROLE_RE = re.compile(
     r"\b(?:analyst|research(?:er)?|strategist|portfolio\s+manager|fund\s+manager|author|economist|desk|pm)\b",
@@ -357,7 +356,7 @@ def _scan_raw_notes(
 # Note page presentation models. `build_catalog_context` hands the note reader
 # (`partials/note_reader.html`) one `NoteDetail`, built by `_note_detail`, so the
 # template decides no links or labels. Enum codes (`reasons`) stay raw for `t_enum`.
-# `tests/test_web.py::test_note_page_templates_only_see_presentation_models` enforces this.
+# `tests/test_web_notes.py::test_note_page_templates_only_see_presentation_models` enforces this.
 # ---------------------------------------------------------------------------
 
 
@@ -473,7 +472,7 @@ def _note_extraction(
     db: GraphStore, file: str, raw_text: str, actions_enabled: bool, lang: str, job_state: str = "",
 ) -> NoteExtraction:
     entry = db.get_note_state(file)
-    content_hash = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+    content_hash = note_revision(raw_text)
     if not entry or not entry["entities_recorded"] or entry["content_hash"] != content_hash:
         return NoteExtraction("not-processed", actions_enabled, job_state)
 

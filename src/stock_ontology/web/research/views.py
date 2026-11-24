@@ -204,7 +204,7 @@ def _resolve_source_fields(
 # never raw ontology nodes, `facets`, or `edge_facets`. The mappers below are the one
 # place that knows how ontology records are shaped. Enum fields keep the raw code so
 # templates translate them with `t_enum` and pick badge classes; everything else is
-# display-ready. `tests/test_web.py::test_entity_page_templates_only_see_presentation_models`
+# display-ready. `tests/test_web_research.py::test_entity_page_templates_only_see_presentation_models`
 # and `::test_theme_page_templates_only_see_presentation_models` enforce this for the
 # entity and theme pages.
 # ---------------------------------------------------------------------------

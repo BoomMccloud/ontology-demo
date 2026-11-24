@@ -6,10 +6,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from stock_ontology.config import note_revision
 from stock_ontology.db import OntologyDB
 from stock_ontology.registry import normalize_name_key
 from stock_ontology.services.errors import ServiceError
-from stock_ontology.services.notes import note_revision
 from stock_ontology.services.registry import changed_fields, edit_aliases, edit_text, unique_labels
 from stock_ontology.vocab import is_synthesized_edge
 

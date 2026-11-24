@@ -407,7 +407,6 @@
   "cli.none_value": "(none)",
   "cli.watching_msg": "Watching {data_dir} every {interval}s -> {db_path} (LLM: {llm}) (Ctrl+C to stop)",
   "cli.watch_stopped": "Stopped watch loop.",
-  "cli.watch_failed": "Watch failed:",
   "cli.db_panel_title": "Ontology DB: {db_path}",
   "cli.db_stats_summary": "Nodes: {total_nodes} (entity={entity}, event={event}, view={view}, theme={theme})\nEdges: {total_edges} | Active consensus views: {active_consensus} | Ingested files: {ingested_files}",
   "cli.table_entities": "Entities",

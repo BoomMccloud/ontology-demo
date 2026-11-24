@@ -36,9 +36,11 @@ search bar.
   `ThemeEvidenceItem`s), `EventRow` and `ViewRow`.
 - `src/stock_ontology/web/search/`: `/search`. `build_search_results` shapes the
   shared search ([search.md](search.md)) into the search page's best-match card
-  and sections; `build_search_filter_options` builds the filter choices.
-- `src/stock_ontology/web/notes/`: `/catalog`, `/notes/new`, the `/api/notes*`
-  routes, and `/api/jobs/{job_id}`. `views.py` is the raw notes browser and
+  and sections; `build_search_filter_options` builds the filter choices and
+  `build_active_filters` the applied-filter chips.
+- `src/stock_ontology/web/notes/`: `/catalog`, `/notes/new`, and the `/api/notes*`
+  routes. Job status, `/api/jobs/{job_id}`, is a shell route in `app.py` that
+  Notes and Ontology both poll. `views.py` is the raw notes browser and
   XSS-safe Markdown rendering. Note paths go through the search module's
   `resolve_safe_note_path`. The note page (`?file=`) hands its reader partial
   one frozen `NoteDetail` (with `NoteCompanyChip`, `NoteAuthorChip` and
@@ -128,7 +130,7 @@ Chat sessions are kept in memory, capped at `MAX_CHAT_SESSIONS` (50).
 `/api/chat` uses only `OntologyAgent(...)` and `chat()`, and passes
 `data_dir` so the agent can grep notes. It stores each
 session's `ChatTurn.history` without reading it and passes it back on the next
-request. `tests/test_web.py::test_web_chat_endpoint_uses_only_agent_chat`
+request. `tests/test_web_clippy.py::test_web_chat_endpoint_uses_only_agent_chat`
 enforces this.
 
 ## Depends on
@@ -144,5 +146,5 @@ The CLI `serve` command.
 
 ## Tests
 
-`tests/test_web.py` and `tests/test_web_navigation.py`, plus web cases in
+`tests/test_web_*.py` (one file per module, shared fixtures in `tests/web_support.py`), plus web cases in
 `tests/test_i18n.py` and `tests/test_relationships.py`.

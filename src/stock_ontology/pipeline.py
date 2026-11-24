@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from stock_ontology.config import SUPPORTED_EXTENSIONS, NoteConflictError
+from stock_ontology.config import SUPPORTED_EXTENSIONS, NoteConflictError, note_revision
 from stock_ontology.db import LeaseLostError, OntologyDB, RegistryChangedError, node_meta
 from stock_ontology.llm import EXTRACTION_STAGES, LLMClient
 from stock_ontology.registry import FacetSchemaError, OntologyRegistry
@@ -93,10 +93,6 @@ def node_embedding_text(node: Node) -> str:
     """Build canonical text representation used to compute a node's vector embedding."""
     alias_str = f" (aliases: {', '.join(node.aliases)})" if node.aliases else ""
     return f"{node.node_type}: {node.name}{alias_str}\n{node.summary}"
-
-
-def _sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _merge_unique_str(existing: list[str], incoming: list[str]) -> list[str]:
@@ -816,13 +812,13 @@ class IngestionPipeline:
         previous = self.db.get_note_state(rel_path)
         stat = path.stat()
         text = path.read_text(encoding="utf-8")
-        content_hash = _sha256_text(text)
+        content_hash = note_revision(text)
         if previous and previous["entities_recorded"] and previous["content_hash"] == content_hash:
             return
 
         def check_source() -> None:
             self._check_note_state(rel_path, previous)
-            if _sha256_text(path.read_text(encoding="utf-8")) != content_hash:
+            if note_revision(path.read_text(encoding="utf-8")) != content_hash:
                 raise NoteConflictError
 
         old_doc_id = previous["doc_id"] if previous else None
@@ -841,7 +837,7 @@ class IngestionPipeline:
     def _current_note_doc(self, path: Path, expected_hash: str | None) -> str:
         rel_path = path.relative_to(self.data_dir.resolve()).as_posix()
         entry = self.db.get_note_state(rel_path)
-        written_hash = _sha256_text(path.read_text(encoding="utf-8"))
+        written_hash = note_revision(path.read_text(encoding="utf-8"))
         if (
             not entry or not entry["entities_recorded"] or entry["content_hash"] != written_hash
             or (expected_hash is not None and expected_hash != written_hash)
@@ -1051,7 +1047,7 @@ class IngestionPipeline:
             except (OSError, UnicodeDecodeError) as exc:
                 report.errors.append((rel_path, f"Could not read note: {exc}"))
                 continue
-            to_check[rel_path] = (text, _sha256_text(text), size, mtime_ns)
+            to_check[rel_path] = (text, note_revision(text), size, mtime_ns)
 
         # 2. Relink notes that moved: a vanished logged path whose content hash uniquely
         #    matches a new path keeps its doc and artifacts; nothing is re-extracted.

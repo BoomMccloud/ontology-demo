@@ -73,4 +73,4 @@ notes catalog).
 ## Tests
 
 `tests/test_search.py`, plus the search cases at the end of
-`tests/test_web.py` and `tests/test_agent.py`.
+`tests/test_web_search.py` and `tests/test_agent.py`.

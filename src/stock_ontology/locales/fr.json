@@ -407,7 +407,6 @@
   "cli.none_value": "(aucun)",
   "cli.watching_msg": "Surveillance de {data_dir} toutes les {interval}s -> {db_path} (LLM : {llm}) (Ctrl+C pour arrêter)",
   "cli.watch_stopped": "Boucle de surveillance arrêtée.",
-  "cli.watch_failed": "Échec de la surveillance :",
   "cli.db_panel_title": "BD Ontologie : {db_path}",
   "cli.db_stats_summary": "Nœuds : {total_nodes} (entité={entity}, événement={event}, opinion={view}, thème={theme})\nLiens : {total_edges} | Consensus actifs : {active_consensus} | Fichiers ingérés : {ingested_files}",
   "cli.table_entities": "Entités",

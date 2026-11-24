@@ -207,9 +207,22 @@ def _registry_graph_ids(
 ) -> tuple[str, ...]:
     if registry is None or kind == "people":
         return record.graph_ids
-    report = run_ontology_audit(db, registry)
-    matches = report.mapped_companies if kind == "companies" else report.mapped_themes
-    return tuple(match.node_id for match in matches if match.official_name == record.key)
+    # The same node-to-record mapping as `run_ontology_audit`, without the rest of the audit.
+    if kind == "companies":
+        nodes = [n for n in db.list_nodes(node_type="entity", limit=5000) if n.facets.get("entity_type") == "company"]
+
+        def resolve(node: Node) -> Any:
+            ticker = node.facets.get("ticker")
+            raw_ticker = str(ticker).strip() if ticker not in (None, "") else None
+            return registry.resolve_company(node.name, ticker=raw_ticker, aliases=node.aliases)
+    else:
+        nodes = db.list_nodes(node_type="theme", limit=5000)
+
+        def resolve(node: Node) -> Any:
+            return registry.resolve_theme(node.name, aliases=node.aliases)
+
+    nodes.sort(key=lambda n: n.name.casefold())
+    return tuple(n.id for n in nodes if (match := resolve(n)) is not None and match.spec.name == record.key)
 
 
 def _registry_relationships(
@@ -751,7 +764,6 @@ def build_ontology_context(
                 "description": translate(f"ontology.struct_{key}_description", lang=lang),
                 "count": stats["nodes"].get(key, len(type_nodes)),
                 "subtype_counts": sub_list,
-                "facet_keys": raw_facet_keys,
                 "facet_key_items": facet_key_items,
                 "registry_coverage": registry_coverage,
                 "top_relations": top_rels,
@@ -986,9 +998,7 @@ def build_ontology_context(
     return {
         "stats": stats,
         "structures": structures,
-        "diagram_pairs": diagram_pairs,
         "diagram_links": diagram_links,
-        "edge_schema": edge_schema,
         "edge_schema_detailed": edge_schema_detailed,
         "registry_summary": registry_summary,
         "audit_view": audit_view,

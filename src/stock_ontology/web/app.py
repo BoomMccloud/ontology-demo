@@ -20,14 +20,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from stock_ontology.config import Settings
-from stock_ontology.i18n import LANG_COOKIE_NAME, SUPPORTED_LANGUAGE_CODES, normalize_language, translate
+from stock_ontology.i18n import SUPPORTED_LANGUAGE_CODES, normalize_language, translate
 from stock_ontology.llm import LLMClient, create_llm_client
+from stock_ontology.services import ServiceError
 from stock_ontology.web.clippy.routes import build_router as build_clippy_router
 from stock_ontology.web.notes.routes import build_router as build_notes_router
 from stock_ontology.web.ontology.routes import build_router as build_ontology_router
 from stock_ontology.web.research.routes import build_router as build_research_router
 from stock_ontology.web.search.routes import build_router as build_search_router
-from stock_ontology.web.shell import LANG_COOKIE_MAX_AGE, STATIC_DIR, WebShell, sanitize_next_path
+from stock_ontology.web.shell import STATIC_DIR, WebShell, http_error, sanitize_next_path, set_lang_cookie
 
 
 class LanguageRequest(BaseModel):
@@ -54,6 +55,13 @@ def create_app(
     ):
         app.include_router(build_router(shell))
 
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str) -> JSONResponse:
+        try:
+            return JSONResponse(shell.processing.get_status(job_id))
+        except ServiceError as exc:
+            raise http_error(exc) from exc
+
     @app.get("/set-language")
     def set_language_route(
         request: Request,
@@ -63,13 +71,7 @@ def create_app(
         resolved = normalize_language(lang) or shell.lang(request)
         target = sanitize_next_path(next)
         resp = RedirectResponse(url=target, status_code=303)
-        resp.set_cookie(
-            key=LANG_COOKIE_NAME,
-            value=resolved,
-            max_age=LANG_COOKIE_MAX_AGE,
-            samesite="lax",
-            path="/",
-        )
+        set_lang_cookie(resp, resolved)
         return resp
 
     @app.post("/api/language")
@@ -89,13 +91,7 @@ def create_app(
         resp = JSONResponse(
             {"lang": resolved, "supported": list(SUPPORTED_LANGUAGE_CODES)}
         )
-        resp.set_cookie(
-            key=LANG_COOKIE_NAME,
-            value=resolved,
-            max_age=LANG_COOKIE_MAX_AGE,
-            samesite="lax",
-            path="/",
-        )
+        set_lang_cookie(resp, resolved)
         return resp
 
     @app.get("/api/health")
