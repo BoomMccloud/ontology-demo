@@ -130,6 +130,10 @@ uv run stock-ontology chat
 uv run stock-ontology serve --host 127.0.0.1 --port 8000
 ```
 
+## Deploying
+
+Run `./deploy.sh` after pushing `main`. See [docs/deploy.md](docs/deploy.md).
+
 ## Ingestion Constraints
 
 - Merge an extracted entity or theme into an existing node only on an exact ID, name, or alias match, or when the registry maps both to the same official company or theme. Never merge on embedding similarity; propose the pair as a registry merge suggestion instead.
