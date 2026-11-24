@@ -56,11 +56,11 @@ def create_app(
         app.include_router(build_router(shell))
 
     @app.get("/api/jobs/{job_id}")
-    def job_status(job_id: str) -> JSONResponse:
+    def job_status(request: Request, job_id: str) -> JSONResponse:
         try:
             return JSONResponse(shell.processing.get_status(job_id))
         except ServiceError as exc:
-            raise http_error(exc) from exc
+            raise http_error(exc, shell.lang(request)) from exc
 
     @app.get("/set-language")
     def set_language_route(

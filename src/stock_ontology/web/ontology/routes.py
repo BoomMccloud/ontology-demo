@@ -96,7 +96,7 @@ class _Reviews:
         with self.lock:
             entry = self.entries.get(token)
             if not entry or entry[0] != action or entry[1] <= monotonic():
-                raise ServiceError("conflict", "Start a new review before confirming.")
+                raise ServiceError("conflict", "Start a new review before confirming.", key="service_error.review_expired")
             result = enqueue(entry[2])
             del self.entries[token]
             return asdict(result)
@@ -114,8 +114,10 @@ def build_router(shell: WebShell) -> APIRouter:
         if not _operator_allowed(request, shell.registry_origin):
             raise HTTPException(403, translate("ontology_edit.authority_required", lang=shell.lang(request)))
 
-    def rejected(exc: Exception) -> HTTPException:
-        return http_error(exc) if isinstance(exc, ServiceError) else HTTPException(422, str(exc))
+    def rejected(request: Request, exc: Exception) -> HTTPException:
+        if isinstance(exc, ServiceError):
+            return http_error(exc, shell.lang(request))
+        return HTTPException(422, str(exc))
 
     @router.post("/api/ontology/registry/publish/preview")
     def publish_preview(request: Request, edit: RegistryEdit) -> dict[str, Any]:
@@ -124,7 +126,7 @@ def build_router(shell: WebShell) -> APIRouter:
             with shell.open_db(shell.lang(request)) as db:
                 review = registry.review_record_edit(db, **edit.model_dump())
         except (ServiceError, ValueError) as exc:
-            raise rejected(exc) from exc
+            raise rejected(request, exc) from exc
         token = secrets.token_urlsafe(32)
         reviews.add(token, "publish", review["payload"])
         return {"confirmation": token, "diff": review["diff"]}
@@ -136,7 +138,7 @@ def build_router(shell: WebShell) -> APIRouter:
             return reviews.submit(review.confirmation, "publish",
                                   lambda payload: processing.submit_operator("registry.publish", payload))
         except ServiceError as exc:
-            raise rejected(exc) from exc
+            raise rejected(request, exc) from exc
 
     @router.post("/api/ontology/registry/apply/preview", status_code=202)
     def apply_preview(request: Request, _payload: ApplyPreview) -> dict[str, str]:
@@ -156,7 +158,7 @@ def build_router(shell: WebShell) -> APIRouter:
             return reviews.submit(review.confirmation, "apply",
                                   lambda payload: processing.submit_reviewed_rollout(payload["job_id"], review.confirmation))
         except ServiceError as exc:
-            raise rejected(exc) from exc
+            raise rejected(request, exc) from exc
 
     @router.post("/api/ontology/corrections/preview")
     def correction_preview(request: Request, edit: CorrectionEdit) -> dict[str, Any]:
@@ -166,7 +168,7 @@ def build_router(shell: WebShell) -> APIRouter:
             with shell.open_db(shell.lang(request)) as db:
                 review = review_note_correction(db, path, settings.data_dir, **edit.model_dump(exclude={"file"}))
         except (ServiceError, ValueError) as exc:
-            raise rejected(exc) from exc
+            raise rejected(request, exc) from exc
         token = secrets.token_urlsafe(32)
         reviews.add(token, "correction", review)
         return {"confirmation": token, "diff": review["diff"]}
@@ -180,7 +182,7 @@ def build_router(shell: WebShell) -> APIRouter:
                 lambda payload: processing.submit_correction("note.ontology.correction", payload["file"], payload),
             )
         except ServiceError as exc:
-            raise rejected(exc) from exc
+            raise rejected(request, exc) from exc
 
     @router.get("/ontology", response_class=HTMLResponse)
     def ontology_page(

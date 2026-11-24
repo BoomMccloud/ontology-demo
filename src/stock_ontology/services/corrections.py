@@ -52,11 +52,11 @@ def _review_edge(
             after[key] = edit_text(changes[key], key)
     relation = db.registry.resolve_relation(after["relation"] or "")
     if relation is None:
-        raise ServiceError("invalid", "Choose a relationship type from the applied registry.")
+        raise ServiceError("invalid", "Choose a relationship type from the applied registry.", key="service_error.choose_relationship_type")
     updates = changes.get("facets", {})
     editable = db.registry.edge_facet_keys(relation.canonical) - {"basis"}
     if not isinstance(updates, dict) or updates.keys() - editable:
-        raise ServiceError("invalid", "Choose editable relationship fields from the applied registry.")
+        raise ServiceError("invalid", "Choose editable relationship fields from the applied registry.", key="service_error.choose_relationship_fields_registry")
     facets = dict(after["facets"] or {"basis": "extracted"})
     for field, value in updates.items():
         if value is None:
@@ -66,13 +66,13 @@ def _review_edge(
     start = db.get_node(after["from_id"] or "")
     end = db.get_node(after["to_id"] or "")
     if start is None or end is None or start.id == end.id:
-        raise ServiceError("invalid", "Choose two different existing endpoints.")
+        raise ServiceError("invalid", "Choose two different existing endpoints.", key="service_error.choose_two_endpoints")
     canonical = db.registry.canonicalize_edge(
         after["relation"], from_id=start.id, from_type=start.node_type, from_entity_type=start.facets.get("entity_type"),
         to_id=end.id, to_type=end.node_type, to_entity_type=end.facets.get("entity_type"), facets=facets,
     )
     if not canonical.endpoints_ok:
-        raise ServiceError("invalid", "The applied registry does not allow that relationship between these nodes.")
+        raise ServiceError("invalid", "The applied registry does not allow that relationship between these nodes.", key="service_error.relationship_not_allowed")
     after = {
         "from_id": canonical.from_id, "to_id": canonical.to_id, "relation": canonical.relation,
         "facets": db.registry.check_facets(None, canonical.facets, relation=canonical.relation),
@@ -82,7 +82,7 @@ def _review_edge(
         (row["from_id"], row["to_id"], row["relation"]) == (after["from_id"], after["to_id"], after["relation"])
         for row in all_edges
     ):
-        raise ServiceError("conflict", "This note already records that relationship.")
+        raise ServiceError("conflict", "This note already records that relationship.", key="service_error.relationship_exists")
     return after
 
 
@@ -96,7 +96,7 @@ def review_note_correction(
     digest = note_revision(path.read_text(encoding="utf-8"))
     note = db.get_note_state(file)
     if not note or not note["entities_recorded"] or note["content_hash"] != digest:
-        raise ServiceError("conflict", "Review the latest processed version of this source note.")
+        raise ServiceError("conflict", "Review the latest processed version of this source note.", key="service_error.stale_source_note")
     doc_id = note["doc_id"]
     all_edges = sorted(db.list_note_edges(doc_id), key=lambda item: item["edge_id"])
     edges: list[dict[str, Any]] = []
@@ -105,13 +105,13 @@ def review_note_correction(
     source_evidence = None
     if kind == "person":
         if not changes or changes.keys() - _PERSON_FIELDS:
-            raise ServiceError("invalid", "Choose person details or identity fields.")
+            raise ServiceError("invalid", "Choose person details or identity fields.", key="service_error.choose_person_fields")
         node = db.get_node(record)
         if (
             node is None or node.node_type != "entity" or node.facets.get("entity_type") != "person"
             or doc_id not in db.note_entity_doc_ids(record)
         ):
-            raise ServiceError("not_found", "That person is not in the selected note's extraction.")
+            raise ServiceError("not_found", "That person is not in the selected note's extraction.", key="service_error.person_missing")
         before = {"name": node.name, "aliases": node.aliases, **{key: node.facets.get(key) for key in ("role", "organization")}}
         after = before.copy()
         for field, value in changes.items():
@@ -121,14 +121,14 @@ def review_note_correction(
         after["aliases"] = unique_labels(after["aliases"], excluding=after["name"])
         db.registry.check_metadata(after["name"], node.summary)
         if any(len(alias) > db.registry.metadata_max_length["name"] for alias in after["aliases"]):
-            raise ServiceError("invalid", "An alternate name exceeds the name length limit.")
+            raise ServiceError("invalid", "An alternate name exceeds the name length limit.", key="service_error.alternate_name_too_long")
         proposed_labels = set(map(normalize_name_key, [after["name"], *after["aliases"]]))
         prior_labels = set(map(normalize_name_key, [node.name, *node.aliases]))
         if any(
             other.id != node.id and (proposed_labels - prior_labels) & set(map(normalize_name_key, [other.name, *other.aliases]))
             for other in db.list_nodes(node_type="entity", limit=-1)
         ):
-            raise ServiceError("conflict", "A proposed name or alternate name identifies another entity.")
+            raise ServiceError("conflict", "A proposed name or alternate name identifies another entity.", key="service_error.name_taken")
         facets = db.registry.check_facets("entity", {
             **node.facets, **{field: after[field] for field in ("role", "organization") if field in changes},
         })
@@ -146,7 +146,7 @@ def review_note_correction(
                 if before["organization"] != after["organization"]:
                     new_company = _organization(db, after["organization"])
                     if new_company is None:
-                        raise ServiceError("invalid", "Choose an unambiguous organization for the supporting employment relationship.")
+                        raise ServiceError("invalid", "Choose an unambiguous organization for the supporting employment relationship.", key="service_error.ambiguous_employer")
                     edge_changes["to_id"] = new_company
                 if (
                     before["role"] != after["role"] and row["facets"].get("role") == before["role"]
@@ -159,26 +159,26 @@ def review_note_correction(
                     diff.extend({**change, "relationship": row["edge_id"]} for change in changed_fields(row, replacement))
     elif kind in {"relationship", "relationship_add"}:
         if not changes or changes.keys() - _EDGE_FIELDS:
-            raise ServiceError("invalid", "Choose relationship fields to change.")
+            raise ServiceError("invalid", "Choose relationship fields to change.", key="service_error.choose_relationship_fields")
         before = next((row for row in all_edges if row["edge_id"] == edge_id), None)
         if kind == "relationship" and before is None:
-            raise ServiceError("not_found", "That relationship is not in the selected note's extraction.")
+            raise ServiceError("not_found", "That relationship is not in the selected note's extraction.", key="service_error.relationship_missing")
         if kind == "relationship_add":
             if edge_id or record not in (changes.get("from_id"), changes.get("to_id")):
-                raise ServiceError("invalid", "The new relationship must connect to the current record.")
+                raise ServiceError("invalid", "The new relationship must connect to the current record.", key="service_error.relationship_off_record")
             source_evidence = relationship_source_evidence(db, record).get(doc_id)
             if not source_evidence:
-                raise ServiceError("conflict", "Choose a processed source note connected to the current record.")
+                raise ServiceError("conflict", "Choose a processed source note connected to the current record.", key="service_error.choose_source_note")
             before = {}
         assert before is not None
         after = _review_edge(db, before, changes, all_edges=all_edges)
         edges.append({"before": before, "after": after})
         diff = changed_fields(before, after)
     else:
-        raise ServiceError("invalid", "Choose a person or relationship correction.")
+        raise ServiceError("invalid", "Choose a person or relationship correction.", key="service_error.choose_correction")
 
     if not diff:
-        raise ServiceError("invalid", "Change at least one field before reviewing.")
+        raise ServiceError("invalid", "Change at least one field before reviewing.", key="service_error.no_changes")
     return {
         "file": file, "expected_hash": digest, "doc_id": doc_id, "ingested_at": note["ingested_at"],
         "registry_revision": db.registry.revision(), "person": person, "edges": edges, "diff": diff,

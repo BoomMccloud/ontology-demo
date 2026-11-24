@@ -137,7 +137,7 @@ def build_router(shell: WebShell) -> APIRouter:
         except ServiceError as exc:
             if exc.code == "not_found":
                 raise HTTPException(404, translate("api.raw_note_not_found", lang=shell.lang(request), file=file)) from exc
-            raise http_error(exc) from exc
+            raise http_error(exc, shell.lang(request)) from exc
         return JSONResponse({"file": file, "job_id": ref.job_id, "state": ref.state}, status_code=202)
 
     def _correction(request: Request, kind: str, payload: BaseModel) -> JSONResponse:

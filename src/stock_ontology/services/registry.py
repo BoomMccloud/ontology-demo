@@ -24,13 +24,13 @@ RECORD_FIELDS = {
 
 def edit_text(value: Any, field: str, *, required: bool = True) -> str:
     if not isinstance(value, str) or len(value) > 4000 or (required and not value.strip()):
-        raise ServiceError("invalid", f"Enter a valid {field}.")
+        raise ServiceError("invalid", f"Enter a valid {field}.", key="service_error.invalid_field", params={"field": field})
     return value.strip()
 
 
 def edit_aliases(value: Any) -> list[str]:
     if not isinstance(value, list) or len(value) > 100:
-        raise ServiceError("invalid", "Enter alternate names as a list.")
+        raise ServiceError("invalid", "Enter alternate names as a list.", key="service_error.alternate_names_list")
     return unique_labels([edit_text(alias, "alternate name") for alias in value])
 
 
@@ -73,18 +73,18 @@ class RegistryService:
         keep_previous_name: bool = False,
     ) -> dict[str, Any]:
         if kind not in RECORD_FIELDS or not changes or changes.keys() - RECORD_FIELDS[kind]:
-            raise ServiceError("invalid", "Choose company or theme fields to edit.")
+            raise ServiceError("invalid", "Choose company or theme fields to edit.", key="service_error.choose_record_fields")
         current = self.get_published()
         applied = db.applied_registry()
         if not applied or applied.revision() != current.revision():
-            raise ServiceError("conflict", "Apply the published registry before publishing another revision.")
+            raise ServiceError("conflict", "Apply the published registry before publishing another revision.", key="service_error.apply_before_publish")
         records = getattr(current, kind)
         if kind == "companies":
             match = current.resolve_company(record) or current.resolve_company("", ticker=record)
         else:
             match = current.resolve_theme(record)
         if match is None:
-            raise ServiceError("not_found", "That registry record no longer exists.")
+            raise ServiceError("not_found", "That registry record no longer exists.", key="service_error.registry_record_missing")
         index = records.index(match.spec)
         before = match.spec.model_dump(mode="json")
         after = before.copy()
@@ -99,21 +99,21 @@ class RegistryService:
         after["aliases"] = unique_labels(after["aliases"], excluding=after["name"])
         current.check_metadata(after["name"], after.get("description", ""))
         if any(len(alias) > current.metadata_max_length["name"] for alias in after["aliases"]):
-            raise ServiceError("invalid", "An alternate name exceeds the name length limit.")
+            raise ServiceError("invalid", "An alternate name exceeds the name length limit.", key="service_error.alternate_name_too_long")
         if kind == "themes" and "stage" in changes and after["stage"] not in current._vocabulary("theme", "stage")["members"]:
-            raise ServiceError("invalid", "Choose a stage from the published registry.")
+            raise ServiceError("invalid", "Choose a stage from the published registry.", key="service_error.choose_stage")
         if "ticker" in changes and changes["ticker"].strip() and not after["ticker"]:
-            raise ServiceError("invalid", "Enter a valid ticker.")
+            raise ServiceError("invalid", "Enter a valid ticker.", key="service_error.invalid_ticker")
 
         def labels(item: dict[str, Any]) -> set[str]:
             return set(map(normalize_name_key, [item["name"], item.get("ticker") or "", *item["aliases"]])) - {""}
 
         introduced = labels(after) - labels(before)
         if any(introduced & labels(item.model_dump()) for idx, item in enumerate(records) if idx != index):
-            raise ServiceError("conflict", "A name, alternate name, or ticker already identifies another record.")
+            raise ServiceError("conflict", "A name, alternate name, or ticker already identifies another record.", key="service_error.identifier_taken")
         diff = changed_fields(before, after)
         if not diff:
-            raise ServiceError("invalid", "Change at least one field before reviewing.")
+            raise ServiceError("invalid", "Change at least one field before reviewing.", key="service_error.no_changes")
         official = current.official_definitions()
         official["version"] = current.version + 1
         official[kind][index] = after

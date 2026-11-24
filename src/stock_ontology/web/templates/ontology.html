@@ -535,7 +535,7 @@
             <tbody>
               {% for sa in audit_view.suspicious_aliases %}
                 <tr>
-                  <td><span class="badge badge-warn">alias</span></td>
+                  <td><span class="badge badge-warn">{{ t('ontology.badge_alias') }}</span></td>
                   <td><a href="{{ sa.href }}"><strong>{{ sa.node_name }}</strong></a> <span class="mono">({{ sa.entity_type or 'entity' }})</span></td>
                   <td class="mono">{{ sa.alias }}</td>
                   <td class="source-cite">{{ sa.reason }}</td>
@@ -543,7 +543,7 @@
               {% endfor %}
               {% for dup in audit_view.duplicate_companies %}
                 <tr>
-                  <td><span class="badge badge-warn">dup</span></td>
+                  <td><span class="badge badge-warn">{{ t('ontology.badge_dup') }}</span></td>
                   <td><a href="{{ dup.href_a }}"><strong>{{ dup.node_a_name }}</strong></a> &harr; <a href="{{ dup.href_b }}"><strong>{{ dup.node_b_name }}</strong></a></td>
                   <td class="mono">{{ 'd=%.4f' | format(dup.distance) if dup.distance is not none else dup.reason }}</td>
                   <td class="source-cite">{{ dup.reason }}</td>
@@ -573,14 +573,14 @@
             <tbody>
               {% for ti in audit_view.ticker_issues %}
                 <tr>
-                  <td><span class="badge badge-warn">ticker</span></td>
+                  <td><span class="badge badge-warn">{{ t('ontology.badge_ticker') }}</span></td>
                   <td><a href="{{ ti.href }}"><strong>{{ ti.name }}</strong></a></td>
                   <td class="mono">{{ ti.raw_ticker }} &rarr; {{ ti.normalized_ticker }}</td>
                 </tr>
               {% endfor %}
               {% for fh in audit_view.facet_hits %}
                 <tr>
-                  <td><span class="badge badge-warn">facet:{{ fh.node_type }}</span></td>
+                  <td><span class="badge badge-warn">{{ t('ontology.badge_facet', type=fh.node_type) }}</span></td>
                   <td class="mono">{{ fh.count }}</td>
                   <td class="mono">{{ fh.raw_key }} &rarr; {{ fh.canonical_key }}</td>
                 </tr>

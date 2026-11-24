@@ -76,7 +76,7 @@ def resolve_note(data_dir: Path, file: str) -> Path:
     """The note file at `file` under `data_dir`, or a `not_found` error."""
     path = resolve_safe_note_path(data_dir, file)
     if path is None or not path.is_file():
-        raise ServiceError("not_found", f"Note not found: {file}")
+        raise ServiceError("not_found", f"Note not found: {file}", key="service_error.note_missing", params={"file": file})
     return path
 
 
@@ -144,13 +144,13 @@ class ProcessingService:
             job is None or job.kind != "registry.apply.preview" or job.state != "succeeded"
             or not job.result or job.result.get("confirmation") != confirmation
         ):
-            raise ServiceError("conflict", "The worker has not completed this registry preview.")
+            raise ServiceError("conflict", "The worker has not completed this registry preview.", key="service_error.preview_pending")
         return self.submit_operator("registry.apply", job.result["_plan"])
 
     def retry(self, job_id: str) -> JobRef:
         status = self.get_status(job_id)
         if status["state"] != "failed":
-            raise ServiceError("conflict", f"Only a failed job can be retried; this one is {status['state']}.")
+            raise ServiceError("conflict", f"Only a failed job can be retried; this one is {status['state']}.", key="service_error.retry_not_failed", params={"state": status["state"]}, enums={"state": "job_state"})
         self._write("retry", job_id, {})
         return JobRef(job_id, "queued")
 
@@ -192,7 +192,7 @@ class ProcessingService:
     def get_status(self, job_id: str) -> dict[str, Any]:
         status = self._find(job_id)
         if status is None:
-            raise ServiceError("not_found", f"Job not found: {job_id}")
+            raise ServiceError("not_found", f"Job not found: {job_id}", key="service_error.job_missing", params={"job_id": job_id})
         return status
 
     def latest_for_note(self, file: str) -> dict[str, Any] | None:

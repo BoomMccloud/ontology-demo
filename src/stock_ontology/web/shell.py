@@ -43,8 +43,13 @@ LANG_COOKIE_MAX_AGE = 31536000
 HTTP_STATUS = {"not_found": 404, "conflict": 409, "invalid": 422, "unavailable": 503}
 
 
-def http_error(exc: ServiceError) -> HTTPException:
-    return HTTPException(HTTP_STATUS.get(exc.code, 500), exc.message)
+def http_error(exc: ServiceError, lang: str) -> HTTPException:
+    if not exc.key:
+        return HTTPException(HTTP_STATUS.get(exc.code, 500), exc.message)
+    params = {name: translate_enum(exc.enums[name], value, lang=lang) if name in exc.enums else value
+              for name, value in exc.params.items()}
+    detail = translate(exc.key, lang=lang, **params)
+    return HTTPException(HTTP_STATUS.get(exc.code, 500), detail)
 
 
 def set_lang_cookie(resp: Response, lang: str) -> None:

@@ -802,3 +802,37 @@ def test_ontology_registry_editing_optional_details(
     assert optional is not None and 'value=""' in optional[0]
     assert not re.search(r'\srequired(?:\s|=|>)', optional[0], re.I), optional[0]
     assert re.search(r'<button\b[^>]*\btype="submit"', details[1])
+
+
+@pytest.mark.parametrize("lang", ["en", "zh", "fr"])
+def test_service_errors_reach_the_browser_in_the_viewer_language(tmp_path: Path, lang: str) -> None:
+    from inspect import signature
+
+    settings = Settings(db_path=tmp_path / "graph.db", registry_path=tmp_path / "registry.json",
+                        data_dir=tmp_path, embedding_dim=DIM)
+    save_registry(create_minimal_registry(), settings.registry_path)
+    origin = "http://127.0.0.1:8000"
+    opt_in = {"registry_origin": origin} if "registry_origin" in signature(create_app).parameters else {}
+    client = TestClient(create_app(settings, llm=FakeWebLLM(), note_actions=True, **opt_in),
+                        base_url=origin, client=("127.0.0.1", 50000))
+
+    response = client.post("/api/ontology/registry/publish/confirm", params={"lang": lang},
+                           json={"confirmation": "expired"}, headers={"Origin": origin})
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == translate("service_error.review_expired", lang=lang)
+    if lang != "en":
+        assert response.json()["detail"] != translate("service_error.review_expired", lang="en")
+
+
+def test_service_error_enum_params_are_translated() -> None:
+    from stock_ontology.i18n import translate_enum
+    from stock_ontology.services import ServiceError
+    from stock_ontology.web.shell import http_error
+
+    exc = ServiceError("conflict", "Only a failed job can be retried; this one is running.",
+                       key="service_error.retry_not_failed", params={"state": "running"}, enums={"state": "job_state"})
+
+    detail = http_error(exc, "en").detail
+    assert detail == translate("service_error.retry_not_failed", lang="en", state=translate_enum("job_state", "running"))
+    assert "running" in detail
