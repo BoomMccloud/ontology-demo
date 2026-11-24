@@ -34,18 +34,29 @@ everyday code deploy is in [deploy.md](deploy.md).
 | Database | `/var/lib/stock-ontology/ontology.db` |
 | Command spool | `/var/lib/stock-ontology/ontology.db.commands/` |
 | Notes | `/var/lib/stock-ontology/notes` |
-| App settings and keys | `/etc/stock-ontology/app.env` |
+| Provider keys and models | `/etc/stock-ontology/app.env` |
+| Data paths and registry | `Environment=` lines in the app and worker units |
 | Pre-deploy backups | `/var/backups/stock-ontology` |
 
-To run the CLI by hand with the app's settings, start a shell like this. The
-`cd` matters because the registry path defaults to `ontology_registry.json` in
-the working directory.
+The app and worker run as `stockontology` from `/var/lib/stock-ontology`.
+`app.env` holds only provider settings. The `ONTOLOGY_DB`, `ONTOLOGY_DATA_DIR`, and
+`ONTOLOGY_REGISTRY` paths are set in the unit files, so a shell that sources only
+`app.env` falls back to `ontology.db` and `data` in its working directory, not the
+live data.
+
+To run the CLI by hand with the app's settings, paste this into a root shell on
+the server:
 
 ```bash
-cd /opt/stock-ontology/current && set -a && . /etc/stock-ontology/app.env && set +a
+cd /var/lib/stock-ontology && set -a && . /etc/stock-ontology/app.env && set +a
+export ONTOLOGY_DB=/var/lib/stock-ontology/ontology.db ONTOLOGY_DATA_DIR=/var/lib/stock-ontology/notes ONTOLOGY_REGISTRY=/opt/stock-ontology/current/ontology_registry.json HOME=/var/lib/stock-ontology
+so() { runuser -u stockontology -- /opt/stock-ontology/current/.venv/bin/stock-ontology "$@"; }
 ```
 
-Then call `.venv/bin/stock-ontology ...` from that shell.
+Then call `so ...` from that shell. It runs as `stockontology`, so any file the
+CLI creates beside the database, like `ontology.db-wal`, stays writable by the
+app and worker. Running the CLI directly as root can leave root-owned files there
+that lock them out.
 
 ## First rollout
 
@@ -57,31 +68,27 @@ Run these in order. Each step says how to check it before moving on.
 ./deploy.sh --status
 ```
 
-On the server, note three things for the worker unit. The worker must run as the
-same user, with the same environment and working directory as the app.
+On the server, check the app's unit. The worker must run as the same user, with
+the same environment, paths, and working directory as the app.
 
 ```bash
 systemctl cat stock-ontology
 free -m
 ```
 
-`systemctl cat` shows the app's `User=`, `EnvironmentFile=`, and
-`WorkingDirectory=`. The box has 894 MB of RAM and 2 GB of swap. The worker is a
-second Python process with its own LLM client, so record free memory now to
-compare later.
-
-Confirm `app.env` sets `ONTOLOGY_DB` and `ONTOLOGY_DATA_DIR` to the paths above.
-If it doesn't, the CLI and the worker fall back to `ontology.db` and `data` in the
-working directory, which is the release folder, not the live data.
+The unit in step 4 copies the app's unit as of 2026-11-24: `User=stockontology`,
+`WorkingDirectory=/var/lib/stock-ontology`, `EnvironmentFile=`, and the
+`Environment=ONTOLOGY_*` lines. If `systemctl cat` shows different values, use
+those. The box has 894 MB of RAM and 2 GB of swap. The worker is a second Python
+process with its own LLM client, so record free memory now to compare later.
 
 ### 2. Create the spool folder
 
-The web process creates the spool on its first submission. That fails if its user
-can't write to `/var/lib/stock-ontology`. Create it up front, owned by the app's
-user (`root` below; use the `User=` from step 1 if it differs):
+The web process creates the spool on its first submission. Create it up front,
+owned by the app's user:
 
 ```bash
-install -d -m 750 -o root -g root /var/lib/stock-ontology/ontology.db.commands
+install -d -m 750 -o stockontology -g stockontology /var/lib/stock-ontology/ontology.db.commands
 ```
 
 ### 3. Deploy the code
@@ -104,25 +111,39 @@ Check: `./deploy.sh --status` shows the new release and `health: ok`.
 
 ### 4. Install and start the worker service
 
-Create `/etc/systemd/system/stock-ontology-worker.service`. Copy `User=`,
-`EnvironmentFile=`, and `WorkingDirectory=` from the app's unit if they differ
-from these:
+Create `/etc/systemd/system/stock-ontology-worker.service`. This is the unit
+installed on the server on 2026-11-24. It mirrors the app's user, paths, and
+sandboxing, with a lower memory ceiling:
 
 ```ini
 [Unit]
 Description=Stock Ontology worker (only database writer)
-After=network-online.target
 Wants=network-online.target
+After=network-online.target
 
 [Service]
-User=root
-WorkingDirectory=/opt/stock-ontology/current
+User=stockontology
+Group=stockontology
+WorkingDirectory=/var/lib/stock-ontology
 EnvironmentFile=/etc/stock-ontology/app.env
+Environment=ONTOLOGY_DB=/var/lib/stock-ontology/ontology.db
+Environment=ONTOLOGY_DATA_DIR=/var/lib/stock-ontology/notes
+Environment=ONTOLOGY_REGISTRY=/opt/stock-ontology/current/ontology_registry.json
+Environment=HOME=/var/lib/stock-ontology
 ExecStart=/opt/stock-ontology/current/.venv/bin/stock-ontology watch --interval 60
 Restart=always
 RestartSec=10
 KillSignal=SIGINT
 TimeoutStopSec=30
+MemoryHigh=400M
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/stock-ontology
 
 [Install]
 WantedBy=multi-user.target
@@ -153,7 +174,7 @@ Its first scan queues an `ingest` job if any note changed since the last ingest.
 From the CLI shell set up under Paths on the server:
 
 ```bash
-.venv/bin/stock-ontology note list --json | head -c 600
+so note list --json | head -c 600
 ```
 
 In the web app, open a note and click **Process**. The reader shows the job as
@@ -161,7 +182,7 @@ pending, then succeeded. This makes real LLM calls. Then check the job from the
 CLI with the `job_id` from the reader's network response:
 
 ```bash
-.venv/bin/stock-ontology status <job_id> --json
+so status <job_id> --json
 ```
 
 Compare `free -m` with step 1. If swap use climbs steadily, see Troubleshooting.
@@ -172,7 +193,7 @@ Consensus that went stale before this release stays as it was. To rebuild it for
 every company, queue it for the service:
 
 ```bash
-.venv/bin/stock-ontology ingest --rebuild-consensus --no-wait
+so ingest --rebuild-consensus --no-wait
 ```
 
 This makes one LLM call per company.
@@ -234,7 +255,7 @@ sqlite3 -readonly -box /var/lib/stock-ontology/ontology.db \
 Retry one job. This reopens it with a fresh attempt budget:
 
 ```bash
-.venv/bin/stock-ontology retry <job_id> --json
+so retry <job_id> --json
 ```
 
 `error_code` tells you what to do:
