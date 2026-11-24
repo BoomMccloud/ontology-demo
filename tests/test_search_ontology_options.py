@@ -5,8 +5,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
+from test_db import insert_legacy_edge, seed_edge
+from web_support import DIM, FakeWebLLM, unit_vec
 
 from stock_ontology.config import Settings
 from stock_ontology.db import OntologyDB
@@ -22,9 +24,6 @@ from stock_ontology.vocab import (
     SUPPORT_STRENGTH,
 )
 from stock_ontology.web import create_app
-
-from test_db import insert_legacy_edge, seed_edge
-from test_web import DIM, FakeWebLLM, _unit_vec
 
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "ontology_registry.json"
 
@@ -116,7 +115,7 @@ def _seed(db_path: Path) -> None:
     legacy = create_minimal_registry().model_copy(update={"facet_schema": {}})
     with OntologyDB(db_path, embedding_dim=DIM, read_only=False, registry=legacy) as db:
         for idx, node in enumerate(nodes):
-            db.upsert_node(node, embedding=_unit_vec(idx))
+            db.upsert_node(node, embedding=unit_vec(idx))
         for edge in edges:
             seed_edge(db, edge)
         insert_legacy_edge(

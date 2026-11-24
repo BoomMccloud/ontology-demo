@@ -21,10 +21,10 @@ import pytest
 from fastapi.responses import HTMLResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from web_support import DIM, FakeWebLLM, seed_web_db
 
 from stock_ontology.config import Settings
 from stock_ontology.web import create_app
-from test_web import DIM, FakeWebLLM, _seed_web_db
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "src" / "stock_ontology" / "web"
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -130,7 +130,7 @@ def _parse(text: str) -> _NavParser:
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
     db_path = tmp_path / "nav.db"
-    _seed_web_db(db_path)
+    seed_web_db(db_path)
     data_dir = tmp_path / "data"
     (data_dir / "NVDA").mkdir(parents=True)
     (data_dir / "NVDA" / "2026-10-15_q3.md").write_text(
@@ -338,18 +338,19 @@ def test_navigation_registry_lookup() -> None:
 
 
 def test_other_entity_with_company_facets_keeps_its_other_entities_parent(tmp_path: Path) -> None:
+    from web_support import unit_vec
+
     from stock_ontology.db import OntologyDB
     from stock_ontology.models import Node
-    from test_web import _unit_vec
 
     db_path = tmp_path / "nav.db"
-    _seed_web_db(db_path)
+    seed_web_db(db_path)
     bank = Node(
         id="ent_bank", node_type="entity", name="Barclays", summary="Sell-side bank.",
         facets={"entity_type": "institution", "ticker": "BCS", "sector": "Banks"},
     )
     with OntologyDB(db_path, embedding_dim=DIM, read_only=False) as db:
-        db.upsert_node(bank, embedding=_unit_vec(20))
+        db.upsert_node(bank, embedding=unit_vec(20))
     client = TestClient(create_app(Settings(db_path=db_path, embedding_dim=DIM, data_dir=tmp_path), llm=FakeWebLLM()))
 
     assert "/entity/ent_bank" in client.get("/companies", params={"kind": "other"}).text
