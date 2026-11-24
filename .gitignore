@@ -17,3 +17,6 @@ ontology.db.bak*
 # Local deploy settings
 .deploy.env
 .deploy.known_hosts
+
+# Proposal pipeline evidence (logs, screenshots) referenced by ledgers
+work/
