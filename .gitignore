@@ -13,6 +13,7 @@ build/
 *.db.bak
 ontology.db.bak*
 .claude/worktrees/
+.claude/settings.local.json
 
 # Local deploy settings
 .deploy.env
