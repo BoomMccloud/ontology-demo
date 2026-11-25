@@ -448,7 +448,7 @@ class Worker:
 
         report = IngestReport()
         if job.stage == "consensus":
-            pipeline._refresh_consensus(unfinished(), report)
+            pipeline.refresh_consensus(unfinished(), report)
         left = unfinished()
         if left:
             errors = "; ".join(err for _, err in report.errors) or "newer evidence arrived"
@@ -530,29 +530,7 @@ class Worker:
                 fresh = review_note_correction(db, path, self.settings.data_dir, **reviewed["request"])
                 if fresh != reviewed:
                     raise ServiceError("conflict", "The source or graph changed after review.")
-                doc_id = fresh["doc_id"]
-                affected = db.get_doc_affected_company_ids(doc_id)
-                if person := fresh["person"]:
-                    previous = Node.model_validate(person["before"])
-                    db.upsert_node(previous.model_copy(update={
-                        key: person[key] for key in ("name", "aliases", "facets")
-                    }))
-                    # An accuracy change reweighs every rumor by this person, not only this note's.
-                    affected.update(person.get("rumor_company_ids", ()))
-                for update in fresh["edges"]:
-                    before, values = update["before"], update["after"]
-                    if before:
-                        db.update_edge(before["edge_id"], **values)
-                    else:
-                        db.upsert_edge(Edge(id=f"edge_{uuid.uuid4().hex}", source_doc_id=doc_id, **values))
-                    added = {values["from_id"], values["to_id"]} - {before.get("from_id"), before.get("to_id")}
-                    db.add_note_entities(doc_id, tuple(
-                        node.id for node in db.get_nodes(sorted(added)) if node.node_type == "entity"
-                    ))
-                if pipeline._current_note_doc(path, fresh["expected_hash"]) != doc_id:
-                    raise NoteConflictError
-                affected.update(db.get_doc_affected_company_ids(doc_id))
-                pipeline._evidence_changed(affected)
+                pipeline.apply_note_correction(path, fresh)
                 self._wrote(db, job)
         updated = self._finish_consensus(db, pipeline, replace(job, stage="consensus"))
         return {"file": job.target, "consensus_updated_for": updated}
@@ -574,7 +552,7 @@ class Worker:
             )
             self._wrote(db, job)
         # Retry refreshes an earlier run left pending (a killed worker, or newer evidence).
-        pipeline._refresh_consensus(db.jobs.pending_consensus(), report)
+        pipeline.refresh_consensus(db.jobs.pending_consensus(), report)
         return _jsonable(asdict(report))
 
     def _run_reembed(self, db: OntologyDB, job: Job) -> dict[str, Any]:
