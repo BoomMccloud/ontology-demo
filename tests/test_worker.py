@@ -486,6 +486,37 @@ def test_processing_an_unchanged_note_again_reopens_its_failed_job(tmp_path: Pat
     assert (status["state"], status["attempts"]) == ("queued", 1), "a fresh attempt budget"
 
 
+def test_a_pending_retry_reports_the_status_the_reopen_stores(tmp_path: Path) -> None:
+    """Guards `_recorded_status` against drifting from what `JobStore.reopen` writes."""
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    clock = _Clock()
+
+    def provider_down(_call: int) -> None:
+        raise RuntimeError("provider down")
+
+    service = ProcessingService(settings)
+    ref = service.request_processing("a.md")
+    worker = _worker(settings, _ScriptLLM(on_extract=provider_down), clock)
+    for _ in range(3):
+        worker.run_once(scan=False)
+        clock.advance(10_000)
+    assert service.get_status(ref.job_id)["state"] == "failed"
+
+    service.request_processing("a.md")
+    pending = service.get_status(ref.job_id)
+    assert service.latest_for_note("a.md") == pending
+    with worker.open_store() as db:
+        worker.intake(db)
+    stored = service.get_status(ref.job_id)
+
+    # `reopen` restamps these two with the worker's clock; every other field must already match.
+    restamped = {"next_attempt_at", "updated_at"}
+    assert {k: v for k, v in pending.items() if k not in restamped} == {
+        k: v for k, v in stored.items() if k not in restamped
+    }
+
+
 def test_stale_consensus_keeps_its_date_and_citations_until_replaced(tmp_path: Path) -> None:
     settings = _workspace(tmp_path)
     _note(settings, "a.md", "Alpha note\n")
