@@ -79,16 +79,7 @@ class GeminiProvider(BaseLLMProvider):
                     temperature=0.1,
                 ),
             )
-            if response.parsed is not None and isinstance(response.parsed, schema):
-                return response.parsed
-            if not response.text or not response.text.strip():
-                raise LLMProviderError(
-                    "Gemini returned an empty structured response.",
-                    provider=self.name,
-                    model=self.chat_model,
-                    error_kind="invalid_response",
-                )
-            return schema.model_validate_json(strip_json_fences(response.text))
+            return self._parse_structured(response, schema)
         except Exception as exc:  # noqa: BLE001
             raise classify_error(exc, provider=self.name, model=self.chat_model) from exc
 
@@ -114,22 +105,36 @@ class GeminiProvider(BaseLLMProvider):
                         output_dimensionality=self.settings.embedding_dim
                     ),
                 )
-                if not result.embeddings or len(result.embeddings) != len(batch):
-                    raise LLMProviderError(
-                        "Gemini embedding API returned unexpected embedding count.",
-                        provider=self.name,
-                        model=self.embedding_model,
-                        error_kind="invalid_response",
-                    )
-                for emb in result.embeddings:
-                    if not emb.values:
-                        raise LLMProviderError(
-                            "Gemini embedding API returned empty vector values.",
-                            provider=self.name,
-                            model=self.embedding_model,
-                            error_kind="invalid_response",
-                        )
-                    vectors.append(list(emb.values))
-            return vectors
+                vectors.extend(self._batch_vectors(result, len(batch)))
         except Exception as exc:  # noqa: BLE001
             raise classify_error(exc, provider=self.name, model=self.embedding_model) from exc
+        return vectors
+
+    def _parse_structured(self, response: types.GenerateContentResponse, schema: type[T]) -> T:
+        if response.parsed is not None and isinstance(response.parsed, schema):
+            return response.parsed
+        if not response.text or not response.text.strip():
+            raise LLMProviderError(
+                "Gemini returned an empty structured response.",
+                provider=self.name,
+                model=self.chat_model,
+                error_kind="invalid_response",
+            )
+        return schema.model_validate_json(strip_json_fences(response.text))
+
+    def _batch_vectors(self, result: types.EmbedContentResponse, expected: int) -> list[list[float]]:
+        if not result.embeddings or len(result.embeddings) != expected:
+            raise LLMProviderError(
+                "Gemini embedding API returned unexpected embedding count.",
+                provider=self.name,
+                model=self.embedding_model,
+                error_kind="invalid_response",
+            )
+        if any(not emb.values for emb in result.embeddings):
+            raise LLMProviderError(
+                "Gemini embedding API returned empty vector values.",
+                provider=self.name,
+                model=self.embedding_model,
+                error_kind="invalid_response",
+            )
+        return [list(emb.values) for emb in result.embeddings]

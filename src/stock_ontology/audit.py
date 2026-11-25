@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter, defaultdict
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 

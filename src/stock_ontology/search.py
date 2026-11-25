@@ -102,9 +102,9 @@ def resolve_safe_note_path(data_dir: Path, rel_path: str) -> Path | None:
             return None
         if not candidate.is_file() or candidate.suffix.lower() not in SUPPORTED_EXTENSIONS:
             return None
-        return candidate
     except (OSError, ValueError):
         return None
+    return candidate
 
 
 @dataclass(frozen=True)

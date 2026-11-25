@@ -2300,7 +2300,7 @@ class _ConsensusWireProvider:
                     supporting_node_ids=[], contradicting_node_ids=[], facets=[],
                 )
 
-            def generate_agent_reply(self, **_: Any) -> AgentTurn:
+            def generate_agent_reply(self, **_: Any) -> Any:
                 raise NotImplementedError
 
         return Provider()

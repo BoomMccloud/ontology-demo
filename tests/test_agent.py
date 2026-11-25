@@ -746,8 +746,8 @@ class _NoChatLLM:
 
 
 def test_agent_answers_through_native_model_with_model_settings(tmp_path: Path) -> None:
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+    from pydantic_ai.models.function import FunctionModel
 
     from stock_ontology.agent import build_agent_system_prompt
 
@@ -786,9 +786,9 @@ def test_agent_answers_through_native_model_with_model_settings(tmp_path: Path) 
 
 def test_agent_falls_back_to_next_native_model_and_stamps_answering_provider(tmp_path: Path) -> None:
     from pydantic_ai.exceptions import ModelHTTPError
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+    from pydantic_ai.messages import ModelResponse, TextPart
     from pydantic_ai.models.fallback import FallbackModel
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai.models.function import FunctionModel
 
     db_path = tmp_path / "agent.db"
     _seed_db(db_path)

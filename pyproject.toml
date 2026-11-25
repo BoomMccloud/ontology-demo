@@ -44,4 +44,6 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["BLE", "TRY", "PLW1514"]
+# TRY003 would flag every `raise SomeError("message")`, the codebase's standard error style.
+ignore = ["TRY003"]
 preview = true
