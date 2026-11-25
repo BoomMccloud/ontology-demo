@@ -1,8 +1,8 @@
 ---
 proposal_id: "shared-editor-script"
-state: FRAMED
+state: BUILT
 witness: builder
-candidate: "aa1d9f7 @ worktree/shared-editor-script-8b7869"
+candidate: "034c6a0 @ worktree/shared-editor-script-8b7869"
 ---
 
 # Proposal: One browser script for job polling and the relationship editor
@@ -92,8 +92,28 @@ Builder route: the decisive witness is deferred to Build. The builder authors th
 
 ## Build
 
-<!-- Replaced only by proposal-build. Reference changed paths, protected witnesses,
-exact GREEN command(s), concise result, candidate identity, and deviations. -->
+Candidate: `034c6a0 @ worktree/shared-editor-script-8b7869` (claude/shared-editor-script-8b7869)
+
+### Changed paths
+- `src/stock_ontology/registry.py` — new `FieldSpec` and public `OntologyRegistry.field_specs(node_type, entity_type=None, relation=None)`; private helpers unchanged.
+- `src/stock_ontology/web/shared.py` — new `relationship_editor_model(registry, nodes, lang)`: placeholders, nodes (id, "name (type)" label, endpoint type), relations (translated label, from/to, symmetric, non-`basis` fields with translated label, kind, required, translated options).
+- `src/stock_ontology/web/notes/views.py` — removed `_relationship_fields`, `NoteRelationshipField`, `NoteEndpoint`, `endpoint_choices`, `required_relationship_fields`; `NoteExtraction.relationship_model` holds the shared model.
+- `src/stock_ontology/web/ontology/views.py`, `web/ontology/routes.py` — `relationship_editor_config` replaced by `relationship_model`; `_schema_fields`, schema node keys, and theme stage choices use `field_specs`; `build_registry_edit_context` takes `lang`.
+- `src/stock_ontology/web/static/editor.js` (new) — `StockEditor.postJson`, `readJson`, `waitForJob` (every second until succeeded, failed, superseded, or queued for retry; no limit), `relationshipEditor` (compatibility and anchor filtering, facet inputs, comma-and-newline list parsing, `facetChanges`, `swap`, and the single `nodeChoices` function for `node-typeahead` to replace).
+- `src/stock_ontology/web/static/note_reader.js`, `static/ontology_edit.js` — page flows kept; poller, POST helper, choice building, and facet parsing now come from `editor.js`.
+- Templates `partials/note_reader.html`, `partials/ontology_registry.html`, `ontology.html` — embed `#relationship-editor-model`, load `editor.js` before the page script; note reader selects and per-relation templates are now filled by the script. `static/library.css` — the note reader's facet `<fieldset>` has no border and hides when `hidden`.
+- Tests: `tests/test_web_ontology.py` (`test_note_reader_and_ontology_record_share_one_relationship_editor`, `test_page_scripts_post_and_poll_jobs_through_the_shared_editor_script`), `tests/test_vocab.py` (`test_field_specs_lists_declared_facets_with_their_vocabulary`).
+
+### Protected witnesses
+- None independently authored (builder route). Existing note-reader and Ontology action tests were not edited.
+
+### Evidence
+- RED: the three new tests copied onto a detached `aa1d9f7` worktree, `uv run pytest -q tests/test_web_ontology.py tests/test_vocab.py -k "share_one or shared_editor or field_specs"` — 3 failed (no embedded model on the note reader, page scripts lack `window.StockEditor`, no `field_specs`).
+- GREEN: `uv run pytest -q` — 554 passed. `uv run ruff check src tests` — clean. `grep -rn "_facet_specs\|_vocabulary" src/stock_ontology/web` — no matches.
+- Manual browser check (built-in browser, scratch fixture app with a worker thread, minimal registry, three entities, one note): note reader add offered only compatible endpoints and relations, showed the optional `sentiment` field, posted `{"facets": {"sentiment": "positive"}, ...}` to `/api/notes/relationship/add`, waited for the job, and reloaded with the new row; note reader edit prefilled from/relation/to with the facet fieldset hidden and disabled. Ontology record page prefilled the existing edge's facet, previewed, confirmed, waited for the job, and reloaded with the change. `waitForJob` on a missing job surfaced the server's `detail`.
+
+### Deviations
+- None from Frame scope. One behavior that follows from compatibility filtering: on the note reader, Reverse on a non-symmetric relation now clears the relation and target when the reversed direction is not allowed, instead of sending a pair the server would reject.
 
 ## Audit
 
