@@ -1,6 +1,6 @@
 ---
 proposal_id: "unified-note-corrections"
-state: BUILT
+state: ACCEPTED
 witness: independent
 candidate: "90e1230 @ worktree claude/unified-note-corrections-0faa55"
 ---
@@ -183,9 +183,40 @@ Candidate: `90e1230 @ worktree claude/unified-note-corrections-0faa55`
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+Candidate: `90e1230 @ worktree claude/unified-note-corrections-0faa55` (checked out at `75af9a6`, which differs from `90e1230` only in `docs/proposals/unified-note-corrections.md`; working tree clean)
+
+Independence: fresh-context. Before this audit the auditing context had seen only the ledger, `.codex/skills/proposal-audit/SKILL.md`, the repo `AGENTS.md`, and the candidate diff and tests read during the audit. It did not build or prove the candidate.
+
+Primary-claim verdict: PROVED. Evidence: `uv run pytest -v tests/test_web_notes.py -k "judge_a_relationship_correction_alike or legacy_relationship_jobs or cannot_reapply"` gave 13 passed, including all 11 rows of `test_note_reader_and_ontology_page_judge_a_relationship_correction_alike` (log `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/audit/witness.log`). `git diff a8abf55 90e1230 -- tests/test_web_notes.py` touches only the two Frame-listed invariant tests and appends one new test. The protected witness and its helpers are byte-identical to Proof's revision `a8abf55`, where Proof recorded 11 RED. In the code, `/api/notes/relationship*` now calls `review_reader_correction`, which goes to `review_note_correction`, and queues `note.ontology.correction`. Both paths apply through `apply_note_correction`. Limit: the delete rows compare at the service and worker level, because the Ontology page has no delete route. `valid-edit` and `valid-add` were green before the change and act only as regression guards.
+
+Guardrail verdicts:
+- Already-queued `note.relationship*` jobs are judged by the same review, and new ones can't be submitted: PROVED. Evidence: `test_queued_legacy_relationship_jobs_are_judged_by_the_same_review` passed and is unchanged from `a8abf55`. It was RED in Proof. The worker sends these kinds to `_run_ontology_correction` through `review_reader_correction`, and `submit_correction` refuses them through `RETIRED_CORRECTION_KINDS`. Correction priority is kept, checked by the new assertion in `tests/test_worker.py::test_corrections_are_claimed_ahead_of_earlier_extraction` (passed). Limit: the job error text isn't asserted. The priority check calls `job_priority` directly and doesn't claim a retired-kind job.
+- A stale note or stale graph still fails with a conflict, and a reader form opened before a correction can't re-apply: PROVED. Evidence: the `note-changed` row and `test_note_reader_form_opened_before_an_ontology_correction_cannot_reapply` passed (RED in Proof, unchanged). `test_ontology_registry_editing_note_correction[stale-note]` passed, which covers the race at worker time. Limit: a facet-only Ontology edit keeps its edge ID (see the deviation under scope). A stale form for a facet-only edit is caught only by the fresh-review comparison, not by the ID changing. The note reader can't make a facet-only edit, so the reader's stale-form case is unaffected.
+- The existing Ontology correction tests and the person-accuracy test stay green without edits: PROVED. Evidence: `git diff a8abf55 90e1230 -- tests/test_web_ontology.py` is empty. `test_person_accuracy_correction_is_checked_stored_and_refreshes_all_their_rumors` is unchanged. All 9 cases passed (log `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/audit/guardrails-units.log`). Limit: none beyond what these tests cover.
+
+Scope and duty verdict: scope HELD; duties HELD. Evidence: every Frame invariant change was made and matches its entry: `test_note_reader_extraction_workflow`, `test_note_reader_adds_and_deletes_relationships`, the three `test_pipeline.py` tests that called the removed methods, `test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_consensus` (new ID, same `created_at`), `tests/test_worker.py:399`, and the README entry. No other existing test was edited. `note_reader.js`, `ontology_edit.js`, `web/notes/views.py`, `Worker.open_store` and `run_once` are untouched. Apart from removing the three legacy branches, the dispatch change is one added `or` condition. The supporting obligations are met: a `relationship_delete` kind; pending edges included and tagged; the anchor rule applies only when `record` is given; `FacetSchemaError` maps to `ServiceError("invalid")`; one converter is used by both the routes and the worker; the three pipeline methods are removed; one edge check is shared by `_review_edge` and `_canonical_note_edge`; and one identity rule is used by `review_record_edit`, the person review, and rollout, where a collision is still `ambiguous`. The constraint-capture duty is met. The new `README.md` entry has a **Why:** and a **Guarded by:**, and all 5 tests it names exist and pass. The recorded deviation, keeping `update_edge` for a facet-only edit, is justified: the protected `test_ontology_registry_editing_note_correction[relationship]` asserts that a facet-only edit keeps `employment-0`. Limit: the shared edge check landed as `OntologyDB.check_edge` in `src/stock_ontology/db/storage.py` and `db/__init__.py`, not in `registry.py` as Frame's Include list says. Build didn't record this as a deviation. I judged it HELD because Frame named `OntologyRegistry.check_edge` only "for example", the check needs node lookups that live on the DB, `registry.py` is untouched, and it adds no behavior beyond the framed obligation. A stricter reader could call this EXPANDED.
+
+Test homes:
+- `tests/test_web_notes.py`: two invariant-changed tests, plus `test_note_reader_reverse_reviews_like_the_swapped_endpoints`. This is the Frame's permanent owner for note-reader correction behavior.
+- `tests/test_pipeline.py`: four invariant-changed tests and a `_reader_correction` helper. They stay with the pipeline apply behavior they already covered.
+- `tests/test_db.py::test_check_edge_is_the_one_edge_check_for_corrections`: placed next to `OntologyDB`, which owns `check_edge`. Proof's plan said `tests/test_registry*.py`, but this follows where the code actually landed.
+- `tests/test_registry_governance.py::test_record_edits_person_corrections_and_rollout_share_one_identity_rule`: one of the two owners Frame allowed.
+- `tests/test_worker.py::test_corrections_are_claimed_ahead_of_earlier_extraction`: the owner Proof's plan named for legacy priority.
+
+Full gates: PASS.
+- `uv run pytest -q`: 569 passed (log `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/audit/full-gate.log`).
+- `uv run ruff check .`: all checks passed (log `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/audit/ruff.log`).
+- Decisive witnesses and guardrail tests: 13 plus 13 passed (logs above).
+- Limit: offline suite only. No live LLM and no migration or deploy check.
+
+Residual risks:
+- `_review_edge` now checks the relation after merging facets. An Ontology preview with an unregistered relation and a non-dict `changes.facets` now raises `AttributeError`, which is a 500, where it used to return 422 `choose_relationship_type`. Reproduced with `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/audit/probe_facets.py`. Only a hand-crafted request can reach it, since the shipped JS sends a dict, and nothing is written.
+- The identity-rule and edge-check unit tests mostly check structure. They inspect the AST to confirm the helpers are called, plus helper unit cases. No behavioral test covers rollout marking a name or alias collision `ambiguous`. The existing `test_browser_registry_edit_rollout_preserves_unmatched_graph[ambiguous]` covers multiple matches, not label collision. I checked the rollout refactor by reading it, and it is equivalent.
+- A note-reader edit that changes nothing now returns 422 `service_error.no_changes` where it used to succeed silently. This is recorded in Build and untested.
+- Jobs already queued as `note.relationship*` before deploy are only exercised in tests, through `db.jobs.insert`. Draining a real queue is part of the human-owned deploy.
+
+Recommendation: ACCEPT
+Packet: no fix is required. Optional follow-ups for the human: restore relation-first ordering in `_review_edge` (`src/stock_ontology/services/corrections.py`), or guard against non-dict `facets`, so the 500 goes back to a 422; and record the `db/storage.py` placement of `check_edge` as a Build deviation. Merge, deploy and draining the queue stay human-owned.
 
 ## Revisions
 
