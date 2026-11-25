@@ -1,8 +1,8 @@
 ---
 proposal_id: "pipeline-correction-api"
-state: FRAMED
+state: PROVED
 witness: independent
-candidate: "aa1d9f7 @ worktree claude/pipeline-correction-api-47e1d2"
+candidate: "1e2b8cf @ worktree claude/pipeline-correction-api-47e1d2"
 ---
 
 # Proposal: Corrections owned by the pipeline, not the worker
@@ -87,9 +87,35 @@ Candidate: `aa1d9f7 @ worktree claude/pipeline-correction-api-47e1d2`
 
 ## Proof
 
-<!-- Replaced only by proposal-prove, or by the orchestrator with the builder-route
-deferred-witness status. Reference native witness path, exact command, concise RED
-result, and candidate identity. -->
+Candidate: `1e2b8cf @ worktree claude/pipeline-correction-api-47e1d2` (witness commit on top of `378e6a5`; RED observed on this exact tree)
+
+**Protected witness**
+- `Every correction job applies its graph change and queues its consensus refresh through a public IngestionPipeline method` — `tests/test_pipeline.py` / `test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_consensus`
+  - Defect and boundary: there's no public pipeline method that applies a reviewed `note.ontology.correction` payload. The graph writes live in `Worker._run_ontology_correction`, so the rule crosses the worker/pipeline component boundary.
+  - Public name Build must implement: `IngestionPipeline.apply_note_correction(path: Path, reviewed: dict[str, Any]) -> None`. `reviewed` is the exact dict `review_note_correction` returns. The method opens its own (nestable) transaction, does not refresh consensus, and raises `NoteConflictError` on a stale note.
+  - Setup: the shipped registry is ingested from three notes. Acme holds Ron, Acme Widgets and `WORKS_AT` Ron→Acme. Beta holds Ron's rumor about Beta Gears. Gamma holds Gamma Tools. The person correction reviewed from the Acme note is `{"organization": "Gamma Tools", "accuracy": "low"}`.
+  - Assertion (conflict): if the Acme note file changes after review, `apply_note_correction` raises `NoteConflictError`, and the person node, the note's edges, the note's entity membership and `consensus_refresh` rows are all unchanged. This proves the stale-note guardrail and the no-partial-write guarantee. Limit: it doesn't cover a graph change after review (the worker's re-review comparison stays in the worker and is still covered by the existing web/worker tests).
+  - Assertion (apply): once the reviewed text is restored, the same payload applies. Ron's facets become `organization=Gamma Tools, accuracy=low`. The reviewed `WORKS_AT` edge keeps its `edge_id` and now points to Gamma Tools. Gamma Tools joins the note's entity membership. The consensus target goes up for Acme (the note's company before), Gamma (after) and Beta (the company of Ron's rumor in another note), and all three stay in `pending_consensus()`, so the method queues the refresh without running it. Proves: the public method reproduces the worker's person, edge, membership and consensus-queue outcome. Limit: it doesn't prove the worker calls this method, that `_wrote` shares the transaction (guardrail), or the `relationship` and `relationship_add` kinds. Those stay covered by the existing end-to-end tests the Frame lists.
+  - Satisfiability: I checked that the witness can pass by running it GREEN against a scratch monkeypatch of the current worker logic, loaded as a pytest plugin from the scratchpad. That code was never committed and isn't evidence.
+- `worker.py contains no graph-row writes and references no private IngestionPipeline member` — `tests/test_worker.py` / `test_worker_applies_graph_changes_only_through_public_pipeline_methods`
+  - Defect and boundary: `Worker` calls `pipeline._refresh_consensus`, `_current_note_doc` and `_evidence_changed`, and it calls `upsert_node`, `update_edge`, `upsert_edge` and `add_note_entities` directly. That is the worker/pipeline component boundary.
+  - Assertion: an AST walk of `class Worker` in `stock_ontology.worker` finds no `_`-prefixed attribute on any pipeline-typed name and no call to those four graph-write methods. Pipeline-typed names are parameters annotated `IngestionPipeline`, plus names assigned from `IngestionPipeline(...)` or `self._pipeline(...)`. Proves the structural half of the primary claim. Limit: the check is static and name-based (`getattr` or aliasing would evade it), and it doesn't prove outcomes stay the same.
+  - Deviation from the Frame's wording: the check covers `class Worker`, not the whole module. The module-level `_rollout_record_metadata` (`worker.py:186`) calls `db.upsert_node` on a disposable rollout-preview copy. That code is registry rollout, outside this proposal's allowed scope, so a module-wide check would force an out-of-scope edit.
+- Protected paths: `tests/test_pipeline.py`, `tests/test_worker.py` (the two witnesses above, plus the existing correction tests the Frame lists as guardrails).
+- Protected revision: `1e2b8cf5e72037d58ae3bde8c0fcc8fb9928aac2`
+
+**Red evidence**
+- `uv run pytest "tests/test_pipeline.py::test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_consensus" "tests/test_worker.py::test_worker_applies_graph_changes_only_through_public_pipeline_methods" -vv` → 2 failed.
+  - The pipeline witness gets past ingest and review, then fails with `AttributeError: 'IngestionPipeline' object has no attribute 'apply_note_correction'`.
+  - The worker witness fails listing private uses at lines 451, 552, 555 and 577 (`_refresh_consensus`, `_current_note_doc`, `_evidence_changed`) and graph writes at lines 537, 545, 547 and 549 (`upsert_node`, `update_edge`, `upsert_edge`, `add_note_entities`).
+  - The other 53 tests in both files pass.
+  - Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/proof-red.log`
+- The primary claim has no proof until this command is observed RED. It was observed RED on `1e2b8cf`.
+
+**Supporting test plan**
+- Shared private frame in `pipeline.py` with the six note-reader corrections ported onto it (per-method affected-company sets kept) → Build: existing `tests/test_pipeline.py` correction tests (`test_note_correction_updates_only_current_note_edges`, `test_delete_note_relationship_removes_only_its_pending_edge`, `test_add_note_relationship_accepts_required_fields_from_shipped_registry`) and `tests/test_web_notes.py::test_note_reader_extraction_workflow` must stay green without edits. They catch a lost edit, a wrong affected set or a missing refresh.
+- Public `refresh_consensus` used by `_finish_consensus` and `_run_ingest` → Build: existing `tests/test_worker.py` consensus tests (`test_late_consensus_attempt_cannot_publish_over_newer_evidence`, `test_consensus_refresh_rows_commit_with_extraction_and_roll_back_with_it`) stay green. They catch a changed refresh or retry behavior.
+- Guardrail: the ontology correction still moves its job to the consensus stage in the same transaction as the graph write, and a conflict leaves the graph unchanged → Build: existing `tests/test_web_ontology.py::test_ontology_registry_editing_note_correction`, `::test_ontology_registry_editing_relationship_add_source` and `tests/test_pipeline.py::test_person_accuracy_correction_is_checked_stored_and_refreshes_all_their_rumors` stay green without edits.
 
 ## Build
 
