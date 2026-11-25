@@ -1010,3 +1010,254 @@ def test_web_note_actions_return_job_references_and_open_the_db_read_only(
     assert client.get(f"/api/jobs/{job_id}").json()["state"] == "succeeded"
     reader = client.get("/catalog", params={"file": "focus.md", "lang": "en"}).text
     assert 'data-job-state="succeeded"' in reader and 'data-note-status="extracted"' in reader
+
+
+# One review path for note corrections: the note reader and the Ontology page judge the same edit alike.
+
+_FIXTURE_SOURCE = "Correction source reference.\n"
+
+
+def _correction_workspace(root: Path) -> tuple[Settings, TestClient, Any]:
+    """A processed note with one main edge, one pending edge, and a peer note's edge."""
+    root.mkdir()
+    data_dir = root / "notes"
+    data_dir.mkdir()
+    (data_dir / "note.md").write_text(_FIXTURE_SOURCE, encoding="utf-8")
+    registry = create_minimal_registry()
+    registry.facet_schema.setdefault("relation", {})["OWNS"] = {"stake": {"kind": "text", "required": True}}
+    registry_path = root / "registry.json"
+    save_registry(registry, registry_path)
+    db_path = root / "reader.db"
+    with OntologyDB(db_path, embedding_dim=DIM, registry=registry) as db:
+        for node_id, name in (("a", "Alpha"), ("b", "Beta"), ("c", "Cedar"), ("d", "Delta")):
+            db.upsert_node(Node(id=node_id, name=name, summary="", node_type="entity",
+                                facets={"entity_type": "company", "sector": "Industrial"}))
+        db.upsert_node(Node(id="fact", name="An announcement", summary="", node_type="event",
+                            facets={"event_type": "fact"}))
+        db.upsert_ingestion_log("note.md", "note", hashlib.sha256(_FIXTURE_SOURCE.encode()).hexdigest(),
+                                entity_ids=("a", "b"))
+        db.upsert_edge(Edge(id="original", from_id="a", to_id="b", relation="BUY",
+                            source_doc_id="note", facets={"basis": "extracted"}))
+        db.upsert_edge(Edge(id="peer", from_id="a", to_id="b", relation="BUY",
+                            source_doc_id="peer-note", facets={"basis": "extracted"}))
+        db.insert_pending_edge(Edge(id="pending", from_id="a", to_id="b", relation="UNREVIEWED_RELATION",
+                                    source_doc_id="note", facets={"basis": "extracted"}))
+        db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+    settings = Settings(db_path=db_path, data_dir=data_dir, registry_path=registry_path, embedding_dim=DIM)
+    llm = FakeWebLLM()
+    return settings, TestClient(create_app(settings, llm=llm, note_actions=True)), llm
+
+
+def _note_graph(settings: Settings) -> dict[str, list[tuple[Any, ...]]]:
+    """The note's and the peer note's edges, without generated edge IDs."""
+    def rows(doc_id: str, pending: bool = False) -> list[tuple[Any, ...]]:
+        return sorted(
+            (row["from_id"], row["relation"], row["to_id"], tuple(sorted(row["facets"].items())))
+            for row in db.list_note_edges(doc_id, pending=pending)
+        )
+
+    with OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True) as db:
+        return {"edges": rows("note"), "pending": rows("note", True), "peer": rows("peer-note")}
+
+
+@dataclasses.dataclass(frozen=True)
+class _Judgement:
+    """Where a correction was decided (at submit or by the worker), its HTTP status and message, and the graph after."""
+
+    phase: str
+    status: int
+    detail: str
+    graph: dict[str, list[tuple[Any, ...]]]
+
+
+def _run_job(client: TestClient, settings: Settings, llm: Any, job_id: str) -> tuple[int, str]:
+    from stock_ontology.worker import Worker
+
+    Worker(settings, llm_factory=lambda _settings: llm).run_once(scan=False)
+    job = client.get(f"/api/jobs/{job_id}").json()
+    if job["state"] == "succeeded":
+        return 200, ""
+    codes = {"invalid": 422, "conflict": 409, "not_found": 404}
+    return codes.get(job.get("error_code") or "", 500), str(job.get("error") or "")
+
+
+def _judged(client: TestClient, settings: Settings, llm: Any, response: Any) -> _Judgement:
+    if response.status_code != 202:
+        return _Judgement("submit", response.status_code, response.json()["detail"], _note_graph(settings))
+    status, detail = _run_job(client, settings, llm, response.json()["job_id"])
+    return _Judgement("worker", status, detail, _note_graph(settings))
+
+
+def _reader_judgement(root: Path, url: str, payload: dict[str, Any], *, stale: bool) -> _Judgement:
+    settings, client, llm = _correction_workspace(root)
+    if stale:
+        (settings.data_dir / "note.md").write_text(_FIXTURE_SOURCE + "Changed after processing.\n", encoding="utf-8")
+    return _judged(client, settings, llm, client.post(url, json={"file": "note.md", **payload}))
+
+
+def _ontology_judgement(root: Path, edit: dict[str, Any], *, stale: bool) -> _Judgement:
+    from stock_ontology.services import ProcessingService, ServiceError
+    from stock_ontology.services.corrections import review_note_correction
+    from stock_ontology.web.shell import http_error
+
+    settings, client, llm = _correction_workspace(root)
+    if stale:
+        (settings.data_dir / "note.md").write_text(_FIXTURE_SOURCE + "Changed after processing.\n", encoding="utf-8")
+    edit = {"file": "note.md", **edit}
+    if edit["kind"] != "relationship_delete":
+        preview = client.post("/api/ontology/corrections/preview", json=edit)
+        if preview.status_code != 200:
+            return _Judgement("submit", preview.status_code, preview.json()["detail"], _note_graph(settings))
+        confirmed = client.post("/api/ontology/corrections/confirm", json={"confirmation": preview.json()["confirmation"]})
+        assert confirmed.status_code == 202, confirmed.text
+        return _judged(client, settings, llm, confirmed)
+    # The Ontology page has no delete form yet; its review and its worker job are the same ones confirm uses.
+    path = (settings.data_dir / "note.md").resolve()
+    try:
+        with OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True) as db:
+            review = review_note_correction(db, path, settings.data_dir, **{k: v for k, v in edit.items() if k != "file"})
+    except ServiceError as exc:
+        error = http_error(exc, "en")
+        return _Judgement("submit", error.status_code, str(error.detail), _note_graph(settings))
+    job = ProcessingService(settings).submit_correction("note.ontology.correction", "note.md", review)
+    status, detail = _run_job(client, settings, llm, job.job_id)
+    return _Judgement("worker", status, detail, _note_graph(settings))
+
+
+_EXTRACTED = (("basis", "extracted"),)
+_PEER = [("a", "BUY", "b", _EXTRACTED)]
+_PENDING = [("a", "UNREVIEWED_RELATION", "b", _EXTRACTED)]
+_EDIT_URL, _ADD_URL, _DELETE_URL = (
+    "/api/notes/relationship", "/api/notes/relationship/add", "/api/notes/relationship/delete",
+)
+
+
+def _edit(edge_id: str, relation: str, from_id: str, to_id: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """The note reader always sends relation and both endpoints; the Ontology page sends the same fields."""
+    fields = {"relation": relation, "from_id": from_id, "to_id": to_id}
+    return _EDIT_URL, {"edge_id": edge_id, **fields}, {"kind": "relationship", "edge_id": edge_id, "changes": fields}
+
+
+def _add(from_id: str, relation: str, to_id: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    fields = {"from_id": from_id, "relation": relation, "to_id": to_id}
+    return _ADD_URL, fields, {"kind": "relationship_add", "record": from_id, "changes": fields}
+
+
+def _delete(edge_id: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    return _DELETE_URL, {"edge_id": edge_id}, {"kind": "relationship_delete", "edge_id": edge_id, "changes": {}}
+
+
+@pytest.mark.parametrize(
+    ("correction", "stale", "expected"),
+    [
+        pytest.param(_edit("original", "NONEXISTENT_RELATION", "a", "b"), False,
+                     (422, "service_error.choose_relationship_type"), id="unregistered-relation"),
+        pytest.param(_edit("original", "BUY", "fact", "b"), False,
+                     (422, "service_error.relationship_not_allowed"), id="forbidden-endpoints"),
+        pytest.param(_edit("original", "BUY", "b", "b"), False,
+                     (422, "service_error.choose_two_endpoints"), id="same-node"),
+        pytest.param(_edit("original", "OWNS", "a", "b"), False, (422, None), id="missing-required-facet"),
+        pytest.param(_add("a", "BUY", "b"), False,
+                     (409, "service_error.relationship_exists"), id="duplicate-add"),
+        pytest.param(_delete("peer"), False,
+                     (404, "service_error.relationship_missing"), id="delete-other-notes-edge"),
+        pytest.param(_edit("original", "BUY", "c", "d"), True,
+                     (409, "service_error.stale_source_note"), id="note-changed"),
+        pytest.param(_edit("original", "BUY", "c", "d"), False,
+                     {"edges": [("c", "BUY", "d", _EXTRACTED)], "pending": _PENDING, "peer": _PEER},
+                     id="valid-edit"),
+        pytest.param(_edit("pending", "BUY", "a", "c"), False,
+                     {"edges": sorted([("a", "BUY", "b", _EXTRACTED), ("a", "BUY", "c", _EXTRACTED)]),
+                      "pending": [], "peer": _PEER},
+                     id="valid-pending-edit"),
+        pytest.param(_add("a", "BUY", "c"), False,
+                     {"edges": sorted([("a", "BUY", "b", _EXTRACTED), ("a", "BUY", "c", _EXTRACTED)]),
+                      "pending": _PENDING, "peer": _PEER},
+                     id="valid-add"),
+        pytest.param(_delete("original"), False,
+                     {"edges": [], "pending": _PENDING, "peer": _PEER}, id="valid-delete"),
+    ],
+)
+def test_note_reader_and_ontology_page_judge_a_relationship_correction_alike(
+    tmp_path: Path, correction: tuple[str, dict[str, Any], dict[str, Any]], stale: bool, expected: Any,
+) -> None:
+    url, reader_payload, ontology_edit = correction
+    reader = _reader_judgement(tmp_path / "reader", url, reader_payload, stale=stale)
+    ontology = _ontology_judgement(tmp_path / "ontology", ontology_edit, stale=stale)
+    untouched = {"edges": [("a", "BUY", "b", _EXTRACTED)], "pending": _PENDING, "peer": _PEER}
+
+    if isinstance(expected, dict):
+        assert (ontology.status, ontology.graph) == (200, expected), ontology
+        assert (reader.status, reader.graph) == (200, expected), reader
+        return
+    status, key = expected
+    assert (ontology.phase, ontology.status, ontology.graph) == ("submit", status, untouched), ontology
+    if key is not None:
+        assert ontology.detail == translate(key, lang="en"), ontology
+    # The reader rejects at submit, with the same status and message, and queues nothing.
+    assert reader == ontology
+
+
+def test_queued_legacy_relationship_jobs_are_judged_by_the_same_review(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from stock_ontology.services import ProcessingService, ServiceError
+    from stock_ontology.services.processing import job_priority
+
+    settings, client, llm = _correction_workspace(tmp_path / "graph")
+    source_hash = hashlib.sha256(_FIXTURE_SOURCE.encode()).hexdigest()
+
+    def queue_legacy(job_id: str, kind: str, params: dict[str, Any]) -> str:
+        """A job of a retired kind that was queued before deploy."""
+        now = datetime.now(UTC)
+        with OntologyDB(settings.db_path, embedding_dim=DIM) as db:
+            assert db.jobs.insert(
+                job_id=job_id, kind=kind, target="note.md", revision=source_hash, priority=job_priority(kind),
+                payload={"file": "note.md", "expected_hash": source_hash, **params},
+                created_at=now.isoformat(), now=now,
+            )
+        return job_id
+
+    duplicate = queue_legacy("job_legacy_duplicate", "note.relationship.add",
+                             {"from_id": "a", "relation": "BUY", "to_id": "b"})
+    # Before this change the legacy executor upserted the duplicate silently; the review rejects it.
+    assert _run_job(client, settings, llm, duplicate)[0] == 409
+    assert _note_graph(settings)["edges"] == [("a", "BUY", "b", _EXTRACTED)]
+
+    pending = queue_legacy("job_legacy_pending", "note.relationship",
+                           {"edge_id": "pending", "relation": "BUY", "from_id": "a", "to_id": "c"})
+    assert _run_job(client, settings, llm, pending) == (200, "")
+    deleted = queue_legacy("job_legacy_delete", "note.relationship.delete", {"edge_id": "original"})
+    assert _run_job(client, settings, llm, deleted) == (200, "")
+    assert _note_graph(settings) == {"edges": [("a", "BUY", "c", _EXTRACTED)], "pending": [], "peer": _PEER}
+
+    # New jobs of the retired kinds can no longer be submitted.
+    for kind, params in (
+        ("note.relationship", {"edge_id": "original", "relation": "BUY", "from_id": "c", "to_id": "d"}),
+        ("note.relationship.add", {"from_id": "a", "relation": "BUY", "to_id": "c"}),
+        ("note.relationship.delete", {"edge_id": "original"}),
+    ):
+        with pytest.raises(ServiceError) as refused:
+            ProcessingService(settings).submit_correction(kind, "note.md", {**params, "expected_hash": source_hash})
+        assert refused.value.code == "invalid", kind
+
+
+def test_note_reader_form_opened_before_an_ontology_correction_cannot_reapply(tmp_path: Path) -> None:
+    settings, client, llm = _correction_workspace(tmp_path / "graph")
+    preview = client.post("/api/ontology/corrections/preview", json={
+        "kind": "relationship", "file": "note.md", "edge_id": "original", "changes": {"to_id": "c"},
+    })
+    assert preview.status_code == 200, preview.text
+    confirmed = client.post("/api/ontology/corrections/confirm", json={"confirmation": preview.json()["confirmation"]})
+    assert _judged(client, settings, llm, confirmed).status == 200
+    corrected = _note_graph(settings)
+    assert corrected["edges"] == [("a", "BUY", "c", _EXTRACTED)]
+
+    # A reader form still holds the edge ID it rendered before the Ontology page corrected that edge.
+    stale_form = client.post(_EDIT_URL, json={
+        "file": "note.md", "edge_id": "original", "relation": "BUY", "from_id": "a", "to_id": "d",
+    })
+    judged = _judged(client, settings, llm, stale_form)
+    assert (judged.phase, judged.status) == ("submit", 404), judged
+    assert judged.detail == translate("service_error.relationship_missing", lang="en")
+    assert _note_graph(settings) == corrected
