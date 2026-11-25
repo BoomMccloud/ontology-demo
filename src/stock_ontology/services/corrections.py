@@ -11,9 +11,9 @@ from stock_ontology.db import OntologyDB
 from stock_ontology.registry import normalize_name_key
 from stock_ontology.services.errors import ServiceError
 from stock_ontology.services.registry import changed_fields, edit_aliases, edit_text, unique_labels
-from stock_ontology.vocab import is_synthesized_edge
+from stock_ontology.vocab import ACCURACY, is_synthesized_edge
 
-_PERSON_FIELDS = {"name", "aliases", "role", "organization"}
+_PERSON_FIELDS = {"name", "aliases", "role", "organization", ACCURACY.group}
 _EDGE_FIELDS = {"from_id", "to_id", "relation", "facets"}
 
 
@@ -31,6 +31,31 @@ def relationship_source_evidence(db: OntologyDB, record: str) -> dict[str, list[
         if edge["source_doc_id"] and not is_synthesized_edge(edge["facets"]):
             sources[edge["source_doc_id"]].append(f"edge:{edge['edge_id']}")
     return {doc_id: sorted(evidence) for doc_id, evidence in sources.items()}
+
+
+def _rumor_company_ids(db: OntologyDB, person_id: str) -> list[str]:
+    """Companies that a rumor authored by `person_id` is about: their consensus weighs the person's accuracy."""
+    companies: set[str] = set()
+    for authored in db.get_incident_edges(person_id):
+        view = authored["neighbor"]
+        if authored["relation"] != "AUTHORED_BY" or authored["direction"] != "incoming" or (
+            view["node_type"] != "view" or view["facets"].get("view_type") != "rumor"
+        ):
+            continue
+        companies.update(
+            item["neighbor"]["id"] for item in db.get_incident_edges(view["id"])
+            if item["neighbor"]["node_type"] == "entity" and item["neighbor"]["facets"].get("entity_type") == "company"
+        )
+    return sorted(companies)
+
+
+def _edit_accuracy(value: Any) -> str | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    accuracy = ACCURACY.coerce(value)
+    if accuracy is None:
+        raise ServiceError("invalid", "Choose high, medium or low accuracy, or leave it unrated.", key="service_error.choose_accuracy")
+    return accuracy
 
 
 def _organization(db: OntologyDB, name: str) -> str | None:
@@ -112,10 +137,14 @@ def review_note_correction(
             or doc_id not in db.note_entity_doc_ids(record)
         ):
             raise ServiceError("not_found", "That person is not in the selected note's extraction.", key="service_error.person_missing")
-        before = {"name": node.name, "aliases": node.aliases, **{key: node.facets.get(key) for key in ("role", "organization")}}
+        before = {"name": node.name, "aliases": node.aliases,
+                  **{key: node.facets.get(key) for key in ("role", "organization", ACCURACY.group)}}
         after = before.copy()
         for field, value in changes.items():
-            after[field] = edit_aliases(value) if field == "aliases" else edit_text(value, field)
+            if field == ACCURACY.group:
+                after[field] = _edit_accuracy(value)
+            else:
+                after[field] = edit_aliases(value) if field == "aliases" else edit_text(value, field)
         if keep_previous_name and after["name"] != before["name"]:
             after["aliases"] = [*after["aliases"], node.name]
         after["aliases"] = unique_labels(after["aliases"], excluding=after["name"])
@@ -129,12 +158,15 @@ def review_note_correction(
             for other in db.list_nodes(node_type="entity", limit=-1)
         ):
             raise ServiceError("conflict", "A proposed name or alternate name identifies another entity.", key="service_error.name_taken")
-        facets = db.registry.check_facets("entity", {
-            **node.facets, **{field: after[field] for field in ("role", "organization") if field in changes},
-        })
+        facets = {**node.facets, **{field: after[field] for field in ("role", "organization", ACCURACY.group) if field in changes}}
+        if facets.get(ACCURACY.group) is None:
+            facets.pop(ACCURACY.group, None)
+        facets = db.registry.check_facets("entity", facets)
         person = {"before": node.model_dump(mode="json"), "name": after["name"], "aliases": after["aliases"],
                   "facets": facets}
         diff = changed_fields(before, after)
+        if before[ACCURACY.group] != after[ACCURACY.group]:
+            person["rumor_company_ids"] = _rumor_company_ids(db, record)
 
         old_org = before["organization"]
         if any(change["field"] in {"role", "organization"} for change in diff):

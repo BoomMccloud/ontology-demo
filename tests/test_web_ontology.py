@@ -26,7 +26,7 @@ from stock_ontology.config import Settings
 from stock_ontology.db import OntologyDB
 from stock_ontology.i18n import translate
 from stock_ontology.models import Edge, Node
-from stock_ontology.registry import create_minimal_registry, save_registry
+from stock_ontology.registry import create_minimal_registry, load_registry, save_registry
 from stock_ontology.web import create_app
 
 
@@ -836,3 +836,44 @@ def test_service_error_enum_params_are_translated() -> None:
     detail = http_error(exc, "en").detail
     assert detail == translate("service_error.retry_not_failed", lang="en", state=translate_enum("job_state", "running"))
     assert "running" in detail
+
+
+def test_person_details_form_edits_accuracy(tmp_path: Path) -> None:
+    from inspect import signature
+
+    settings = Settings(db_path=tmp_path / "graph.db", registry_path=tmp_path / "registry.json",
+                        data_dir=tmp_path, embedding_dim=DIM)
+    registry = load_registry(Path(__file__).resolve().parents[1] / "ontology_registry.json")
+    save_registry(registry, settings.registry_path)
+    source = tmp_path / "profile.md"
+    source.write_text("Rumor source.\n", encoding="utf-8")
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        db.upsert_node(Node(id="person", name="Robin Lee", summary="", node_type="entity",
+                            facets={"entity_type": "person", "role": "Trader", "organization": "Desk",
+                                    "accuracy": "medium"}))
+        db.upsert_ingestion_log(source.name, "profile", hashlib.sha256(source.read_bytes()).hexdigest(),
+                                entity_ids=("person",))
+        db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+
+    origin = "http://127.0.0.1:8000"
+    opt_in = {"registry_origin": origin} if "registry_origin" in signature(create_app).parameters else {}
+    client = TestClient(create_app(settings, llm=FakeWebLLM(), note_actions=True, **opt_in),
+                        base_url=origin, client=("127.0.0.1", 50000))
+    page = client.get("/ontology", params={"tab": "registry", "kind": "people", "record": "person", "lang": "en"})
+    assert page.status_code == 200
+    details = re.search(r'<summary>\s*Edit details\s*</summary>\s*(<form\b.*?</form>)', page.text, re.S)
+    assert details is not None
+    select = re.search(r'<select\b[^>]*\bdata-edit-field="accuracy".*?</select>', details[1], re.S)
+    assert select is not None
+    assert re.search(r'<option value="medium" selected>', select[0])
+    assert re.search(r'<option value="">Unrated</option>', select[0])
+
+    edit = {"record": "person", "kind": "person", "file": source.name}
+    preview = client.post("/api/ontology/corrections/preview", json={**edit, "changes": {"accuracy": "low"}})
+    assert preview.status_code == 200, preview.text
+    assert {"field": "accuracy", "before": "medium", "after": "low"}.items() <= preview.json()["diff"][0].items()
+    unrated = client.post("/api/ontology/corrections/preview", json={**edit, "changes": {"accuracy": ""}})
+    assert unrated.status_code == 200, unrated.text
+    assert unrated.json()["diff"][0]["after"] is None
+    bad = client.post("/api/ontology/corrections/preview", json={**edit, "changes": {"accuracy": "excellent"}})
+    assert bad.status_code in {400, 422}, bad.text

@@ -146,6 +146,7 @@ Given a company and all extracted events (facts, earnings, news, catalysts), ext
 
 Guidelines:
 - Weigh verified facts/earnings and high-credibility primary channel checks above uncorroborated or weak rumors.
+- A rumor's `facets.authors` gives our `accuracy` rating of each person who wrote it: `high`, `medium`, `low`, or `unrated`. Weigh a rumor from a less accurate author lower than the same kind of rumor from a more accurate author. Treat `unrated` as no rating: weigh that rumor as you would without this field.
 - Explicitly note unresolved risks or dissenting views.
 - Produce 2-5 concrete, falsifiable `pillars` (assumptions that, if broken by a future meeting or event, would change the stance).
 - Keep `summary` under 900 characters.

@@ -314,6 +314,15 @@
           },
           "aliases": {},
           "fallback": "company"
+        },
+        "accuracy": {
+          "members": {
+            "high": "Our view: the person's claims usually prove accurate.",
+            "medium": "Our view: the person's claims are sometimes accurate.",
+            "low": "Our view: the person's claims often prove inaccurate."
+          },
+          "aliases": {},
+          "fallback": null
         }
       },
       "event": {
@@ -540,6 +549,10 @@
         "organization": {
           "kind": "text",
           "required": true
+        },
+        "accuracy": {
+          "kind": "enum",
+          "required": false
         }
       },
       "entity:company": {

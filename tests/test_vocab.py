@@ -289,7 +289,8 @@ def _shipped():
 def test_code_facet_schema_declares_every_vocabulary_as_an_enum() -> None:
     for node_type, group in vocab.NODE_FACET_SCHEMA.items():
         enums = {k for k, spec in group.items() if spec.kind == "enum"}
-        assert enums == set(vocab.NODE_FACET_VOCABS[node_type]), node_type
+        # `accuracy` has a vocabulary, but only the registry's `entity:person` layer declares it.
+        assert enums == set(vocab.NODE_FACET_VOCABS[node_type]) - {"accuracy"}, node_type
     # `confidence` has a vocabulary, but only the registry's BUY relation layer declares it.
     assert {k for k, s in vocab.EDGE_FACET_SCHEMA.items() if s.kind == "enum"} == set(vocab.EDGE_FACET_VOCABS) - {"confidence"}
     for group in [*vocab.NODE_FACET_SCHEMA.values(), vocab.EDGE_FACET_SCHEMA]:
@@ -306,8 +307,11 @@ def test_shipped_registry_declares_the_initial_required_sets_and_kinds() -> None
     assert all(
         spec == {"kind": "text", "required": True}
         for layer in ("entity:person", "entity:company")
-        for spec in reg.facet_schema["node"][layer].values()
+        for key, spec in reg.facet_schema["node"][layer].items()
+        if (layer, key) != ("entity:person", "accuracy")
     )
+    # A person's accuracy is our optional hand-set rating (docs/proposals/author-accuracy.md).
+    assert reg.facet_schema["node"]["entity:person"]["accuracy"] == {"kind": "enum", "required": False}
     assert reg.metadata_max_length == {"name": 200, "summary": 1000}
     assert {nt: reg.required_facets(nt) for nt in ("entity", "event", "view", "theme")} == {
         "entity": {"entity_type"},

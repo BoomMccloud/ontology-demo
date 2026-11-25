@@ -25,7 +25,7 @@ from stock_ontology.models import (
     facets_list_to_dict,
     normalize_sentiment,
 )
-from stock_ontology.vocab import ENTITY_TYPE, STAGE
+from stock_ontology.vocab import ACCURACY, ENTITY_TYPE, STAGE
 
 # Most recently updated entities and themes listed in the extraction catalog (each type),
 # in addition to every entity/theme the note names.
@@ -564,6 +564,8 @@ class IngestionPipeline:
         # 1. Resolve canonical entities & themes.
         for ent in extraction.entities:
             ent_facets = facets_list_to_dict(ent.facets)
+            # Accuracy is our hand-set view of a person; extraction never sets or changes it.
+            ent_facets.pop(ACCURACY.group, None)
             # A facet-list `entity_type` still wins over the field, but only as a member.
             ent_facets["entity_type"] = ENTITY_TYPE.coerce(ent_facets.get("entity_type")) or self._required_subtype(
                 ent, "entity_type"
@@ -718,6 +720,25 @@ class IngestionPipeline:
 
         return nodes_written, edges_written, entity_ids
 
+    def _with_rumor_authors(self, view: Node) -> Node:
+        """For synthesis only (never stored): a rumor with each person author's accuracy, or `unrated`."""
+        if view.facets.get("view_type") != "rumor":
+            return view
+        authors = [
+            {
+                "name": item["neighbor"]["name"],
+                "accuracy": ACCURACY.coerce(item["neighbor"]["facets"].get(ACCURACY.group)) or "unrated",
+            }
+            for item in self.db.get_incident_edges(view.id)
+            if item["relation"] == "AUTHORED_BY"
+            and item["direction"] == "outgoing"
+            and item["neighbor"]["node_type"] == "entity"
+            and item["neighbor"]["facets"].get("entity_type") == "person"
+        ]
+        if not authors:
+            return view
+        return view.model_copy(update={"facets": {**view.facets, "authors": authors}})
+
     def _rebuild_company_consensus(self, company_id: str) -> bool:
         """Synthesize from an evidence snapshot outside any write transaction, then publish it only
         if the company's refresh revision is unchanged. Raises StaleConsensusError otherwise."""
@@ -738,7 +759,7 @@ class IngestionPipeline:
 
         overview = self.db.get_entity_overview(company_id)
         event_nodes = self.db.get_nodes([item["id"] for item in overview["events"]])
-        view_nodes = self.db.get_nodes([item["id"] for item in overview["views"]])
+        view_nodes = [self._with_rumor_authors(v) for v in self.db.get_nodes([item["id"] for item in overview["views"]])]
         theme_nodes = self.db.get_nodes([item["id"] for item in overview["themes"]])
         prior = self.db.get_entity_consensus(company_id)
 

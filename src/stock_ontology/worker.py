@@ -537,6 +537,8 @@ class Worker:
                     db.upsert_node(previous.model_copy(update={
                         key: person[key] for key in ("name", "aliases", "facets")
                     }))
+                    # An accuracy change reweighs every rumor by this person, not only this note's.
+                    affected.update(person.get("rumor_company_ids", ()))
                 for update in fresh["edges"]:
                     before, values = update["before"], update["after"]
                     if before:

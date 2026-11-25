@@ -213,8 +213,19 @@ STAGE = Vocabulary(
     fallback="accelerating",
 )
 
+ACCURACY = Vocabulary(
+    "accuracy",
+    Conviction,
+    {
+        "high": "Our view: the person's claims usually prove accurate.",
+        "medium": "Our view: the person's claims are sometimes accurate.",
+        "low": "Our view: the person's claims often prove inaccurate.",
+    },
+)
+"""A person's accuracy as we judge it. Set by hand in the app, never by extraction."""
+
 NODE_FACET_VOCABS: dict[str, dict[str, Vocabulary]] = {
-    "entity": {"entity_type": ENTITY_TYPE},
+    "entity": {"entity_type": ENTITY_TYPE, "accuracy": ACCURACY},
     "event": {"event_type": EVENT_TYPE, "status": EVENT_STATUS, "sentiment": SENTIMENT},
     "view": {
         "view_type": VIEW_TYPE,
@@ -259,6 +270,7 @@ ALL_VOCABS: tuple[Vocabulary, ...] = (
     SUPPORT_STRENGTH,
     CONVICTION,
     STAGE,
+    ACCURACY,
 )
 
 # Facet holding each node type's subtype.
