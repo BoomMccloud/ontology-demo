@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>OntoLog · Mobile prototype</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #101211;
+    --panel: #171a18;
+    --raised: #1c201d;
+    --line: #303630;
+    --text: #eff1ec;
+    --muted: #a3ada4;
+    --subtle: #8d998f;
+    --mint: #c6f3af;
+    --green: #a0d7a8;
+    --violet: #c8a7fc;
+    --blue: #a7c9ff;
+    --amber: #efc685;
+    --radius: 14px;
+    --nav-height: 65px;
+    --nav-offset: calc(var(--nav-height) + env(safe-area-inset-bottom));
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    scroll-padding: 85px 0 calc(var(--nav-offset) + 16px);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100dvh; background: var(--bg); color: var(--text); }
+  button, textarea, input { font: inherit; }
+  button { cursor: pointer; color: inherit; }
+  :focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
+  button:disabled { cursor: not-allowed; opacity: .5; }
+  p, h1, h2, h3, blockquote { margin: 0; }
+  a { color: var(--mint); }
+  .topbar { position: sticky; z-index: 5; top: 0; border-bottom: 1px solid var(--line); background: var(--bg); }
+  .top-inner, .workspace {
+    width: min(1120px, calc(100% - 80px));
+    margin-inline: auto;
+  }
+  .top-inner { height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .top-leading { display: flex; align-items: center; gap: 18px; min-width: 0; }
+  .brand { display: flex; align-items: center; gap: 10px; border: 0; padding: 0; background: none; font-size: 1.25rem; font-weight: 700; letter-spacing: -.055em; }
+  .brand-mark { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 50%; border: 1px solid #56614f; color: var(--mint); font-size: 1rem; }
+  .prototype-controls { display: flex; flex-shrink: 0; align-items: center; gap: 13px; }
+  .prototype-label { color: var(--subtle); font-size: .8125rem; }
+  #scenario { white-space: nowrap; }
+  .workspace { position: relative; padding: 36px 0 128px; }
+  .workspace.chat-open .hero > .button { display: none; }
+  .top-back { display: inline-flex; align-items: center; gap: 8px; min-width: 0; min-height: 44px; color: var(--muted); }
+  .top-back[hidden] { display: none; }
+  .back-mark { display: inline-block; flex: none; width: 8px; height: 8px; margin-left: 2px; transform: rotate(-45deg); border-top: 1.5px solid currentColor; border-left: 1.5px solid currentColor; }
+  .back-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .plain { background: none; padding: 0; border: 0; font-size: .875rem; }
+  .plain:hover { color: var(--mint); }
+  .button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--raised); padding: 9px 13px; font-size: .875rem; font-weight: 620; text-decoration: none; }
+  .button:hover { border-color: var(--muted); }
+  .primary { background: var(--mint); color: #172116; border-color: var(--mint); }
+  .primary:hover { background: #ddfbd0; border-color: #ddfbd0; }
+  .hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 32px; }
+  .entity-heading { display: flex; align-items: center; gap: 15px; }
+  .eyebrow { display: block; color: var(--subtle); font-size: .75rem; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; }
+  .node-icon { display: inline-grid; flex-shrink: 0; place-items: center; width: 42px; height: 42px; border-radius: 11px; font-size: 1.2rem; font-weight: 650; }
+  .node-icon.thesis { color: var(--violet); background: #a855f722; border: 1px solid #a855f743; }
+  .node-icon.company { color: var(--blue); background: #3b82f622; border: 1px solid #3b82f643; }
+  .entity-heading .node-icon { width: 54px; height: 54px; font-size: 1.5rem; }
+  h1 { font-size: clamp(2.25rem, 5vw, 3.25rem); line-height: 1.04; letter-spacing: -.065em; font-weight: 650; overflow-wrap: anywhere; }
+  .subtitle { margin-top: 12px; color: var(--muted); }
+  .detail-grid { display: grid; grid-template-columns: 1.4fr 1fr; align-items: start; gap: 20px; }
+  .stack { display: grid; gap: 14px; }
+  .panel { padding: 21px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+  .panel h2 { font-size: 1.05rem; letter-spacing: -.02em; }
+  .panel-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
+  .tag { display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; padding: 3px 8px; font-size: .75rem; font-weight: 650; white-space: nowrap; }
+  .tag.steady { color: var(--green); background: #a0d7a815; }
+  .tag.shift { color: var(--amber); background: #efc68517; }
+  .tag.neutral { color: var(--muted); background: #a3ada419; }
+  .panel .secondary { margin-top: 8px; }
+  .secondary { color: var(--muted); font-size: .875rem; }
+  .belief { font-size: 1.2rem; font-weight: 570; letter-spacing: -.024em; }
+  .diff { margin-block: 8px 14px; display: grid; gap: 7px; }
+  .diff div { padding-left: 10px; border-left: 2px solid var(--line); }
+  .diff .new-state { border-color: #b2905e; }
+  .diff small { display: block; font-size: .75rem; color: var(--subtle); }
+  .diff s { color: #d0a39e; }
+  .source-links { display: flex; flex-wrap: wrap; gap: 6px; }
+  .source-link { border: 1px solid var(--line); background: transparent; color: #c8d1c6; border-radius: 7px; padding: 5px 8px; font-size: .8125rem; text-align: left; }
+  .source-link:hover { border-color: var(--green); color: var(--mint); }
+  .list { display: grid; }
+  .row { width: 100%; border: 0; background: none; display: flex; align-items: center; gap: 12px; padding: 13px 0; text-align: left; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row:hover strong { color: var(--mint); }
+  .row-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .row-copy strong { display: block; font-weight: 620; }
+  .chevron { width: 7px; height: 7px; border-top: 1.5px solid var(--muted); border-right: 1.5px solid var(--muted); transform: rotate(45deg); flex-shrink: 0; margin-right: 4px; }
+  .toast { margin-bottom: 12px; color: var(--green); font-size: .875rem; }
+  .empty { display: grid; gap: 12px; justify-items: start; max-width: 580px; }
+  .empty p { color: var(--muted); }
+  .loading-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--mint); margin-right: 8px; animation: pulse 1s ease-in-out infinite alternate; }
+  @keyframes pulse { to { opacity: .35; } }
+  .reading { max-width: 650px; }
+  blockquote { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 14px; border-left: 2px solid #56694f; }
+  .nav { position: fixed; z-index: 4; inset: auto 0 0; padding-bottom: env(safe-area-inset-bottom); border-top: 1px solid var(--line); background: #131614; }
+  .nav-inner { display: grid; grid-template-columns: 1fr 72px 1fr; align-items: center; width: min(410px, 100%); height: var(--nav-height); margin: auto; }
+  .nav-item { display: grid; height: 100%; }
+  .nav-button { height: 100%; border: 0; background: none; color: var(--muted); font-size: .875rem; }
+  .nav-button[hidden] { display: none; }
+  .nav-button[aria-current="page"] { color: var(--text); font-weight: 680; }
+  .nav-button[aria-expanded="true"] { color: var(--mint); font-weight: 680; }
+  .nav-button:hover { color: var(--text); }
+  .nav-icon { margin-right: 6px; font-size: 1.05rem; }
+  .capture-trigger { justify-self: center; width: 46px; height: 46px; margin-top: -14px; padding: 0; border: 0; border-radius: 13px; background: var(--mint); color: #172116; font-size: 1.65rem; line-height: 1; box-shadow: 0 4px 15px #0005; }
+  .capture-trigger:hover { background: #ddfbd0; }
+  .chat { display: flex; flex-direction: column; position: fixed; z-index: 3; width: min(465px, 43vw); top: 112px; right: max(40px, calc((100vw - 1120px) / 2)); bottom: 91px; max-height: 664px; min-height: 280px; border: 1px solid #414b41; border-radius: 18px; overflow: hidden; background: #191d1a; box-shadow: 0 19px 66px #0009, 0 3px 14px #0006; }
+  .chat[hidden] { display: none; }
+  .chat-header { display: flex; align-items: center; gap: 10px; padding: 14px 15px; border-bottom: 1px solid var(--line); background: #1d231e; }
+  .chat-symbol { display: grid; flex: none; place-items: center; width: 35px; height: 35px; border-radius: 9px; color: var(--mint); background: #c6f3af17; font-size: 1.18rem; }
+  .chat-heading { flex: 1; min-width: 0; }
+  .chat-heading h2 { font-size: 1rem; letter-spacing: -.02em; }
+  .chat-context { color: var(--muted); font-size: .8125rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .icon-button { flex: none; background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; width: 34px; height: 34px; padding: 0; font-size: 1.12rem; line-height: 1; }
+  .icon-button:hover { color: var(--text); border-color: var(--subtle); }
+  .chat .expand { display: none; }
+  .chat-log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 16px; padding: 17px 16px; overscroll-behavior: contain; }
+  .message { max-width: 100%; overflow-wrap: anywhere; }
+  .message.user { align-self: flex-end; max-width: 86%; padding: 9px 12px; background: #2a3429; border: 1px solid #3a4938; border-radius: 11px 11px 3px 11px; color: #e2eedc; }
+  .message p { white-space: pre-wrap; }
+  .message.assistant .author { margin-bottom: 5px; color: var(--green); font-size: .75rem; font-weight: 700; }
+  .message.assistant .source-links { margin-top: 10px; }
+  .chat-footer { display: grid; gap: 10px; border-top: 1px solid var(--line); padding: 12px 14px 14px; background: #1b201c; }
+  .prompts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .prompt { border: 1px solid var(--line); background: transparent; color: #d3dbd1; border-radius: 20px; padding: 5px 9px; font-size: .8125rem; }
+  .prompt:hover { border-color: var(--green); color: var(--mint); }
+  .composer, .sheet-actions { display: flex; align-items: center; gap: 8px; }
+  .composer input, textarea { min-width: 0; width: 100%; border: 1px solid #424c42; border-radius: 8px; background: #131714; color: var(--text); padding: 9px 10px; }
+  .composer input { flex: 1; }
+  .composer input::placeholder, textarea::placeholder { color: #a0ada0; }
+  .composer input:focus, textarea:focus { outline-offset: 1px; }
+  .draft { display: grid; gap: 8px; }
+  .draft textarea { min-height: 104px; resize: vertical; }
+  .draft .sheet-actions { justify-content: flex-end; }
+  .sheet { width: min(540px, calc(100% - 24px)); max-height: calc(100dvh - 24px); padding: 19px; color: var(--text); background: var(--panel); border: 1px solid #414b41; border-radius: 16px; }
+  .sheet::backdrop { background: #0009; }
+  .sheet form { display: grid; gap: 13px; }
+  .sheet textarea { min-height: 145px; resize: vertical; }
+  .sheet-actions { flex-wrap: wrap; }
+  .sheet .sheet-actions .primary { margin-left: auto; }
+  .sheet input[type="file"] { max-width: 100%; font-size: .875rem; color: var(--muted); }
+  .sheet input[type="file"]::file-selector-button { color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; margin-right: 8px; }
+  .sheet-error { color: var(--amber); font-size: .875rem; }
+  @media (max-width: 920px) and (min-width: 701px) {
+    .top-inner, .workspace { width: calc(100% - 48px); }
+    .chat { right: 24px; width: 45vw; }
+    .detail-grid { grid-template-columns: 1.15fr 1fr; }
+  }
+  @media (max-width: 700px) {
+    .top-inner, .workspace { width: calc(100% - 32px); }
+    .top-inner { height: 57px; }
+    .top-leading:has(.top-back:not([hidden])) .brand { display: none; }
+    .workspace { padding-top: 20px; }
+    .workspace.chat-open { padding-bottom: calc(min(57dvh, 535px) + var(--nav-offset) + 24px); }
+    .hero { display: block; margin-bottom: 21px; }
+    .hero > .button { margin-top: 13px; }
+    .entity-heading .node-icon { width: 42px; height: 42px; font-size: 1.18rem; }
+    .entity-heading { gap: 10px; }
+    .detail-grid { grid-template-columns: 1fr; gap: 13px; }
+    .panel { padding: 15px; }
+    .chat { width: 100%; min-height: 0; height: min(57dvh, 535px); max-height: calc(100dvh - var(--nav-offset) - 57px); top: auto; right: 0; bottom: var(--nav-offset); border-radius: 17px 17px 0 0; }
+    .chat.expanded { height: 88dvh; }
+    .chat .expand { display: block; }
+    .chat-header { padding: 10px 12px; }
+    .chat-log { padding: 12px; }
+    .sheet { margin: auto auto 0; width: 100%; border-radius: 16px 16px 0 0; padding-bottom: max(19px, env(safe-area-inset-bottom)); }
+  }
+  @media (max-width: 355px) {
+    .composer { flex-wrap: wrap; }
+    .composer input { flex-basis: 70%; }
+  }
+  @media (max-width: 420px) {
+    .prototype-label { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="top-inner">
+    <div class="top-leading">
+      <button class="brand" type="button" data-action="watchlist"><span class="brand-mark" aria-hidden="true">✳</span>OntoLog</button>
+      <button class="plain top-back" id="back" type="button" data-action="back" hidden><span class="back-mark" aria-hidden="true"></span><span class="back-label" id="back-label"></span></button>
+    </div>
+    <div class="prototype-controls">
+      <span class="prototype-label">Demo workspace</span>
+      <button class="button" id="scenario" type="button" data-action="scenario">Start empty</button>
+    </div>
+  </div>
+</header>
+<main class="workspace" id="workspace"></main>
+<nav class="nav" id="navigation" aria-label="Main navigation">
+  <div class="nav-inner">
+    <div class="nav-item">
+      <button class="nav-button" id="watchlist-tab" type="button" data-action="watchlist"><span class="nav-icon" aria-hidden="true">≡</span>Watchlist</button>
+      <button class="nav-button" id="sources-tab" type="button" data-action="entity-sources" aria-controls="entity-sources" hidden><span class="nav-icon" aria-hidden="true">▤</span>Sources</button>
+    </div>
+    <button class="capture-trigger" type="button" data-action="capture" aria-label="Capture research">+</button>
+    <div class="nav-item">
+      <button class="nav-button" id="ontology-tab" type="button" data-action="ontology"><span class="nav-icon" aria-hidden="true">⌘</span>Ontology</button>
+      <button class="nav-button" id="chat-tab" type="button" data-action="entity-chat" aria-controls="chat" aria-expanded="false" hidden><span class="nav-icon" aria-hidden="true">✦</span>Chat</button>
+    </div>
+  </div>
+</nav>
+<section class="chat" id="chat" role="dialog" aria-modal="false" aria-labelledby="chat-title" hidden>
+  <header class="chat-header">
+    <span class="chat-symbol" aria-hidden="true">✦</span>
+    <div class="chat-heading">
+      <h2 id="chat-title">Research chat</h2>
+      <div class="chat-context" id="chat-context"></div>
+    </div>
+    <button class="icon-button expand" type="button" data-action="expand" aria-label="Expand chat" aria-expanded="false">⤢</button>
+    <button class="icon-button" type="button" data-action="close-chat" aria-label="Minimize chat">−</button>
+  </header>
+  <div class="chat-log" id="chat-log" role="log" aria-label="Conversation"></div>
+  <div class="chat-footer" id="chat-footer"></div>
+</section>
+<dialog class="sheet" id="capture" aria-labelledby="capture-title">
+  <form id="capture-form">
+    <div class="panel-top">
+      <h2 id="capture-title">Capture research</h2>
+      <button class="icon-button" type="button" data-action="close-capture" aria-label="Close capture">×</button>
+    </div>
+    <label for="capture-text" id="capture-label">Note or link</label>
+    <textarea id="capture-text" placeholder="Paste a link or write a note…"></textarea>
+    <input id="capture-file" type="file" aria-label="Attach a file">
+    <div class="sheet-actions">
+      <button class="prompt" type="button" data-action="sample-note">Use sample note</button>
+    </div>
+    <p class="sheet-error" id="capture-error" aria-live="polite"></p>
+    <div class="sheet-actions">
+      <button class="button" name="intent" value="research">Research</button>
+      <button class="button primary" name="intent" value="process">Process source</button>
+    </div>
+  </form>
+</dialog>
+<script>
+  const sampleNote = "A supplier says advanced packaging costs for Groq’s SRAM-heavy accelerators may stay elevated through the next production cycle. Latency in the latest inference tests remains strong.";
+  const sampleSources = {
+    "supplier": {
+      id: "supplier", title: "Supplier channel check", date: "Oct 21", kind: "Meeting note",
+      text: "Packaging quotes still include a premium for the next production cycle. We haven’t seen a clear path to the prior cost target yet.",
+      entities: ["sram", "groq"], status: "Processed",
+    },
+    "benchmark": {
+      id: "benchmark", title: "Inference benchmark review", date: "Oct 16", kind: "Research note",
+      text: "The on-chip SRAM design shows lower latency in the tested inference workload. The results cover a fixed model size and do not establish performance across workloads.",
+      entities: ["sram", "groq"], status: "Processed",
+    },
+    "company-note": {
+      id: "company-note", title: "Groq architecture notes", date: "Oct 14", kind: "Research note",
+      text: "Groq’s architecture emphasizes low-latency inference. The current notes provide no first-party targets for gross margin or packaging cost.",
+      entities: ["groq"], status: "Processed",
+    },
+  };
+  const sampleItems = {
+    sram: {
+      id: "sram", title: "SRAM Latency", type: "Thesis", description: "On-chip memory and inference performance",
+      belief: "On-chip SRAM can sustain a latency advantage for inference.",
+      context: "The existing benchmark covers one workload. Packaging cost affects the economics of deploying the architecture.",
+      prior: "Packaging costs ease as production scales.",
+      change: "Supplier quotes indicate a premium through the next production cycle.",
+      summary: "Packaging costs challenge the thesis economics",
+      sources: ["supplier", "benchmark"], related: "groq", marker: "shift",
+    },
+    groq: {
+      id: "groq", title: "Groq", type: "Company", description: "AI inference infrastructure",
+      belief: "Low-latency inference is a potential point of differentiation.",
+      context: "The benchmark covers a fixed model size. The effect on gross margin remains open.",
+      prior: "Production scale could improve unit costs.",
+      change: "The latest supplier check suggests packaging costs remain elevated.",
+      summary: "Supplier check flags persistent packaging costs",
+      sources: ["supplier", "benchmark", "company-note"], related: "sram", marker: "shift",
+    },
+  };
+  const promptText = {
+    verify: "What evidence supports the claim?",
+    refute: "What would refute the claim?",
+  };
+  const workspace = document.querySelector("#workspace");
+  const navigation = document.querySelector("#navigation");
+  const back = document.querySelector("#back");
+  const watchlistTab = document.querySelector("#watchlist-tab");
+  const ontologyTab = document.querySelector("#ontology-tab");
+  const sourcesTab = document.querySelector("#sources-tab");
+  const chatTab = document.querySelector("#chat-tab");
+  const chat = document.querySelector("#chat");
+  const chatLog = document.querySelector("#chat-log");
+  const chatFooter = document.querySelector("#chat-footer");
+  const capture = document.querySelector("#capture");
+  const captureForm = document.querySelector("#capture-form");
+  const captureText = document.querySelector("#capture-text");
+  const captureFile = document.querySelector("#capture-file");
+  const captureError = document.querySelector("#capture-error");
+
+  let entities, sources, view, screenHistory, sessions, recentContexts, activeChat, cold, notice, sequence, generation = 0;
+  let captureEntity = null;
+
+  function escapeHTML(value) {
+    return String(value ?? "").replace(/[&<>"']/g, character => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    })[character]);
+  }
+
+  function reset(startEmpty) {
+    generation += 1;
+    entities = startEmpty ? {} : structuredClone(sampleItems);
+    sources = startEmpty ? {} : structuredClone(sampleSources);
+    sessions = new Map();
+    recentContexts = new Map();
+    activeChat = null;
+    cold = startEmpty;
+    notice = "";
+    sequence = 0;
+    view = startEmpty ? { screen: "watchlist" } : { screen: "entity", id: "sram" };
+    screenHistory = startEmpty ? [] : [{ screen: "watchlist", scrollY: 0 }];
+    render();
+    if (!startEmpty) {
+      openChat({ entityId: "sram" }, { seed: true, focus: false });
+    }
+  }
+
+  function actionButton(label, action, extra = "", classes = "button") {
+    return `<button class="${classes}" type="button" data-action="${action}" ${extra}>${label}</button>`;
+  }
+
+  function sourceLink(id) {
+    const source = sources[id];
+    return source ? actionButton(escapeHTML(source.title), "source", `data-id="${escapeHTML(id)}"`, "source-link") : "";
+  }
+
+  function nodeIcon(entity) {
+    const company = entity.type === "Company";
+    return `<span class="node-icon ${company ? "company" : "thesis"}" aria-hidden="true">${company ? "▤" : "◎"}</span>`;
+  }
+
+  function entityRow(entity) {
+    const summary = entity.summary || entity.description;
+    const flag = entity.marker === "shift" ? '<span class="tag shift">Tension</span>' : "";
+    return actionButton(
+      `${nodeIcon(entity)}<span class="row-copy"><strong>${escapeHTML(entity.title)}</strong><span class="secondary">${escapeHTML(summary)}</span></span>${flag}<span class="chevron" aria-hidden="true"></span>`,
+      "entity", `data-id="${escapeHTML(entity.id)}"`, "row"
+    );
+  }
+
+  function sourceRow(source) {
+    return actionButton(
+      `<span class="row-copy"><strong>${escapeHTML(source.title)}</strong><span class="secondary">${escapeHTML(source.kind)} · ${escapeHTML(source.date)}</span></span><span class="chevron" aria-hidden="true"></span>`,
+      "source", `data-id="${escapeHTML(source.id)}"`, "row"
+    );
+  }
+
+  function renderWatchlist() {
+    const items = Object.values(entities).sort((a, b) => (b.updated || 0) - (a.updated || 0));
+    const inbox = Object.values(sources).reverse().filter(source => !Object.hasOwn(sampleSources, source.id));
+    return `
+      <div class="hero"><div><h1>Watchlist</h1><p class="subtitle">${items.length} tracked ${items.length === 1 ? "item" : "items"}</p></div></div>
+      <div class="stack">
+        ${items.length ? `<section class="panel list" aria-label="Tracked items">${items.map(entityRow).join("")}</section>` :
+          `<section class="panel empty"><h2>Add your first source</h2><p>Paste a link, write a note, or attach a file to start building your Watchlist.</p>${actionButton("Capture research", "capture", "", "button primary")}</section>`}
+        ${inbox.length ? `<section class="panel"><div class="panel-top"><h2>Captured sources</h2></div>
+          ${inbox.map(source => `<div class="row"><span class="row-copy">${sourceLink(source.id)}</span>
+            <span class="secondary">${source.status === "Processing" ? '<span class="loading-dot" aria-hidden="true"></span>' : ""}${source.status}</span></div>`).join("")}
+        </section>` : ""}
+      </div>`;
+  }
+
+  function renderEntity(entity) {
+    const evidence = entity.sources.map(id => sources[id]).filter(Boolean);
+    const latestSource = entity.sources[0];
+    const change = entity.change ? `<article class="panel">
+      <div class="panel-top"><h2>Latest change</h2><span class="tag ${entity.marker === "shift" ? "shift" : "neutral"}">${entity.marker === "shift" ? "◆ Tension" : "New evidence"}</span></div>
+      <div class="diff">
+        ${entity.prior ? `<div><small>Before</small><s>${escapeHTML(entity.prior)}</s></div>` : ""}
+        <div class="new-state"><small>New evidence</small>${escapeHTML(entity.change)}</div>
+      </div>
+      <div class="source-links">${sourceLink(latestSource)}</div>
+    </article>` : "";
+    return `
+      <div class="hero">
+        <div>
+          <div class="entity-heading">
+            ${nodeIcon(entity)}
+            <div><span class="eyebrow">${entity.type}</span><h1>${escapeHTML(entity.title)}</h1></div>
+          </div>
+          <p class="subtitle">${escapeHTML(entity.description)}</p>
+        </div>
+      </div>
+      <div class="detail-grid">
+        <div class="stack">
+          <article class="panel">
+            <div class="panel-top"><h2>Current belief</h2><span class="tag steady">Tracked</span></div>
+            <p class="belief">${escapeHTML(entity.belief)}</p>
+            ${entity.context ? `<p class="secondary">${escapeHTML(entity.context)}</p>` : ""}
+          </article>
+          ${change}
+          ${entity.claims?.length ? `<article class="panel"><div class="panel-top"><h2>Saved claims</h2></div><div class="list">${entity.claims.map(id => sourceRow(sources[id])).join("")}</div></article>` : ""}
+          <section class="panel" id="entity-sources" aria-labelledby="sources-heading">
+            <div class="panel-top"><h2 id="sources-heading" tabindex="-1">Sources</h2><span class="secondary">${evidence.length} ${evidence.length === 1 ? "source" : "sources"}</span></div>
+            ${evidence.length ? `<div class="list">${evidence.map(sourceRow).join("")}</div>` : '<p class="secondary">Sources appear here after capture is processed.</p>'}
+          </section>
+        </div>
+        ${entity.related && entities[entity.related] ? `<aside class="panel"><h2>Related research</h2>${entityRow(entities[entity.related])}</aside>` : ""}
+      </div>`;
+  }
+
+  function renderSource(source) {
+    const linked = source.entities.map(id => entities[id]).filter(Boolean);
+    return `
+      <div class="hero">
+        <div><span class="eyebrow">${escapeHTML(source.kind)}</span><h1>${escapeHTML(source.title)}</h1><p class="subtitle">${escapeHTML(source.date)} · ${escapeHTML(source.status)}</p></div>
+        ${actionButton("✦ Research source", "research-source")}
+      </div>
+      <div class="stack reading">
+        <article class="panel"><div class="panel-top"><h2>Source text</h2></div><blockquote>${escapeHTML(source.text)}</blockquote>
+          ${source.file ? `<p class="secondary">Attachment · ${escapeHTML(source.file)}</p>` : ""}
+        </article>
+        ${source.citations?.length ? `<article class="panel"><div class="panel-top"><h2>Cited evidence</h2></div><div class="source-links">${source.citations.map(sourceLink).join("")}</div></article>` : ""}
+        ${linked.length ? `<article class="panel"><h2>Linked research</h2>${linked.map(entityRow).join("")}</article>` : ""}
+        ${source.status === "Ready to process" ? `<div>${actionButton("Process source", "process-source", "", "button primary")}</div>` : ""}
+      </div>`;
+  }
+
+  function renderOntology() {
+    const pairs = Object.values(entities).filter(entity => entity.type === "Thesis" && entities[entity.related]);
+    return `<div class="hero"><div><h1>Ontology</h1><p class="subtitle">Extracted relationships</p></div></div>
+      <section class="panel reading list" aria-label="Extracted relationships">${pairs.length ?
+        pairs.map(thesis => `<div class="stack"><div class="secondary">Company · connected to · Thesis</div>${entityRow(entities[thesis.related])}${entityRow(thesis)}</div>`).join("") :
+        '<p class="secondary">Relationships appear here after a source is processed.</p>'}
+      </section>`;
+  }
+
+  function renderNavigation() {
+    const previous = screenHistory.at(-1);
+    back.hidden = !previous;
+    if (previous) {
+      const title = {
+        watchlist: "Watchlist",
+        ontology: "Ontology",
+        entity: entities[previous.id]?.title,
+        source: sources[previous.id]?.title,
+      }[previous.screen];
+      document.querySelector("#back-label").textContent = title;
+      back.setAttribute("aria-label", `Back to ${title}`);
+    }
+    const contextual = view.screen === "entity";
+    navigation.setAttribute("aria-label", contextual ? "Research navigation" : "Main navigation");
+    sourcesTab.hidden = chatTab.hidden = !contextual;
+    watchlistTab.hidden = ontologyTab.hidden = contextual;
+    watchlistTab.setAttribute("aria-current", view.screen === "watchlist" ? "page" : "false");
+    ontologyTab.setAttribute("aria-current", view.screen === "ontology" ? "page" : "false");
+  }
+
+  function render({ refreshChat = true } = {}) {
+    document.querySelector("#scenario").textContent = cold ? "Load sample" : "Start empty";
+    renderNavigation();
+    const screen = {
+      watchlist: renderWatchlist,
+      entity: () => renderEntity(entities[view.id]),
+      source: () => renderSource(sources[view.id]),
+      ontology: renderOntology,
+    }[view.screen];
+    workspace.innerHTML = `${notice ? `<p class="toast" role="status">${escapeHTML(notice)}</p>` : ""}${screen()}`;
+    if (refreshChat) renderChat();
+  }
+
+  function showView(destination) {
+    view = destination;
+    activeChat = null;
+    notice = "";
+    render();
+    const heading = workspace.querySelector("h1");
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+    window.scrollTo(0, destination.scrollY || 0);
+  }
+
+  function navigate(screen, id, parent) {
+    if (view.screen === screen && view.id === id) return;
+    screenHistory.push({ ...view, scrollY: window.scrollY });
+    showView({ screen, id, parent });
+  }
+
+  function navigateRoot(screen) {
+    if (view.screen === screen && !screenHistory.length) return;
+    screenHistory = [];
+    showView({ screen });
+  }
+
+  function contextName(session) {
+    const entity = entities[session.entityId];
+    const source = sources[session.sourceId];
+    return entity ? `${entity.type} · ${entity.title}${source ? ` · ${source.title}` : ""}` : `Source · ${source.title}`;
+  }
+
+  function contextEvidence(session) {
+    const entity = entities[session.entityId];
+    return [...new Set([session.sourceId, ...(entity?.sources || [])].filter(id => sources[id]))];
+  }
+
+  function responseFor(session, question) {
+    const entity = entities[session.entityId];
+    const source = sources[session.sourceId];
+    const evidence = contextEvidence(session);
+    const refute = /refut|falsif|counter|challeng|disprov/i.test(question);
+    const verify = /verif|support|confirm|evidence/i.test(question);
+    let reply;
+    if (source && !Object.hasOwn(sampleSources, source.id)) {
+      const scope = entity ? `The current ${entity.type.toLowerCase()} context is ${entity.title}. ` : "";
+      reply = refute
+        ? `${scope}Look for an independent source that contradicts the note. Write down what observation would change your mind before treating the claim as settled.`
+        : `${scope}The attached source is the starting point. Identify its specific claim and check whether another source establishes the same fact independently.`;
+    } else if (entity?.id === "sram") {
+      reply = refute
+        ? "A comparable workload that matches the latency result with less on-chip memory would weaken the SRAM claim. Persistent packaging premiums would also weaken the case for broad adoption."
+        : verify
+          ? "The benchmark supports a latency advantage on the tested workload. The supplier check raises a separate question about deployment economics. We’d need results across workload sizes and fresh quotes to extend the claim."
+          : "The supplier expects a premium next cycle. The benchmark still shows a latency edge in one workload. Revisit the adoption claim when fresh quotes arrive.";
+    } else if (entity?.id === "groq") {
+      reply = refute
+        ? "A matched competitor benchmark would test Groq’s latency edge. To test the margin thesis, look for production quotes alongside a first-party cost target."
+        : "The benchmark supports Groq’s latency advantage in one test. The supplier check flags higher packaging costs, and the architecture notes give us no first-party margin target. Keep the performance and margin claims separate.";
+    } else {
+      reply = "Trace the claim back to the source and identify an independent observation that could confirm or challenge it.";
+    }
+    return { role: "assistant", text: reply, citations: evidence.slice(0, 3) };
+  }
+
+  function viewContextKey() {
+    return [view.screen, view.id, view.parent].join("/");
+  }
+
+  function openChat(context, options = {}) {
+    const key = `${context.entityId || ""}/${context.sourceId || ""}`;
+    if (!sessions.has(key)) {
+      const session = { ...context, messages: [], expanded: false, draft: null, question: "" };
+      if (options.seed) {
+        const question = "Is the packaging cost pressure temporary or structural?";
+        session.messages.push({ role: "user", text: question }, responseFor(session, question));
+      } else {
+        const entity = entities[session.entityId];
+        const aim = entity ? `the research on ${entity.title}` : "this source";
+        session.messages.push({ role: "assistant", text: `What would you like to verify or refute about ${aim}?`, citations: [] });
+      }
+      sessions.set(key, session);
+    }
+    activeChat = sessions.get(key);
+    recentContexts.set(viewContextKey(), context);
+    renderChat(!options.seed);
+    if (options.focus !== false) chat.querySelector("[data-action=close-chat]").focus({ preventScroll: true });
+  }
+
+  function renderChat(scrollToEnd = false) {
+    const session = activeChat;
+    chat.hidden = !session;
+    chatTab.setAttribute("aria-expanded", String(Boolean(session) && view.screen === "entity"));
+    workspace.classList.toggle("chat-open", Boolean(session));
+    if (!session) return;
+    document.querySelector("#chat-context").textContent = contextName(session);
+    chat.classList.toggle("expanded", session.expanded);
+    const expand = chat.querySelector(".expand");
+    expand.setAttribute("aria-expanded", String(session.expanded));
+    expand.setAttribute("aria-label", session.expanded ? "Reduce chat" : "Expand chat");
+    chatLog.innerHTML = session.messages.map(message => `
+      <div class="message ${message.role}">
+        ${message.role === "assistant" ? '<div class="author">OntoLog AI · simulated</div>' : ""}
+        <p>${escapeHTML(message.text)}</p>
+        ${message.citations?.length ? `<div class="source-links">${message.citations.map(sourceLink).join("")}</div>` : ""}
+      </div>`).join("");
+    chatFooter.innerHTML = session.draft !== null
+      ? `<form class="draft" id="draft-form">
+          <label for="claim">Review your claim</label>
+          <textarea id="claim" required>${escapeHTML(session.draft)}</textarea>
+          <div class="sheet-actions">
+            ${actionButton("Cancel", "cancel-draft")}
+            <button class="button primary">Save claim</button>
+          </div>
+        </form>`
+      : `<div class="prompts">
+          ${actionButton("Verify the claim", "verify", "", "prompt")}
+          ${actionButton("Find counterevidence", "refute", "", "prompt")}
+        </div>
+        <form class="composer" id="chat-form">
+          <input id="question" aria-label="Ask a research question" placeholder="Ask a question…" value="${escapeHTML(session.question)}" required>
+          <button class="button" type="submit">Send</button>
+          ${actionButton("Draft claim", "draft", "", "button primary")}
+        </form>`;
+    if (scrollToEnd) chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  function ask(question) {
+    if (!activeChat || !question.trim()) return;
+    const cleanQuestion = question.trim();
+    activeChat.question = "";
+    activeChat.messages.push({ role: "user", text: cleanQuestion }, responseFor(activeChat, cleanQuestion));
+    renderChat(true);
+    document.querySelector("#question").focus();
+  }
+
+  function draftClaim() {
+    const { entityId, sourceId } = activeChat;
+    if (entityId === "sram" && !sourceId) {
+      activeChat.draft = "On-chip SRAM retains a latency advantage in the tested workload. Packaging premiums through the next production cycle constrain the case for broad deployment. Revisit when fresh quotes and broader benchmarks are available.";
+    } else if (entityId === "groq" && !sourceId) {
+      activeChat.draft = "Groq shows a latency advantage on the tested workload. Its production margin remains uncertain pending first-party cost data and updated packaging quotes.";
+    } else {
+      activeChat.draft = "";
+    }
+    renderChat(true);
+    document.querySelector("#claim").focus();
+  }
+
+  function makeSource({ text, file = "", kind, linked = [], citations = [] }) {
+    const id = `note-${++sequence}`;
+    const line = text.split("\n").find(part => part.trim())?.trim() || file;
+    const isLink = /^https?:\/\/\S+$/.test(line);
+    let title = line.length > 46 ? `${line.slice(0, 45)}…` : line;
+    if (isLink) title = "Captured link";
+    if (text === sampleNote) title = "Supplier packaging update";
+    if (kind === "Research claim") title = "Research synthesis";
+    const date = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date());
+    const source = { id, title, text: text || file, file, kind, entities: linked, citations, date, status: "Ready to process" };
+    sources[id] = source;
+    return source;
+  }
+
+  function bootstrap(source) {
+    if (/\bgroq\b|\bsram\b/i.test(source.text)) {
+      for (const sample of Object.values(sampleItems)) {
+        if (!entities[sample.id]) entities[sample.id] = { ...structuredClone(sample), sources: [] };
+      }
+      return ["sram", "groq"];
+    }
+    return [];
+  }
+
+  function processSource(source) {
+    if (source.status !== "Ready to process") return;
+    source.status = "Processing";
+    notice = source.kind === "Research claim" ? "Claim saved. Updating the ontology…" : "Source queued. Updating the ontology…";
+    render();
+    const run = generation;
+    window.setTimeout(() => {
+      if (run !== generation) return;
+      source.status = "Processed";
+      source.entities = source.entities.length ? source.entities : bootstrap(source);
+      for (const id of source.entities) {
+        const entity = entities[id];
+        entity.sources = [source.id, ...entity.sources];
+        entity.updated = Number(source.id.slice(5));
+        if (source.kind === "Research claim") {
+          entity.claims = [source.id, ...(entity.claims || [])];
+        } else if (source.text === sampleNote) {
+          entity.prior = sampleItems[id].prior;
+          entity.change = "Packaging costs may stay elevated through the next production cycle.";
+          entity.summary = "New supplier note flags persistent packaging costs";
+          entity.marker = "shift";
+        } else {
+          entity.prior = "";
+          entity.change = `Source added · ${source.title}`;
+          entity.summary = "New source added";
+          entity.marker = "neutral";
+        }
+      }
+      notice = source.kind === "Research claim" ? "Research claim processed." : "Source processed.";
+      render({ refreshChat: false });
+    }, 900);
+  }
+
+  function showCapture() {
+    const parent = view.screen === "entity" ? view.id : activeChat?.entityId || view.parent;
+    captureEntity = entities[parent] ? parent : null;
+    captureForm.reset();
+    captureError.textContent = "";
+    document.querySelector("#capture-label").textContent = captureEntity ? `Note or link for ${entities[captureEntity].title}` : "Note or link";
+    capture.showModal();
+    captureText.focus();
+  }
+
+  captureForm.addEventListener("submit", event => {
+    event.preventDefault();
+    const text = captureText.value.trim();
+    const file = captureFile.files[0]?.name || "";
+    if (!text && !file) {
+      captureError.textContent = "Add a note, link, or file to continue.";
+      captureText.focus();
+      return;
+    }
+    const kind = file ? "File attachment" : /^https?:\/\//.test(text) ? "Web link" : "Captured note";
+    const source = makeSource({ text, file, kind, linked: captureEntity ? [captureEntity] : [] });
+    capture.close();
+    if (event.submitter?.value === "research") {
+      if (!captureEntity) navigate("source", source.id);
+      else if (view.screen !== "entity") navigate("entity", captureEntity);
+      openChat({ entityId: captureEntity, sourceId: source.id });
+    } else {
+      if (!captureEntity) navigateRoot("watchlist");
+      processSource(source);
+    }
+  });
+
+  document.addEventListener("input", event => {
+    if (!activeChat) return;
+    if (event.target.id === "question") activeChat.question = event.target.value;
+    if (event.target.id === "claim") activeChat.draft = event.target.value;
+  });
+
+  chat.addEventListener("submit", event => {
+    event.preventDefault();
+    if (!activeChat) return;
+    if (event.target.id === "chat-form") ask(document.querySelector("#question").value);
+    if (event.target.id === "draft-form") {
+      const text = document.querySelector("#claim").value.trim();
+      if (!text) return;
+      const source = makeSource({
+        text, kind: "Research claim", linked: activeChat.entityId ? [activeChat.entityId] : [],
+        citations: contextEvidence(activeChat),
+      });
+      activeChat.draft = null;
+      activeChat.messages.push({ role: "assistant", text: "Your claim is saved as a research note.", citations: [source.id] });
+      processSource(source);
+      chatLog.scrollTop = chatLog.scrollHeight;
+      document.querySelector("#question").focus({ preventScroll: true });
+    }
+  });
+
+  function minimizeChat(focusTarget = view.screen === "entity" ? chatTab : workspace.querySelector("[data-action=research-source]")) {
+    activeChat = null;
+    renderChat();
+    focusTarget?.focus({ preventScroll: true });
+  }
+
+  function showSources() {
+    if (activeChat) minimizeChat(null);
+    const section = document.querySelector("#entity-sources");
+    section.querySelector("h2").focus({ preventScroll: true });
+    section.scrollIntoView({ block: "start" });
+  }
+
+  document.addEventListener("click", event => {
+    const button = event.target.closest("[data-action]");
+    if (!button) return;
+    const { action, id } = button.dataset;
+    switch (action) {
+      case "scenario": reset(!cold); window.scrollTo(0, 0); break;
+      case "watchlist": case "ontology": navigateRoot(action); break;
+      case "back": if (screenHistory.length) showView(screenHistory.pop()); break;
+      case "entity": navigate("entity", id); break;
+      case "source": navigate("source", id, view.screen === "entity" ? view.id : view.parent); break;
+      case "capture": showCapture(); break;
+      case "close-capture": capture.close(); break;
+      case "sample-note": captureText.value = sampleNote; captureText.focus(); break;
+      case "entity-sources": showSources(); break;
+      case "entity-chat":
+        if (activeChat) minimizeChat();
+        else openChat(recentContexts.get(viewContextKey()) || { entityId: view.id });
+        break;
+      case "research-source": openChat(recentContexts.get(viewContextKey()) || { entityId: view.parent, sourceId: view.id }); break;
+      case "process-source": processSource(sources[view.id]); break;
+      case "close-chat": minimizeChat(); break;
+      case "expand": activeChat.expanded = !activeChat.expanded; renderChat(true); break;
+      case "verify": case "refute": ask(promptText[action]); break;
+      case "draft": draftClaim(); break;
+      case "cancel-draft": activeChat.draft = null; renderChat(); chat.querySelector("[data-action=draft]").focus(); break;
+    }
+  });
+
+  document.addEventListener("keydown", event => {
+    const focus = document.activeElement;
+    if (event.key === "Escape" && activeChat && !capture.open && (chat.contains(focus) || focus === chatTab)) minimizeChat();
+  });
+
+  reset(false);
+</script>
+</body>
+</html>
