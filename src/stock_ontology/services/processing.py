@@ -180,7 +180,8 @@ class ProcessingService:
         if job is not None:
             status = job.to_status()
             if status["state"] == "failed" and any(s.op == "retry" for s in spooled):
-                status["state"] = "queued"
+                # Report what the worker's reopen will store, not the old attempt and its error.
+                status.update(state="queued", attempts=0, error_code=None, error=None)
             return status
         enqueued = next((s for s in spooled if s.op == "enqueue"), None)
         if enqueued is None:

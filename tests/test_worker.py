@@ -476,6 +476,10 @@ def test_processing_an_unchanged_note_again_reopens_its_failed_job(tmp_path: Pat
 
     again = service.request_processing("a.md")
     assert (again.job_id, again.state) == (ref.job_id, "queued")
+    pending = service.get_status(ref.job_id)
+    assert (pending["state"], pending["attempts"], pending["error"]) == ("queued", 0, None), (
+        "a pending retry must not look like a failed attempt, or the page shows the old error"
+    )
     worker.run_once(scan=False)
     status = service.get_status(ref.job_id)
     assert len(llm.extract_calls) == 4, "the reopened job did not run"
