@@ -2,7 +2,7 @@
 proposal_id: "shared-editor-script"
 state: BUILT
 witness: builder
-candidate: "034c6a0 @ worktree/shared-editor-script-8b7869"
+candidate: "29c4b47 @ worktree/shared-editor-script-8b7869"
 ---
 
 # Proposal: One browser script for job polling and the relationship editor
@@ -92,7 +92,7 @@ Builder route: the decisive witness is deferred to Build. The builder authors th
 
 ## Build
 
-Candidate: `034c6a0 @ worktree/shared-editor-script-8b7869` (claude/shared-editor-script-8b7869)
+Candidate: `29c4b47 @ worktree/shared-editor-script-8b7869` (claude/shared-editor-script-8b7869); first built as `034c6a0`, revised for R1
 
 ### Changed paths
 - `src/stock_ontology/registry.py` — new `FieldSpec` and public `OntologyRegistry.field_specs(node_type, entity_type=None, relation=None)`; private helpers unchanged.
@@ -101,7 +101,10 @@ Candidate: `034c6a0 @ worktree/shared-editor-script-8b7869` (claude/shared-edito
 - `src/stock_ontology/web/ontology/views.py`, `web/ontology/routes.py` — `relationship_editor_config` replaced by `relationship_model`; `_schema_fields`, schema node keys, and theme stage choices use `field_specs`; `build_registry_edit_context` takes `lang`.
 - `src/stock_ontology/web/static/editor.js` (new) — `StockEditor.postJson`, `readJson`, `waitForJob` (every second until succeeded, failed, superseded, or queued for retry; no limit), `relationshipEditor` (compatibility and anchor filtering, facet inputs, comma-and-newline list parsing, `facetChanges`, `swap`, and the single `nodeChoices` function for `node-typeahead` to replace).
 - `src/stock_ontology/web/static/note_reader.js`, `static/ontology_edit.js` — page flows kept; poller, POST helper, choice building, and facet parsing now come from `editor.js`.
-- Templates `partials/note_reader.html`, `partials/ontology_registry.html`, `ontology.html` — embed `#relationship-editor-model`, load `editor.js` before the page script; note reader selects and per-relation templates are now filled by the script. `static/library.css` — the note reader's facet `<fieldset>` has no border and hides when `hidden`.
+- Templates `partials/note_reader.html`, `partials/ontology_registry.html`, `ontology.html` — embed `#relationship-editor-model`, load `editor.js` before the page script; note reader selects and per-relation templates are now filled by the script.
+- `src/stock_ontology/web/ontology/routes.py` — passes `lang` to `build_registry_edit_context` so the model carries translated labels. Outside Frame's Include list; see Deviations.
+- `src/stock_ontology/web/static/library.css` — the note reader's facet `<fieldset>` has no border and stays hidden when `hidden`. Outside Frame's Include list; see Deviations.
+- `README.md` "Web UI Constraints" — new entry for the shared-editor rule, with Why and Guarded by (R1).
 - Tests: `tests/test_web_ontology.py` (`test_note_reader_and_ontology_record_share_one_relationship_editor`, `test_page_scripts_post_and_poll_jobs_through_the_shared_editor_script`), `tests/test_vocab.py` (`test_field_specs_lists_declared_facets_with_their_vocabulary`).
 
 ### Protected witnesses
@@ -109,20 +112,25 @@ Candidate: `034c6a0 @ worktree/shared-editor-script-8b7869` (claude/shared-edito
 
 ### Evidence
 - RED: the three new tests copied onto a detached `aa1d9f7` worktree, `uv run pytest -q tests/test_web_ontology.py tests/test_vocab.py -k "share_one or shared_editor or field_specs"` — 3 failed (no embedded model on the note reader, page scripts lack `window.StockEditor`, no `field_specs`).
-- GREEN: `uv run pytest -q` — 554 passed. `uv run ruff check src tests` — clean. `grep -rn "_facet_specs\|_vocabulary" src/stock_ontology/web` — no matches.
+- GREEN on `29c4b47`: `uv run pytest -q` — 554 passed. `uv run ruff check src tests` — clean. `grep -rn "_facet_specs\|_vocabulary" src/stock_ontology/web` — no matches.
 - Manual browser check (built-in browser, scratch fixture app with a worker thread, minimal registry, three entities, one note): note reader add offered only compatible endpoints and relations, showed the optional `sentiment` field, posted `{"facets": {"sentiment": "positive"}, ...}` to `/api/notes/relationship/add`, waited for the job, and reloaded with the new row; note reader edit prefilled from/relation/to with the facet fieldset hidden and disabled. Ontology record page prefilled the existing edge's facet, previewed, confirmed, waited for the job, and reloaded with the change. `waitForJob` on a missing job surfaced the server's `detail`.
 
 ### Deviations
-- None from Frame scope. One behavior that follows from compatibility filtering: on the note reader, Reverse on a non-symmetric relation now clears the relation and target when the reversed direction is not allowed, instead of sending a pair the server would reject.
+- `src/stock_ontology/web/ontology/routes.py` (one-line `lang` argument) and `src/stock_ontology/web/static/library.css` (fieldset rules; the README forbids inline styles) are outside Frame's Include list. Both are needed for the framed model and the note reader fieldset. The human can accept them into scope.
+- `theme_stage_choices` falls back to no choices when a registry declares no theme `stage` facet, as it did before the change (R1).
+- One behavior that follows from compatibility filtering: on the note reader, Reverse on a non-symmetric relation now clears the relation and target when the reversed direction is not allowed, instead of sending a pair the server would reject.
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+<!-- Cleared for the R1 re-audit; the outgoing REVISE verdict is under Revisions. -->
 
 ## Revisions
 
 <!-- Append-only, written by the orchestrator. One entry per audit REVISE and the
 work that answered it. Never delete an entry, never edit an earlier one, and never
 move Frame, Proof, Build or Audit history into it. Empty until the first REVISE. -->
+
+### R1 — 2026-11-25 — constraint-capture duty and unlisted scope
+- Verdict: REVISE. The change set a durable rule (page scripts post, poll, and build relationship choices only through `static/editor.js` and `relationship_editor_model`, and web code reads specs only through `field_specs`) with no README entry. `web/ontology/routes.py` and `static/library.css` changed outside Frame's Include list while Build reported no deviations. Every claim was PROVED and the gates passed (554 passed, ruff clean) on `034c6a0`.
+- Changed: `README.md` adds the Web UI Constraints entry, with Why and Guarded by naming both witness tests. The Build section now lists both files as deviations. `web/ontology/views.py`: theme stage choices fall back to empty when the facet is missing, a residual risk the audit noted.
+- Re-audit: pending; candidate `29c4b47 @ worktree/shared-editor-script-8b7869`
