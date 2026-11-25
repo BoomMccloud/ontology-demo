@@ -65,6 +65,15 @@ def make_suggestion_id(prefix: str, label: str) -> str:
     return f"{prefix}_{slug}"
 
 
+class FieldSpec(BaseModel):
+    """One declared facet: its kind, whether it is required, and its vocabulary members (empty if none)."""
+
+    name: str
+    kind: str
+    required: bool
+    options: tuple[str, ...] = ()
+
+
 class RelationSpec(BaseModel):
     """Canonical relation definition in the official ontology registry."""
 
@@ -414,6 +423,18 @@ class OntologyRegistry(BaseModel):
         if node_type == "entity" and isinstance(entity_type, str) and entity_type:
             specs.update(node_specs.get(f"entity:{entity_type}", {}))
         return specs
+
+    def field_specs(
+        self, node_type: str | None, entity_type: str | None = None, relation: str | None = None
+    ) -> list[FieldSpec]:
+        """Declared facets of a node type (or of edges of `relation`, when None), with their vocabularies."""
+        return [
+            FieldSpec(
+                name=key, kind=str(spec.get("kind")), required=bool(spec.get("required")),
+                options=tuple(self._vocabulary(node_type, key).get("members", {})),
+            )
+            for key, spec in self._facet_specs(node_type, entity_type, relation).items()
+        ]
 
     def schema_stamp(self) -> str:
         """Hash of everything stored facets are checked against; the DB records it after migrating."""

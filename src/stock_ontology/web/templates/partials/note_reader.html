@@ -40,7 +40,7 @@
   {% set can_add_entity = extraction.actions_enabled and extraction.choices | length > extraction.entities | length %}
   {% set note_entity_ids = extraction.entities | map(attribute='id') | list %}
   {% set can_correct_relationship = extraction.actions_enabled and extraction.relations %}
-  {% set can_add_relationship = can_correct_relationship and extraction.endpoint_choices | length > 1 %}
+  {% set can_add_relationship = can_correct_relationship and extraction.relationship_model.nodes | length > 1 %}
   <div class="section-block note-extraction" data-note-reader data-file="{{ active_note.rel_path }}" data-hash="{{ extraction.content_hash }}"
        data-failed-label="{{ t('note_reader.action_failed') }}" data-queued-label="{{ t('note_reader.job_queued') }}">
     <h2>{{ t('note_reader.extraction') }}</h2>
@@ -187,42 +187,11 @@
                   <form class="note-correction" data-note-action="relationship">
                     <input type="hidden" name="edge_id">
                     <div class="note-relationship-fields">
-                      <label>{{ t('note_reader.from') }}
-                        <select name="from_id" required>
-                          <option value="" disabled selected>{{ t('note_reader.select_node') }}</option>
-                          {% for endpoint in extraction.endpoint_choices %}<option value="{{ endpoint.id }}">{{ endpoint.label }}</option>{% endfor %}
-                        </select>
-                      </label>
-                      <label>{{ t('note_reader.relationship') }}
-                        <select name="relation" required>
-                          <option value="" disabled selected>{{ t('note_reader.select_relationship') }}</option>
-                          {% for relation in extraction.relations %}<option value="{{ relation }}">{{ t_enum('relation', relation) }}</option>{% endfor %}
-                        </select>
-                      </label>
-                      <label>{{ t('note_reader.to') }}
-                        <select name="to_id" required>
-                          <option value="" disabled selected>{{ t('note_reader.select_node') }}</option>
-                          {% for endpoint in extraction.endpoint_choices %}<option value="{{ endpoint.id }}">{{ endpoint.label }}</option>{% endfor %}
-                        </select>
-                      </label>
+                      <label>{{ t('note_reader.from') }} <select name="from_id" required></select></label>
+                      <label>{{ t('note_reader.relationship') }} <select name="relation" required></select></label>
+                      <label>{{ t('note_reader.to') }} <select name="to_id" required></select></label>
                     </div>
-                    <div class="note-relationship-fields" data-note-required-fields></div>
-                    {% for relation, fields in extraction.required_relationship_fields %}
-                      <template data-note-relation-fields="{{ relation }}">
-                        {% for field in fields %}
-                          <label>{{ field.label }}
-                            {% if field.options %}
-                              <select data-note-relationship-field="{{ field.key }}" required>
-                                <option value="" disabled selected>{{ t('common.none') }}</option>
-                                {% for value, label in field.options %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
-                              </select>
-                            {% else %}
-                              <input data-note-relationship-field="{{ field.key }}" {% if field.is_list %}data-list{% endif %} required>
-                            {% endif %}
-                          </label>
-                        {% endfor %}
-                      </template>
-                    {% endfor %}
+                    <fieldset class="note-relationship-fields" data-relation-fields hidden disabled></fieldset>
                     <button class="retro-btn" type="button" data-swap-endpoints>{{ t('note_reader.reverse') }}</button>
                     <button class="retro-btn" type="submit" data-edit-label="{{ t('note_reader.save') }}"
                             data-add-label="{{ t('note_reader.add_relationship') }}">{{ t('note_reader.save') }}</button>
@@ -269,5 +238,11 @@
       {% endif %}
     </div>
   </div>
-  {% if active_note.extraction.actions_enabled %}<script src="/static/note_reader.js" defer></script>{% endif %}
+  {% if active_note.extraction.actions_enabled %}
+    {% if active_note.extraction.relationship_model %}
+      <script type="application/json" id="relationship-editor-model">{{ active_note.extraction.relationship_model | tojson }}</script>
+    {% endif %}
+    <script src="/static/editor.js" defer></script>
+    <script src="/static/note_reader.js" defer></script>
+  {% endif %}
 </section>

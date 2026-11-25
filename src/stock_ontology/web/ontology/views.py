@@ -36,6 +36,7 @@ from stock_ontology.services.corrections import relationship_source_evidence
 from stock_ontology.services.registry import RegistryService, changed_fields
 from stock_ontology.web.shared import (
     format_facet_value,
+    relationship_editor_model,
     resolve_result_href,
 )
 
@@ -342,6 +343,7 @@ def _record_note_choices(
 def build_registry_edit_context(
     db: GraphStore, ctx: dict[str, Any], *, applied: OntologyRegistry | None,
     published: OntologyRegistry | None, data_dir: Path, operator_allowed: bool, corrections_allowed: bool,
+    lang: str,
 ) -> dict[str, Any]:
     """Expose actions only for the current record and a valid workflow."""
     kind = ctx["registry_kind"]
@@ -353,7 +355,7 @@ def build_registry_edit_context(
         actions.update(
             registry_operator_edit=operator_allowed and published is not None and not pending,
             registry_edit_values=before.model_dump(),
-            theme_stage_choices=tuple(applied._vocabulary("theme", "stage").get("members", {})),
+            theme_stage_choices=next(field.options for field in applied.field_specs("theme") if field.name == "stage"),
         )
         if pending and published is not None:
             browser_revision = RegistryService.browser_publication(db, published, applied)
@@ -388,23 +390,7 @@ def build_registry_edit_context(
         documents = set(relationship_source_evidence(db, anchor))
         actions["relationship_note_choices"] = _record_note_choices(db, data_dir, documents, log)
     actions["registry_note_actions"] = True
-    actions["relationship_editor_config"] = {
-        "nodes": [
-            {"id": node.id, "name": node.name,
-             "type": node_type_label(node.node_type, node.facets.get("entity_type"))}
-            for node in db.list_all_nodes()
-        ],
-        "relations": [
-            {"name": relation.name, "from": relation.from_types, "to": relation.to_types,
-             "symmetric": relation.symmetric,
-             "fields": [
-                 {"name": name, "kind": field["kind"], "required": field["required"],
-                  "options": list(db.registry._vocabulary(None, name).get("members", {}))}
-                 for name, field in db.registry._facet_specs(None, relation=relation.name).items() if name != "basis"
-             ]}
-            for relation in db.registry.relations
-        ],
-    }
+    actions["relationship_model"] = relationship_editor_model(db.registry, db.list_all_nodes(), lang)
     return actions
 
 
@@ -418,10 +404,10 @@ def _schema_type_label(key: str, lang: str) -> str:
 def _schema_fields(
     registry: OntologyRegistry, node_type: str | None,
     *, subtype: str = "", relation: str = "",
-) -> list[tuple[str, str, bool, dict[str, str]]]:
+) -> list[tuple[str, str, bool, tuple[str, ...]]]:
     return [
-        (key, spec["kind"], spec["required"], registry._vocabulary(node_type, key).get("members", {}))
-        for key, spec in registry._facet_specs(node_type, subtype, relation).items()
+        (field.name, field.kind, field.required, field.options)
+        for field in registry.field_specs(node_type, subtype, relation)
     ]
 
 
@@ -441,7 +427,7 @@ def build_schema_context(
 
     node_keys = [
         *registry.facet_schema["node"],
-        *(f"entity:{key}" for key in registry._vocabulary("entity", "entity_type")["members"]),
+        *(f"entity:{key}" for key in next(field.options for field in registry.field_specs("entity") if field.name == "entity_type")),
     ]
     node_defs = {
         key: {

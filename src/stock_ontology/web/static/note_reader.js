@@ -2,7 +2,9 @@
   const reader = document.querySelector("[data-note-reader]");
   if (!reader) return;
 
+  const { postJson, waitForJob, relationshipEditor } = window.StockEditor;
   const feedback = reader.querySelector("[data-note-feedback]");
+  let relationshipInputs = null;
 
   function bindInlineEditor(editor, triggerSelector, openEditor) {
     let activeTrigger = null;
@@ -61,56 +63,33 @@
   const relationship = reader.querySelector('[data-note-action="relationship"]');
   if (relationship) {
     const editor = relationship.closest("tr");
-    const edgeId = relationship.elements.namedItem("edge_id");
-    const relation = relationship.elements.namedItem("relation");
-    const from = relationship.elements.namedItem("from_id");
-    const to = relationship.elements.namedItem("to_id");
     const save = relationship.querySelector('button[type="submit"]');
-    const requiredFields = relationship.querySelector("[data-note-required-fields]");
-    const fieldTemplates = new Map(Array.from(relationship.querySelectorAll("[data-note-relation-fields]"),
-      (template) => [template.dataset.noteRelationFields, template.content]));
-    const showRequiredFields = () => {
-      const template = fieldTemplates.get(relation.value);
-      if (relationship.dataset.noteAction === "relationship/add" && template) {
-        requiredFields.replaceChildren(template.cloneNode(true));
-      } else {
-        requiredFields.replaceChildren();
-      }
-    };
-    relation.addEventListener("change", showRequiredFields);
-    relationship.querySelector("[data-swap-endpoints]").addEventListener("click", () => {
-      [from.value, to.value] = [to.value, from.value];
-    });
+    const facetFields = relationship.querySelector("[data-relation-fields]");
+    relationshipInputs = relationshipEditor({
+      from: relationship.elements.namedItem("from_id"),
+      relation: relationship.elements.namedItem("relation"),
+      to: relationship.elements.namedItem("to_id"),
+      fields: facetFields,
+    }, JSON.parse(document.querySelector("#relationship-editor-model").textContent));
+    relationship.querySelector("[data-swap-endpoints]").addEventListener("click", relationshipInputs.swap);
     bindInlineEditor(editor, "[data-note-edge], [data-note-add]", (button) => {
       relationship.reset();
-      if (button.hasAttribute("data-note-add")) {
-        relationship.dataset.noteAction = "relationship/add";
-        save.textContent = save.dataset.addLabel;
+      const adding = button.hasAttribute("data-note-add");
+      relationship.dataset.noteAction = adding ? "relationship/add" : "relationship";
+      save.textContent = adding ? save.dataset.addLabel : save.dataset.editLabel;
+      // Only an added relationship takes facets; a disabled fieldset is also skipped by form validation.
+      facetFields.hidden = !adding;
+      facetFields.disabled = !adding;
+      relationship.elements.namedItem("edge_id").value = adding ? "" : button.dataset.noteEdge;
+      relationshipInputs.set(adding ? {} : {
+        from_id: button.dataset.noteFrom, relation: button.dataset.noteRelation, to_id: button.dataset.noteTo,
+      });
+      if (adding) {
         editor.parentElement.append(editor);
-        showRequiredFields();
-        return;
+      } else {
+        button.closest("tr").after(editor);
       }
-      relationship.dataset.noteAction = "relationship";
-      save.textContent = save.dataset.editLabel;
-      edgeId.value = button.dataset.noteEdge;
-      from.value = button.dataset.noteFrom;
-      to.value = button.dataset.noteTo;
-      relation.value = button.dataset.noteRelation;
-      if (relation.selectedIndex === -1) relation.value = "";
-      button.closest("tr").after(editor);
-      showRequiredFields();
     });
-  }
-
-  async function waitForJob(jobId) {
-    for (;;) {
-      const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
-      const job = await response.json().catch(() => ({}));
-      if (!response.ok) return { state: "failed" };
-      if (["succeeded", "failed", "superseded"].includes(job.state)) return job;
-      if (job.state === "queued" && job.attempts > 0) return job;
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
   }
 
   const buttons = reader.querySelectorAll('button[type="submit"], [data-note-match], [data-note-entity-add], [data-note-edge], [data-note-add], [data-swap-endpoints]');
@@ -144,9 +123,7 @@
         if (action === "relationship") {
           payload.edge_id = fields.get("edge_id");
         } else {
-          payload.facets = Object.fromEntries(Array.from(form.querySelectorAll("[data-note-relationship-field]"),
-            (input) => [input.dataset.noteRelationshipField, input.hasAttribute("data-list")
-              ? input.value.split(",").map((value) => value.trim()).filter(Boolean) : input.value]));
+          payload.facets = relationshipInputs.facetChanges();
         }
         payload.relation = fields.get("relation");
         payload.from_id = fields.get("from_id");
@@ -159,27 +136,14 @@
       feedback.hidden = false;
       feedback.textContent = feedback.dataset.busyLabel;
       try {
-        const response = await fetch(`/api/notes/${action}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({}));
-          feedback.textContent = typeof error.detail === "string" ? error.detail : reader.dataset.failedLabel;
-          return;
-        }
-        // The worker applies the change; poll the job until it finishes, then show the result.
-        const { job_id: jobId } = await response.json();
+        const failed = reader.dataset.failedLabel;
+        const { job_id: jobId } = await postJson(`/api/notes/${action}`, payload, failed);
+        // The worker applies the change; wait for the job, then show the result.
         feedback.textContent = reader.dataset.queuedLabel;
-        const job = await waitForJob(jobId);
-        if (job.state === "succeeded") {
-          window.location.reload();
-          return;
-        }
-        feedback.textContent = job.error || reader.dataset.failedLabel;
-      } catch {
-        feedback.textContent = reader.dataset.failedLabel;
+        await waitForJob(jobId, failed);
+        window.location.reload();
+      } catch (error) {
+        feedback.textContent = error.message || reader.dataset.failedLabel;
       } finally {
         buttons.forEach((button) => { button.disabled = false; });
       }

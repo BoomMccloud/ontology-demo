@@ -7,12 +7,53 @@ import re
 from pathlib import Path
 from typing import Any
 
-from stock_ontology.i18n import DEFAULT_LANGUAGE, translate_enum, translate_facet_label
+from stock_ontology.audit import node_type_label
+from stock_ontology.i18n import DEFAULT_LANGUAGE, translate, translate_enum, translate_facet_label
 from stock_ontology.models import Node
+from stock_ontology.registry import OntologyRegistry
 from stock_ontology.search import resolve_safe_note_path
 from stock_ontology.services import GraphStore
 
 GENERAL_FOLDERS = {"_general", "(root)"}
+
+
+def relationship_editor_model(registry: OntologyRegistry, nodes: list[Node], lang: str) -> dict[str, Any]:
+    """Choices for the relationship editor in `static/editor.js`, shared by the note reader and Ontology page.
+
+    Each node carries its registry endpoint type so the browser offers only endpoints a relation allows.
+    Relation fields leave out `basis`, which a correction sets itself.
+    """
+    def node_label(node: Node) -> str:
+        entity_type = node.facets.get("entity_type") if node.node_type == "entity" else None
+        kind = (translate_enum("entity_type", entity_type, lang=lang) if entity_type
+                else translate_enum("node_type", node.node_type, lang=lang))
+        return f"{node.name} ({kind})"
+
+    return {
+        "placeholders": {
+            "node": translate("note_reader.select_node", lang=lang),
+            "relation": translate("note_reader.select_relationship", lang=lang),
+            "none": translate("common.none", lang=lang),
+        },
+        "nodes": [
+            {"id": node.id, "label": node_label(node),
+             "type": node_type_label(node.node_type, node.facets.get("entity_type"))}
+            for node in sorted(nodes, key=lambda node: node.name.casefold())
+        ],
+        "relations": [
+            {
+                "name": relation.name, "label": translate_enum("relation", relation.name, lang=lang),
+                "from": relation.from_types, "to": relation.to_types, "symmetric": relation.symmetric,
+                "fields": [
+                    {"name": field.name, "label": translate_facet_label(field.name, lang=lang),
+                     "kind": field.kind, "required": field.required,
+                     "options": [[value, translate_enum(field.name, value, lang=lang)] for value in field.options]}
+                    for field in registry.field_specs(None, relation=relation.name) if field.name != "basis"
+                ],
+            }
+            for relation in sorted(registry.relations, key=lambda relation: relation.name)
+        ],
+    }
 
 
 def format_facet_value(value: Any, lang: str = DEFAULT_LANGUAGE) -> str:

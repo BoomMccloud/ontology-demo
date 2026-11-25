@@ -801,6 +801,7 @@
 
 {% block scripts %}
   {% if registry_record and (registry_operator_edit or person_note_choices or registry_note_actions or registry_can_apply) %}
+    <script src="{{ request.url_for('static', path='editor.js') }}"></script>
     <script src="{{ request.url_for('static', path='ontology_edit.js') }}"></script>
   {% endif %}
 {% endblock %}
