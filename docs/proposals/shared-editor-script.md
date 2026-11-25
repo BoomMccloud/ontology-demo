@@ -1,6 +1,6 @@
 ---
 proposal_id: "shared-editor-script"
-state: BUILT
+state: ACCEPTED
 witness: builder
 candidate: "29c4b47 @ worktree/shared-editor-script-8b7869"
 ---
@@ -122,7 +122,33 @@ Candidate: `29c4b47 @ worktree/shared-editor-script-8b7869` (claude/shared-edito
 
 ## Audit
 
-<!-- Cleared for the R1 re-audit; the outgoing REVISE verdict is under Revisions. -->
+Candidate: `29c4b47 @ worktree/shared-editor-script-8b7869` (HEAD `c7d3237` differs only in the ledger; base `aa1d9f7`; first candidate `034c6a0`)
+
+Independence: fresh-context. The auditor had seen only the orchestrator's prompt, then read the skill, this ledger (Proposal, Frame, Proof, Build, R1), the `aa1d9f7..29c4b47` and `034c6a0..29c4b47` diffs, and `static/editor.js`. It did not build the candidate.
+
+R1 check: both items answered. `README.md` "Web UI Constraints" carries the shared-editor rule with Why and Guarded by, and both named tests exist and pass. Build's Deviations lists `web/ontology/routes.py` and `static/library.css`. The `theme_stage_choices` fallback restores the empty result when no stage facet exists.
+
+Primary-claim verdict: PROVED. Evidence: `tests/test_web_ontology.py::test_note_reader_and_ontology_record_share_one_relationship_editor` (equal embedded model on both pages, French labels and options from `field_specs`, `editor.js` loaded first) and `::test_page_scripts_post_and_poll_jobs_through_the_shared_editor_script`. RED on detached `aa1d9f7` with `uv run pytest -q tests/test_web_ontology.py tests/test_vocab.py -k "share_one or shared_editor or field_specs"`: 3 failed. GREEN on the candidate. Code reading confirms `waitForJob` has no limit and surfaces the job error or server `detail`, and list facets split on `/[,\n]/`. Limit: no test executes the JavaScript. Runtime behavior rests on code reading plus Build's manual browser check.
+
+Guardrail verdicts:
+- Same payload shapes to the same URLs: PROVED. Evidence: no existing assertion edited, existing action tests green, URLs and payload fields unchanged except facets now come from `facetChanges()`. Limit: the action tests exercise the API, not the browser-built payload.
+- Web code reads specs only through a public method: PROVED. Evidence: `rg -n "_facet_specs|_vocabulary" src/stock_ontology/web` finds nothing. `tests/test_vocab.py::test_field_specs_lists_declared_facets_with_their_vocabulary` was RED on base and is GREEN now. Limit: none.
+- Schema page and theme stage choices unchanged: PROVED. Evidence: existing schema and registry tests pass, and the stage options match the old vocabulary members for the minimal registry. Limit: they could differ for a registry that has a stage vocabulary but no stage facet spec.
+
+Scope and duty verdict: scope HELD; duties HELD. Evidence: the changed files match Frame's Include list plus two disclosed, mechanically forced edits (`web/ontology/routes.py` `lang=lang`, `static/library.css` fieldset rules). Worker, pipeline, services, request models and URLs are untouched. The constraint-capture entry exists. Limit: the human should ratify the two deviations.
+
+Test homes: `tests/test_web_ontology.py` holds the two web view witnesses, the owner Frame named. `tests/test_vocab.py` holds the `field_specs` unit test, the registry and vocabulary owner Frame allowed.
+
+Full gates: PASS. `uv run pytest -q`: 554 passed. `uv run ruff check src tests`: clean. Limit: no gate runs browser JavaScript.
+
+Residual risks:
+- No automated test runs `editor.js`.
+- `waitForJob` has no time limit (human decision), so a stuck job keeps the page polling until it's closed.
+- `theme_stage_choices` and the schema `entity:` keys now depend on facet specs. This is equivalent for current registries.
+- On the note reader, Reverse on a non-symmetric relation can clear the relation and target (disclosed in Build).
+
+Recommendation: ACCEPT
+Packet: no candidate change needed. Before the human-owned merge, ratify the two disclosed deviations and optionally repeat the manual browser check. ACCEPT does not authorize merge or deploy.
 
 ## Revisions
 
@@ -133,4 +159,4 @@ move Frame, Proof, Build or Audit history into it. Empty until the first REVISE.
 ### R1 — 2026-11-25 — constraint-capture duty and unlisted scope
 - Verdict: REVISE. The change set a durable rule (page scripts post, poll, and build relationship choices only through `static/editor.js` and `relationship_editor_model`, and web code reads specs only through `field_specs`) with no README entry. `web/ontology/routes.py` and `static/library.css` changed outside Frame's Include list while Build reported no deviations. Every claim was PROVED and the gates passed (554 passed, ruff clean) on `034c6a0`.
 - Changed: `README.md` adds the Web UI Constraints entry, with Why and Guarded by naming both witness tests. The Build section now lists both files as deviations. `web/ontology/views.py`: theme stage choices fall back to empty when the facet is missing, a residual risk the audit noted.
-- Re-audit: pending; candidate `29c4b47 @ worktree/shared-editor-script-8b7869`
+- Re-audit: ACCEPT. Both items answered, scope and duties HELD, 554 passed; candidate `29c4b47 @ worktree/shared-editor-script-8b7869`
