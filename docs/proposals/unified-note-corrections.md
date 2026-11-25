@@ -1,8 +1,8 @@
 ---
 proposal_id: "unified-note-corrections"
-state: PROPOSAL
-witness: builder
-candidate: "unassigned"
+state: FRAMED
+witness: independent
+candidate: "aa33b7f @ worktree claude/unified-note-corrections-0faa55"
 ---
 
 # Proposal: One review path for note corrections
@@ -38,10 +38,63 @@ None stated.
 
 ## Frame
 
-<!-- Replaced only by proposal-frame. Include verified reality; one primary claim;
-guardrail claims; supporting obligations; allowed scope with the reuse it extends and
-the cheaper alternative it rejected; routing; witness owner; invariants changed;
-blocking decisions. -->
+Candidate: `aa33b7f @ worktree claude/unified-note-corrections-0faa55`
+
+### Verified reality
+- `uv run pytest -q` on `aa33b7f`: 553 passed. Proves the suite judging this change was green before it started. Limit: it doesn't prove both correction paths are covered for the same inputs.
+- `src/stock_ontology/web/notes/routes.py:143` `_correction` and `:164-174`. Proves `/api/notes/relationship`, `/relationship/add` and `/relationship/delete` queue `note.relationship`, `note.relationship.add` and `note.relationship.delete` jobs with the raw request and validate nothing at submit. `_submitted` (`:133`) maps only `ServiceError`. Limit: none.
+- `src/stock_ontology/worker.py:490` `_run_correction`. Proves the worker sends those kinds to `IngestionPipeline.correct_note_relationship`, `add_note_relationship` and `delete_note_relationship` (`pipeline.py:937-990`). Those methods validate with `_canonical_note_edge` (`pipeline.py:1035`): `canonicalize_edge(...).matched` and `endpoints_ok`, raising `ValueError`. Facets are checked only by `upsert_edge`'s `FacetSchemaError`. A corrected edge gets a new ID (`_replace_note_edge`, `:1056`, comment "Replacing the ID invalidates relationship forms opened before the correction"). Adding an identical edge twice is a silent upsert. Pending (unmapped) edges can be corrected or deleted. Limit: none.
+- `src/stock_ontology/services/corrections.py:71` `_review_edge`. Proves the Ontology path validates with `resolve_relation`, editable facet keys (`edge_facet_keys - {"basis"}`), two distinct existing endpoints, `canonicalize_edge(...).endpoints_ok`, `check_facets` and a duplicate check. It raises `ServiceError` with locale keys. `review_note_correction` (`:114`) lists only non-pending edges, has no delete kind, and requires `relationship_add` to touch `record` and the note to be its source evidence. Limit: the two validators agree on most inputs. They differ on duplicates (reject vs. silent upsert), pending edges (not editable vs. editable), error type and message, and edge ID (kept by `update_edge` in `pipeline.py:1003` vs. replaced).
+- `src/stock_ontology/pipeline.py:995` `apply_note_correction`. Proves the reviewed payload is applied through `_correct_note` with `update_edge` (ID kept) or `upsert_edge` (new edge). The worker's `_run_ontology_correction` (`worker.py:523`) re-reviews inside its `immediate` transaction and refuses a payload whose fresh review differs. Limit: it can't apply a delete or a pending-edge correction.
+- `src/stock_ontology/web/ontology/routes.py:163-184`. Proves the Ontology page reviews at preview (`review_note_correction`, mapping `ServiceError` and `ValueError` through `rejected`) and queues the server-held payload as `note.ontology.correction` at confirm. Limit: none.
+- `src/stock_ontology/services/processing.py:33` `CORRECTION_KINDS` and `:137` `submit_correction`. Prove `note.relationship*` are submittable kinds and share correction priority. Limit: none.
+- Identity edits: `services/registry.py:73` `RegistryService.review_record_edit`, `services/corrections.py:132-160` (person branch of `review_note_correction`) and `worker.py:114` `_rollout_record_metadata`. Each assembles name and aliases (`keep_previous_name` and `unique_labels` in the first two; removed-alias merge in rollout), checks the alias length limit (first two), and checks that introduced labels don't identify another record or node, each with its own loop. Registry labels include the ticker. Rollout marks a collision `ambiguous` instead of raising. Limit: inputs differ (registry spec vs. graph node vs. registry diff), so only the assembly and collision rules can be shared.
+- `src/stock_ontology/web/static/note_reader.js:140-170`. Proves the reader always sends `relation`, `from_id` and `to_id` (never `reverse`) and already shows a non-2xx `detail` string. So submit-time rejection needs no JS change. Limit: the API still accepts `reverse`.
+- Tests that encode today's divergent rules: `tests/test_web_notes.py::test_note_reader_extraction_workflow` (invalid correction shows `data-job-state="failed"`), `::test_note_reader_adds_and_deletes_relationships` (identical add twice → both 200), `::test_note_reader_can_correct_both_relationship_endpoints`, and `tests/test_pipeline.py::test_note_correction_updates_only_current_note_edges[reverse]`, `::test_delete_note_relationship_removes_only_its_pending_edge` and `::test_add_note_relationship_accepts_required_fields_from_shipped_registry` (call the three pipeline methods directly). Also `::test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_consensus` (asserts the edited `WORKS_AT` keeps its `edge_id`) and `tests/test_worker.py:399` (submits `note.relationship.delete`).
+
+### Final primary claim
+- A relationship correction (edit, add or delete) submitted from the note reader and the same correction from the Ontology page are judged by one review, `review_note_correction`, and applied by one pipeline method, `apply_note_correction`. Given the same note, graph and edit, both return the same error code and locale key when invalid, and the same graph rows when valid.
+
+### Routing
+- Witness: `independent`
+- Why: it moves validation of user corrections to stored graph data across the web/worker boundary and changes which corrections are accepted, so a mistake stores a bad edge or drops a valid correction.
+- Human-owned irreversible action: merging and deploying the branch. Queued `note.relationship*` jobs drain on the new worker.
+
+### Decisive witness
+- Layer: web route tests driving one worker run (the `_note_action` pattern in `tests/test_web_notes.py`), plus one unit test on the shared identity rule.
+- Permanent owner: `tests/test_web_notes.py`. The identity witness goes in `tests/test_web_ontology.py` or `tests/test_registry_governance.py`, the builder's pick.
+- Witness: (1) A parametrized table of edits: unregistered relation, endpoints the registry forbids, same node at both ends, missing required edge facet, duplicate of an existing note edge, valid edit, valid add, delete of another note's edge, valid delete. Each goes through `/api/notes/relationship*` and through `/api/ontology/corrections/preview` plus confirm on the same fixture. Both produce the same HTTP error status and locale key, or the same resulting `list_note_edges` (ignoring generated IDs). (2) A person correction and a registry record edit given the same name/alias change apply the same rules: keep previous name, deduplicated aliases, alias over the name length limit rejected, a label that identifies another record rejected as `conflict`.
+
+### Guardrail claims
+- A `note.relationship`, `note.relationship.add` or `note.relationship.delete` job already queued before deploy still succeeds or fails on the new worker, judged by the same review. New ones can't be submitted.
+- A correction whose note changed, or whose reviewed graph rows changed, after review still fails with a conflict and leaves the graph unchanged. A note-reader form opened before a correction to the same edge can't silently re-apply, because a corrected edge still gets a new ID.
+- Existing Ontology-page correction tests (`tests/test_web_ontology.py::test_ontology_registry_editing_note_correction`, `::test_ontology_registry_editing_relationship_add_source`) and the person-accuracy test (`tests/test_pipeline.py::test_person_accuracy_correction_is_checked_stored_and_refreshes_all_their_rumors`) stay green without edits.
+
+### Supporting obligations
+- Extend `review_note_correction` with a `relationship_delete` kind (before row, empty after). Include the note's pending edges as editable `before` rows, tagged so apply knows which table they live in. Make the `relationship_add` anchor rule (touches `record`, note is its source evidence) apply only when `record` is given. Map `FacetSchemaError` from facet checks to `ServiceError("invalid", ...)`.
+- Add one converter in `services/corrections.py` from a note-reader request (`edge_id`, `relation`, `from_id`, `to_id`, `reverse`, `facets`) to a review request, resolving `reverse` against the current row. Use it from the note-reader routes and the worker's legacy-kind branch.
+- Note-reader routes: review at submit with the converter, reject a given `expected_hash` that differs from the reviewed hash as `conflict`, map `ServiceError` and `ValueError`, and queue the reviewed payload as `note.ontology.correction`.
+- `apply_note_correction`: delete for an empty `after`, and replace (new ID, keep `created_at`) instead of `update_edge` for an edited edge, from the pending or main table. Remove `correct_note_relationship`, `add_note_relationship` and `delete_note_relationship` from `IngestionPipeline`.
+- Worker: for a queued `note.relationship*` job, convert, review and apply through the same `apply_note_correction` path, with no graph writes or private pipeline calls in `Worker`. Remove the three kinds from what `ProcessingService.submit_correction` accepts, but keep their correction priority so already-queued ones still run first.
+- One edge validator: `_review_edge` and `IngestionPipeline._canonical_note_edge` (still used by relink) share one registry-level check, for example `OntologyRegistry.check_edge(relation, from_node, to_node, facets)`. It covers registered relation, two distinct existing endpoints, allowed endpoints and facet check. Each caller maps its error type.
+- One identity rule in `services/registry.py`: a helper that assembles name and aliases (keep previous name, `unique_labels`, alias length limit) and a helper that tests whether introduced labels identify another record. `review_record_edit` and the person review use both. `_rollout_record_metadata` uses the collision helper, still marking a collision `ambiguous`.
+
+### Allowed scope
+- Reuse: the Ontology review (`review_note_correction`, `_review_edge`) and `IngestionPipeline.apply_note_correction` / `_correct_note` from `pipeline-correction-api`, the `note.ontology.correction` worker executor, and `tests/test_web_notes.py::_note_action`.
+- Cheaper alternative: make only the two edge validators call one shared check and leave both APIs and job kinds. Rejected: the human chose one review path (decisions 1 and 2 below), and the claim needs the same duplicate, pending-edge and error rules, which live in the review, not the validator.
+- Include: `src/stock_ontology/services/corrections.py`, `services/registry.py`, `services/processing.py` (`CORRECTION_KINDS` / submit guard only), `web/notes/routes.py`, `pipeline.py` (correction methods, `_canonical_note_edge`), `registry.py` (one shared edge check), `worker.py` (`_run_correction` legacy branch and `_rollout_record_metadata` collision call only), locale files only if a new `service_error.*` key is needed, `README.md` invariants, and the tests listed under Invariants changed plus the new witnesses.
+- Exclude/protect: `web/static/note_reader.js`, `web/static/ontology_edit.js`, `web/notes/views.py::_relationship_fields` and `relationship_editor_config` (owned by `shared-editor-script`). `Worker.open_store` and `run_once` (owned by `worker-connection-reuse`). Restructuring the correction-kind dispatch beyond removing the three branches (owned by `job-kind-registry`). Entity corrections (`note.relink`, `note.entity.*`) beyond sharing the edge check. The Ontology page's preview/confirm flow.
+
+### Invariants changed
+- `tests/test_web_notes.py::test_note_reader_extraction_workflow` (`:498-504`). Today: an invalid reader correction is queued, fails in the worker, and the reader shows `data-job-state="failed"`. After: it is rejected at submit with 4xx and its locale message, and no job is queued.
+- `tests/test_web_notes.py::test_note_reader_adds_and_deletes_relationships` (`:842-847`). Today: adding an identical relationship twice succeeds twice with one row. After: the second add is rejected as `conflict` (`service_error.relationship_exists`), as on the Ontology page.
+- `tests/test_pipeline.py::test_note_correction_updates_only_current_note_edges[reverse]`, `::test_delete_note_relationship_removes_only_its_pending_edge` and `::test_add_note_relationship_accepts_required_fields_from_shipped_registry`. Today: they call the three removed pipeline methods and expect `ValueError` or `FacetSchemaError`. After: they cover the same outcomes through the reviewed path (`review_note_correction` + `apply_note_correction`) with `ServiceError` codes.
+- `tests/test_pipeline.py::test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_consensus`. Today: the reviewed `WORKS_AT` edge keeps its `edge_id`. After: it is replaced by an edge with a new ID and the same `created_at`, so a stale form from either page fails.
+- `tests/test_worker.py::test_corrections_are_claimed_ahead_of_earlier_extraction` (`:399`). Today: it submits `note.relationship.delete` through `submit_correction`. After: it submits a still-submittable correction kind, because `note.relationship*` can no longer be submitted.
+- `README.md:227-229` ("Add relationships with the current note's document ID...") and `:224-226`. Today: they guard with the removed pipeline methods' test. After: they cite the reviewed path and the new witnesses.
+
+### Decisions required
+- None. Both open choices were settled by the human on 2026-11-25, relayed through the starting session. (1) The note reader keeps direct apply: `/api/notes/relationship*` runs the same server-side review at submit and queues the reviewed payload, with `note_reader.js` untouched. (2) `note.relationship*` jobs are no longer submitted, but the worker still accepts already-queued ones, routed through the unified review.
 
 ## Proof
 
