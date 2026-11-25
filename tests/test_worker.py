@@ -947,3 +947,32 @@ def test_job_status_reads_skip_the_full_store_and_stay_read_only(
         assert jobs is not None
         with pytest.raises(sqlite3.OperationalError, match="readonly"):
             jobs._conn.execute("DELETE FROM jobs")
+
+
+def test_corrupt_spool_submission_is_moved_aside_so_the_idle_loop_stays_idle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _workspace(tmp_path)
+    service = ProcessingService(settings)
+    service.spool.mkdir(parents=True)
+    (service.spool / "00000000000000000001-enqueue-job_bad.json").write_text("{not json", encoding="utf-8")
+    (service.spool / "00000000000000000002-enqueue-job_list.json").write_text("[1]", encoding="utf-8")
+    assert service.has_submissions()
+    assert service.read_spool() == [], "a reader skips corrupt submissions"
+    assert service.has_submissions(), "only the worker's intake moves them aside"
+
+    runs: list[bool] = []
+    run_once = Worker.run_once
+
+    def counted_run_once(self: Worker, *, scan: bool = True) -> int:
+        runs.append(scan)
+        return run_once(self, scan=scan)
+
+    monkeypatch.setattr(Worker, "run_once", counted_run_once)
+    _run_service(monkeypatch, settings, {})
+
+    assert runs == [True], f"a corrupt submission must not wake the loop every 2 s: {runs}"
+    assert not service.has_submissions()
+    assert sorted(p.name for p in service.spool.iterdir()) == [
+        "00000000000000000001-enqueue-job_bad.bad", "00000000000000000002-enqueue-job_list.bad",
+    ]

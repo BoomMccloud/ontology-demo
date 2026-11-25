@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
 import time
@@ -24,6 +25,8 @@ from stock_ontology.config import Settings, note_revision
 from stock_ontology.db import Job, read_jobs
 from stock_ontology.search import resolve_safe_note_path
 from stock_ontology.services.errors import ServiceError
+
+logger = logging.getLogger(__name__)
 
 # Attempts per job revision, and the first retry delay; each later retry doubles it.
 MAX_ATTEMPTS = 3
@@ -218,14 +221,24 @@ class ProcessingService:
         """Whether any submission waits in the spool, without reading it."""
         return self.spool.is_dir() and next(self.spool.glob("*.json"), None) is not None
 
-    def read_spool(self, pattern: str = "*.json") -> list[Submission]:
+    def read_spool(self, pattern: str = "*.json", *, quarantine: bool = False) -> list[Submission]:
+        """Parsed submissions. Submissions are published by atomic rename, so one that does not
+        parse is corrupt, not half-written: skip it, and with `quarantine` (the worker's intake)
+        rename it to `.bad` so it stops matching `has_submissions`."""
         if not self.spool.is_dir():
             return []
         found: list[Submission] = []
         for path in sorted(self.spool.glob(pattern)):
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+            except OSError:
+                continue
+            except ValueError:
+                record = None
+            if not isinstance(record, dict):
+                if quarantine:
+                    logger.warning("Moving unreadable spool submission %s aside as .bad", path.name)
+                    path.replace(path.with_suffix(".bad"))
                 continue
             found.append(Submission(
                 path=path, op=record.get("op", ""), job_id=record.get("job_id", ""),

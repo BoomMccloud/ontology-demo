@@ -304,7 +304,7 @@ class Worker:
     def intake(self, db: OntologyDB) -> int:
         """Move spooled submissions into the jobs table."""
         moved = 0
-        for submission in self.processing.read_spool():
+        for submission in self.processing.read_spool(quarantine=True):
             if submission.op == "enqueue":
                 db.jobs.insert(
                     job_id=submission.job_id, kind=submission.kind, target=submission.target,
