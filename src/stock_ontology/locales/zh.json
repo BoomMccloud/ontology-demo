@@ -373,8 +373,6 @@
   "clippy.send_btn": "询问 Clippy",
   "clippy.thinking": "思考中...",
   "clippy.tools_queried": "调用工具：",
-  "clippy.llm_label": "模型：",
-  "clippy.fallback_tag": " [备用]",
   "clippy.no_response": "无响应。",
   "clippy.network_error": "连接本体助手时发生网络错误：",
   "clippy.reset_message": "对话已重置！可粘贴会议纪要测试共识变化，或询问任意公司与主题。",

@@ -371,8 +371,6 @@ def get_clippy_i18n(lang: str = DEFAULT_LANGUAGE) -> dict[str, str]:
         "role_user",
         "role_bot",
         "tools_queried",
-        "llm_label",
-        "fallback_tag",
         "thinking",
         "send_btn",
         "no_response",

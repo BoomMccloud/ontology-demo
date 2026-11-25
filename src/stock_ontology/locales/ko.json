@@ -373,8 +373,6 @@
   "clippy.send_btn": "Clippy에게 묻기",
   "clippy.thinking": "생각 중...",
   "clippy.tools_queried": "조회한 도구: ",
-  "clippy.llm_label": "LLM: ",
-  "clippy.fallback_tag": " [대체]",
   "clippy.no_response": "응답이 없습니다.",
   "clippy.network_error": "온톨로지 에이전트 연결 중 네트워크 오류: ",
   "clippy.reset_message": "채팅이 초기화되었습니다! 미팅 노트를 붙여넣어 컨센서스를 점검하거나 기업·테마를 물어보세요.",

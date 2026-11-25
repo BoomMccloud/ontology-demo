@@ -373,8 +373,6 @@
   "clippy.send_btn": "Clippy に聞く",
   "clippy.thinking": "思考中...",
   "clippy.tools_queried": "使用ツール：",
-  "clippy.llm_label": "LLM：",
-  "clippy.fallback_tag": " [フォールバック]",
   "clippy.no_response": "応答がありません。",
   "clippy.network_error": "オントロジーエージェントへの接続エラー：",
   "clippy.reset_message": "チャットをリセットしました！面談メモを貼り付けてコンセンサスを確認したり、企業やテーマについて質問してください。",

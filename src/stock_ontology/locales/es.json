@@ -373,8 +373,6 @@
   "clippy.send_btn": "Preguntar a Clippy",
   "clippy.thinking": "Pensando...",
   "clippy.tools_queried": "Herramientas consultadas: ",
-  "clippy.llm_label": "LLM: ",
-  "clippy.fallback_tag": " [respaldo]",
   "clippy.no_response": "Sin respuesta.",
   "clippy.network_error": "Error de red al contactar al agente de ontología: ",
   "clippy.reset_message": "¡Chat del catálogo reiniciado! Pegue una nota de reunión para evaluar el consenso o pregunte por cualquier empresa o tema.",

@@ -26,8 +26,6 @@
     role_user: "PM:",
     role_bot: "Clippy:",
     tools_queried: "Tools queried: ",
-    llm_label: "LLM: ",
-    fallback_tag: " [fallback]",
     thinking: "Thinking...",
     send_btn: "Ask Clippy",
     no_response: "No response.",
@@ -96,7 +94,7 @@
     return safe;
   }
 
-  function renderMessage(role, text, toolsUsed, providerInfo) {
+  function renderMessage(role, text, toolsUsed) {
     const wrapper = document.createElement("div");
     wrapper.className = "clippy-msg " + (role === "user" ? "clippy-msg-user" : "clippy-msg-bot");
 
@@ -113,11 +111,6 @@
     if (Array.isArray(toolsUsed) && toolsUsed.length > 0) {
       metaParts.push(i18n.tools_queried + [...new Set(toolsUsed)].join(", "));
     }
-    if (providerInfo && providerInfo.provider) {
-      const modelSuffix = providerInfo.model ? " (" + providerInfo.model + ")" : "";
-      const fbSuffix = providerInfo.fallback_used ? i18n.fallback_tag : "";
-      metaParts.push(i18n.llm_label + providerInfo.provider + modelSuffix + fbSuffix);
-    }
     if (metaParts.length > 0) {
       const toolsEl = document.createElement("div");
       toolsEl.className = "clippy-tools-note";
@@ -129,14 +122,13 @@
     messagesBox.scrollTop = messagesBox.scrollHeight;
   }
 
-  function appendMessage(role, text, toolsUsed, providerInfo, isReset) {
-    renderMessage(role, text, toolsUsed, providerInfo);
+  function appendMessage(role, text, toolsUsed, isReset) {
+    renderMessage(role, text, toolsUsed);
     const history = loadHistory();
     history.push({
       role: role,
       text: text,
       toolsUsed: toolsUsed || [],
-      providerInfo: providerInfo || null,
       isReset: Boolean(isReset),
     });
     saveHistory(history);
@@ -176,11 +168,7 @@
       const data = await resp.json();
       ok = resp.ok && !data.error;
       if (data.session_id) setSessionId(data.session_id);
-      appendMessage("bot", data.reply || data.error || i18n.no_response, data.tools_used || [], {
-        provider: data.provider,
-        model: data.model,
-        fallback_used: data.fallback_used,
-      });
+      appendMessage("bot", data.reply || data.error || i18n.no_response, data.tools_used || []);
     } catch (err) {
       appendMessage("bot", i18n.network_error + err);
     } finally {
@@ -215,7 +203,7 @@
       sessionStorage.removeItem(STORAGE_KEY);
       sessionStorage.removeItem(HISTORY_KEY);
       messagesBox.innerHTML = "";
-      appendMessage("bot", i18n.reset_message, [], null, true);
+      appendMessage("bot", i18n.reset_message, [], true);
     });
   }
 
@@ -252,7 +240,7 @@
       messagesBox.innerHTML = "";
     }
     savedHistory.forEach((entry) => {
-      renderMessage(entry.role, entry.text, entry.toolsUsed, entry.providerInfo);
+      renderMessage(entry.role, entry.text, entry.toolsUsed);
     });
   }
 
