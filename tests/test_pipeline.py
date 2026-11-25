@@ -2179,3 +2179,278 @@ def test_registry_person_identity_correction_survives_matching_extraction(tmp_pa
         node, = db.list_nodes(node_type="entity")
         assert (node.id, node.name) == (old.id, "Corrected Research Name")
         assert "Old Research Name" in node.aliases
+
+
+# --- Author accuracy (docs/proposals/author-accuracy.md)
+
+SHIPPED_REGISTRY = Path(__file__).resolve().parents[1] / "ontology_registry.json"
+
+
+def _person(temp_id: str, name: str, **facets: str) -> ExtractedEntity:
+    return ExtractedEntity(
+        temp_id=temp_id, name=name, summary=f"{name}, a market commentator.", entity_type="person",
+        facets=[FacetKV(key=key, value=value) for key, value in facets.items()],
+    )
+
+
+def _company(temp_id: str, name: str, ticker: str) -> ExtractedEntity:
+    return ExtractedEntity(
+        temp_id=temp_id, name=name, summary=f"{name} makes widgets.", entity_type="company",
+        facets=[FacetKV(key="ticker", value=ticker), FacetKV(key="sector", value="Industrials")],
+    )
+
+
+def _authored_view(temp_id: str, name: str, view_type: str, about: str, author: str) -> tuple[ExtractedView, list[ExtractedEdge]]:
+    view = ExtractedView(
+        temp_id=temp_id, name=name, summary=f"{name} says demand is turning.", view_type=view_type,
+        stance="buy", support_strength="moderate", conviction="medium", as_of="2026-11-20",
+    )
+    return view, [
+        ExtractedEdge(from_ref=temp_id, to_ref=about, relation="ABOUT"),
+        ExtractedEdge(from_ref=temp_id, to_ref=author, relation="AUTHORED_BY"),
+    ]
+
+
+def _extraction(entities: list[ExtractedEntity], authored: list[tuple[ExtractedView, list[ExtractedEdge]]]) -> ExtractionResult:
+    return ExtractionResult(
+        entities=entities,
+        views=[view for view, _ in authored],
+        edges=[edge for _, edges in authored for edge in edges],
+    )
+
+
+def _set_person_facets(db: OntologyDB, name: str, **facets: str) -> Node:
+    """Test setup only: stands in for the hand-set value the app stores on a person."""
+    node = db.find_by_name_or_alias(name, node_type="entity")
+    assert node is not None, name
+    updated = node.model_copy(update={"facets": {**node.facets, **facets}})
+    db.upsert_node(updated, _deterministic_embed(name))
+    return updated
+
+
+def _json_entries_with_id(text: str, node_id: str) -> list[dict[str, Any]]:
+    """Every JSON object in `text`, at any depth, whose `id` is `node_id`."""
+    import json
+
+    decoder = json.JSONDecoder()
+    found: list[dict[str, Any]] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            if value.get("id") == node_id and value not in found:
+                found.append(value)
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    for index, char in enumerate(text):
+        if char in "[{":
+            try:
+                value, _ = decoder.raw_decode(text, index)
+            except ValueError:
+                continue
+            walk(value)
+    return found
+
+
+def _accuracy_values(value: Any) -> set[str]:
+    """Every value stored under an `accuracy` key, at any depth."""
+    if isinstance(value, dict):
+        out = {str(v) for k, v in value.items() if k == "accuracy"}
+        for item in value.values():
+            out |= _accuracy_values(item)
+        return out
+    if isinstance(value, list):
+        return set().union(*(_accuracy_values(item) for item in value)) if value else set()
+    return set()
+
+
+class _ConsensusWireProvider:
+    """Offline provider: scripted extraction, and the real `BaseLLMProvider.synthesize_consensus`,
+    so consensus goes through the real prompt builders. Records what is sent to the model."""
+
+    def __new__(cls, extraction: ExtractionResult) -> Any:
+        from stock_ontology.llm.base import BaseLLMProvider
+
+        class Provider(BaseLLMProvider):
+            name = "offline"
+            chat_model = "offline"
+            extract_stage = None  # type: ignore[assignment]
+
+            def __init__(self) -> None:
+                self.consensus_requests: list[dict[str, str]] = []
+
+            def is_configured(self) -> bool:
+                return True
+
+            def embed_texts(self, texts: list[str]) -> list[list[float]]:
+                return [_deterministic_embed(t) for t in texts]
+
+            def extract_document(self, **_: Any) -> ExtractionResult:
+                return extraction
+
+            def generate_structured(self, *, system_instruction: str, prompt: str, schema: type[Any]) -> Any:
+                assert schema is ConsensusSynthesis, schema
+                self.consensus_requests.append({"system": system_instruction, "prompt": prompt})
+                return ConsensusSynthesis(
+                    stance="buy", support_strength="moderate", conviction="medium",
+                    summary="Offline synthesis.", pillars=["Demand holds", "Supply keeps pace"],
+                    supporting_node_ids=[], contradicting_node_ids=[], facets=[],
+                )
+
+            def generate_agent_reply(self, **_: Any) -> AgentTurn:
+                raise NotImplementedError
+
+        return Provider()
+
+
+def test_consensus_input_carries_rumor_author_accuracy_and_weighting_rule(tmp_path: Path) -> None:
+    from stock_ontology.registry import load_registry
+
+    registry = load_registry(SHIPPED_REGISTRY)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "2026-11-20_acme_chatter.md").write_text("Chatter about Acme Widgets.", encoding="utf-8")
+    rumor_low = _authored_view("v_ron", "Ron Hears Acme Order", "rumor", "e_acme", "p_ron")
+    rumor_unrated = _authored_view("v_una", "Una Hears Acme Delay", "rumor", "e_acme", "p_una")
+    report_rated = _authored_view("v_rita", "Rita Initiates Acme", "analyst_report", "e_acme", "p_rita")
+    llm = _ConsensusWireProvider(_extraction(
+        [
+            _company("e_acme", "Acme Widgets", "ACMW"),
+            # `credibility` is the note's self-description; it must play no part in the weighting.
+            _person("p_ron", "Ron Rumorson", role="Trader", organization="Street Desk", credibility="high"),
+            _person("p_una", "Una Unrated", role="Trader", organization="Floor Desk", credibility="low"),
+            _person("p_rita", "Rita Rated", role="Analyst", organization="Rated Research"),
+        ],
+        [rumor_low, rumor_unrated, report_rated],
+    ))
+
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, registry=registry) as db:
+        pipeline = IngestionPipeline(db, llm, data_dir, registry=registry)
+        first = pipeline.run()
+        assert first.errors == [] and first.consensus_updated_for == ["Acme Widgets"]
+        _set_person_facets(db, "Ron Rumorson", accuracy="low")
+        _set_person_facets(db, "Rita Rated", accuracy="high")
+        llm.consensus_requests.clear()
+        report = pipeline.run(rebuild_consensus=True)
+        assert report.consensus_updated_for == ["Acme Widgets"]
+        views = {v.name: v.id for v in db.list_nodes(node_type="view", limit=100)}
+
+    request, = llm.consensus_requests
+    prompt = request["prompt"]
+
+    def accuracy_shown(view_name: str) -> set[str]:
+        entries = _json_entries_with_id(prompt, views[view_name])
+        assert entries, f"{view_name} is missing from the consensus input"
+        return set().union(*(_accuracy_values(entry) for entry in entries))
+
+    assert accuracy_shown("Ron Hears Acme Order") == {"low"}, "a rumor must carry its author's accuracy"
+    assert accuracy_shown("Una Hears Acme Delay") == {"unrated"}, (
+        "a rumor by a person with no accuracy must show `unrated`, whatever the note's credibility says"
+    )
+    assert accuracy_shown("Rita Initiates Acme") == set(), "only rumors carry author accuracy"
+    system = request["system"]
+    assert "accuracy" in system.lower() and "unrated" in system, (
+        "the synthesis instructions must state how author accuracy weighs rumors"
+    )
+
+
+def test_reingest_never_sets_or_changes_person_accuracy(tmp_path: Path) -> None:
+    from stock_ontology.registry import load_registry
+
+    class AccuracyClaimingLLM(FakePipelineLLM):
+        def extract_document(self, **_: Any) -> ExtractionResult:
+            return _extraction(
+                [
+                    _company("e_acme", "Acme Widgets", "ACMW"),
+                    _person("p_ivy", "Ivy Insider", role="Trader", organization="Street Desk", accuracy="high"),
+                ],
+                [_authored_view("v_ivy", "Ivy Hears Acme Order", "rumor", "e_acme", "p_ivy")],
+            )
+
+    registry = load_registry(SHIPPED_REGISTRY)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    note = data_dir / "2026-11-20_ivy.md"
+    note.write_text("Ivy says Acme has a big order.", encoding="utf-8")
+    llm = AccuracyClaimingLLM()
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, registry=registry) as db:
+        pipeline = IngestionPipeline(db, llm, data_dir, registry=registry)
+        assert pipeline.run().errors == []
+        ivy = db.find_by_name_or_alias("Ivy Insider", node_type="entity")
+        assert ivy is not None
+        assert "accuracy" not in ivy.facets, "extraction must not set a person's accuracy"
+
+        _set_person_facets(db, "Ivy Insider", accuracy="low")
+        note.write_text("Ivy says Acme has a bigger order.", encoding="utf-8")
+        assert pipeline.run().errors == []
+        ivy = db.find_by_name_or_alias("Ivy Insider", node_type="entity")
+        assert ivy is not None and ivy.facets.get("accuracy") == "low", (
+            "re-ingesting a note must not change a person's accuracy"
+        )
+
+
+def test_person_accuracy_correction_is_checked_stored_and_refreshes_all_their_rumors(tmp_path: Path) -> None:
+    from stock_ontology.config import Settings
+    from stock_ontology.registry import load_registry, save_registry
+    from stock_ontology.services.corrections import review_note_correction
+    from stock_ontology.services.errors import ServiceError
+    from stock_ontology.services.processing import ProcessingService
+    from stock_ontology.worker import Worker
+
+    ron = _person("p_ron", "Ron Rumorson", role="Trader", organization="Street Desk", credibility="high")
+
+    class TwoNotesLLM(FakePipelineLLM):
+        def extract_document(self, *, source_meta: dict[str, Any], **_: Any) -> ExtractionResult:
+            if "acme" in source_meta["file_path"]:
+                company, view = _company("e_c", "Acme Widgets", "ACMW"), "Ron Hears Acme Order"
+            else:
+                company, view = _company("e_c", "Beta Gears", "BTAG"), "Ron Hears Beta Delay"
+            return _extraction([company, ron], [_authored_view("v_ron", view, "rumor", "e_c", "p_ron")])
+
+    settings = Settings(db_path=tmp_path / "ontology.db", registry_path=tmp_path / "registry.json",
+                        data_dir=tmp_path / "data", embedding_dim=DIM)
+    settings.data_dir.mkdir()
+    registry = load_registry(SHIPPED_REGISTRY)
+    save_registry(registry, settings.registry_path)
+    acme_note = settings.data_dir / "2026-11-20_acme.md"
+    acme_note.write_text("Ron on Acme.", encoding="utf-8")
+    (settings.data_dir / "2026-11-21_beta.md").write_text("Ron on Beta.", encoding="utf-8")
+    llm = TwoNotesLLM()
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        assert IngestionPipeline(db, llm, settings.data_dir, registry=registry).run().errors == []
+        person = db.find_by_name_or_alias("Ron Rumorson", node_type="entity")
+        assert person is not None
+
+    def correct(changes: dict[str, Any]) -> dict[str, Any]:
+        with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry, read_only=True) as db:
+            payload = review_note_correction(db, acme_note, settings.data_dir, kind="person",
+                                             record=person.id, changes=changes)
+        jobs = ProcessingService(settings)
+        ref = jobs.submit_correction("note.ontology.correction", acme_note.name, payload)
+        Worker(settings, llm_factory=lambda _settings: llm).run_once(scan=False)
+        status = jobs.get_status(ref.job_id)
+        assert status["state"] == "succeeded", status
+        return status
+
+    def stored() -> dict[str, Any]:
+        with OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True) as db:
+            node = db.get_node(person.id)
+            assert node is not None
+            return node.facets
+
+    # Corrected from the Acme note, the refresh still reaches Beta, where Ron's other rumor lives.
+    status = correct({"accuracy": "low"})
+    assert stored().get("accuracy") == "low"
+    assert stored().get("credibility") == "high", "the LLM-set credibility must be left as it was"
+    assert set(status["result"]["consensus_updated_for"]) >= {"Acme Widgets", "Beta Gears"}
+
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry, read_only=True) as db:
+        with pytest.raises(ServiceError):
+            review_note_correction(db, acme_note, settings.data_dir, kind="person",
+                                   record=person.id, changes={"accuracy": "excellent"})
+
+    correct({"accuracy": None})
+    assert "accuracy" not in stored(), "clearing accuracy must leave the person unrated"

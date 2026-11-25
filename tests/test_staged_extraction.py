@@ -260,3 +260,12 @@ def test_consensus_prompt_keeps_summary_inside_the_registry_limit() -> None:
 
     limit = load_registry(SHIPPED).metadata_max_length["summary"]
     assert "under 900 characters" in CONSENSUS_SYSTEM_PROMPT and 900 < limit
+
+
+def test_staged_extraction_cannot_set_a_person_accuracy(tmp_path: Path) -> None:
+    entities = _entities()
+    entities["entities"][1]["facets"].append({"key": "accuracy", "value": "high"})
+    _, db_path = _ingest(tmp_path, _StageLLM(entities=[entities]))
+    with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
+        person = db.find_by_name_or_alias("Jo Lee", node_type="entity")
+        assert person is not None and "accuracy" not in person.facets

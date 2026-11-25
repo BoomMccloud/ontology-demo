@@ -690,3 +690,18 @@ def test_pending_edges_are_cleared_with_their_note(tmp_path: Path) -> None:
         report = IngestionPipeline(db, _ScriptedFakeLLM(_FROBNICATES_PAYLOAD), data, registry=reg).run()
         assert report.files_deleted == 1
         assert _pending_count(db) == 0
+
+
+def _person(facets: dict) -> Node:
+    return Node(id="ent_p", node_type="entity", name="Pat Person", summary="p",
+                facets={"entity_type": "person", "role": "Trader", "organization": "Desk", **facets})
+
+
+def test_person_accuracy_is_an_optional_official_enum(tmp_path: Path) -> None:
+    with OntologyDB(tmp_path / "s.db", embedding_dim=DIM, registry=_shipped_registry()) as db:
+        db.upsert_node(_person({}))
+        db.upsert_node(_person({"accuracy": "LOW"}))
+        stored = db.get_node("ent_p")
+        assert stored is not None and stored.facets["accuracy"] == "low"
+        with pytest.raises(FacetSchemaError):
+            db.upsert_node(_person({"accuracy": "excellent"}))

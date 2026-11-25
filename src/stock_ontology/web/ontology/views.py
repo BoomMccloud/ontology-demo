@@ -379,6 +379,7 @@ def build_registry_edit_context(
             actions["registry_edit_values"] = {
                 "name": node.name, "aliases": node.aliases, "role": node.facets.get("role", ""),
                 "organization": node.facets.get("organization", ""),
+                "accuracy": node.facets.get("accuracy", ""),
             }
     anchor_ids = ctx["registry_graph_ids"]
     anchor = anchor_ids[0] if len(anchor_ids) == 1 else ""

@@ -31,6 +31,10 @@
       {% else %}
         <label><span>{{ t('facet.role') }}</span><input data-edit-field="role" value="{{ values.role or '' }}"{% if values.role %} required{% endif %}></label>
         <label><span>{{ t('facet.organization') }}</span><input data-edit-field="organization" value="{{ values.organization or '' }}"{% if values.organization %} required{% endif %}></label>
+        <label><span>{{ t('facet.accuracy') }}</span><select data-edit-field="accuracy">
+          <option value=""{% if not values.accuracy %} selected{% endif %}>{{ t('ontology_edit.accuracy_unrated') }}</option>
+          {% for level in ('high', 'medium', 'low') %}<option value="{{ level }}"{% if level == values.accuracy %} selected{% endif %}>{{ t_enum('accuracy', level) }}</option>{% endfor %}
+        </select></label>
       {% endif %}
       <button type="submit" class="retro-link-btn">{{ t('ontology_edit.review') }}</button>
       <p role="status" data-ontology-status></p>
