@@ -206,3 +206,37 @@ def test_registry_service_reads_the_applied_registry_not_the_published_file(tmp_
     fresh = tmp_path / "fresh.db"
     with OntologyDB(fresh) as db:
         assert service.get_applied(db).revision() == published.revision()
+
+
+def test_record_edits_person_corrections_and_rollout_share_one_identity_rule() -> None:
+    import ast
+    import inspect
+    import textwrap
+
+    import pytest
+
+    from stock_ontology import worker
+    from stock_ontology.services import corrections
+    from stock_ontology.services.errors import ServiceError
+    from stock_ontology.services.registry import RegistryService, identity_aliases, identity_labels, labels_taken
+
+    assert identity_aliases("Old", "New", ["new", "Alt", "alt"], keep_previous_name=True, max_length=10) == ["Alt", "Old"]
+    assert identity_aliases("Old", "New", ["Alt"], keep_previous_name=False, max_length=10) == ["Alt"]
+    with pytest.raises(ServiceError) as too_long:
+        identity_aliases("Old", "New", ["A much longer alias"], keep_previous_name=False, max_length=10)
+    assert (too_long.value.code, too_long.value.key) == ("invalid", "service_error.alternate_name_too_long")
+    assert identity_labels("Acme", None, "ACME", "") == {"acme"}
+    assert labels_taken({"acme"}, [{"beta"}, {"acme", "acme corp"}])
+    assert not labels_taken({"acme"}, [{"beta"}])
+
+    def calls(function: object) -> set[str]:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(function)))  # type: ignore[arg-type]
+        return {node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+                for node in ast.walk(tree) if isinstance(node, ast.Call)}
+
+    # A registry record edit and a person correction assemble names and check collisions the same way;
+    # the rollout preview maps a registry diff onto nodes but checks collisions by the same rule.
+    for function in (RegistryService.review_record_edit, corrections.review_note_correction):
+        assert {"identity_aliases", "labels_taken"} <= calls(function), function
+        assert "unique_labels" not in calls(function), function
+    assert "labels_taken" in calls(worker._rollout_record_metadata)

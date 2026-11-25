@@ -14,10 +14,11 @@ from stock_ontology.db.schema import (
     node_to_dict,
     reconcile_sentiment,
 )
-from stock_ontology.db.storage import OntologyDB, RegistryChangedError
+from stock_ontology.db.storage import EdgeRejected, OntologyDB, RegistryChangedError
 
 __all__ = [
     "TERMINAL_STATES",
+    "EdgeRejected",
     "Job",
     "JobStore",
     "LeaseLostError",

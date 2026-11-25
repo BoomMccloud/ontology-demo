@@ -67,6 +67,15 @@ class RegistryChangedError(FacetSchemaError):
     """The applied registry changed since this connection opened: reopen it and retry the work."""
 
 
+class EdgeRejected(ValueError):
+    """A proposed edge the applied registry refuses. `reason` is `relation` (not mapped),
+    `endpoints` (missing or the same node) or `not_allowed` (endpoint types the relation forbids)."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 def _edge_rank(relation: Any, edge_facets: dict[str, Any]) -> tuple[int, int]:
     """Rank duplicate edges to one neighbor: prefer a known sentiment, then ABOUT."""
     return (
@@ -409,6 +418,30 @@ class OntologyDB:
             yield
         finally:
             self.registry = previous
+
+    def check_edge(
+        self, relation: str, from_id: str, to_id: str, facets: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """The one check for a corrected or added edge: a mapped relation, two different existing
+        endpoints the relation allows, and facets that satisfy the registry. Returns the canonical
+        `from_id`, `to_id`, `relation` and `facets`, or raises `EdgeRejected` or `FacetSchemaError`."""
+        if self.registry.resolve_relation(relation or "") is None:
+            raise EdgeRejected("relation", "The registry does not map that relationship type.")
+        nodes = {node.id: node for node in self.get_nodes([from_id, to_id])}
+        if from_id == to_id or len(nodes) != 2:
+            raise EdgeRejected("endpoints", "Select two different existing ontology nodes.")
+        _, from_type, from_entity_type = node_meta(nodes[from_id])
+        _, to_type, to_entity_type = node_meta(nodes[to_id])
+        canonical = self.registry.canonicalize_edge(
+            relation, from_id=from_id, from_type=from_type, from_entity_type=from_entity_type,
+            to_id=to_id, to_type=to_type, to_entity_type=to_entity_type, facets=facets,
+        )
+        if not canonical.endpoints_ok:
+            raise EdgeRejected("not_allowed", "The registry does not allow that relationship between these nodes.")
+        return {
+            "from_id": canonical.from_id, "to_id": canonical.to_id, "relation": canonical.relation,
+            "facets": self.registry.check_facets(None, canonical.facets, relation=canonical.relation),
+        }
 
     def _check_edge_endpoints(self, relation: str, from_id: str, to_id: str) -> None:
         """Refuse endpoints the relation does not allow. A missing node is left to the foreign key."""

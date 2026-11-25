@@ -397,7 +397,7 @@ def test_corrections_are_claimed_ahead_of_earlier_extraction(tmp_path: Path) -> 
     service = ProcessingService(settings)
     extraction = service.request_processing("a.md")
     correction = service.submit_correction(
-        "note.relationship.delete", "b.md", {"edge_id": "edge_x", "expected_hash": None}
+        "note.entity.delete", "b.md", {"entity_id": "entity_x", "expected_hash": None}
     )
     worker = _worker(settings, _ScriptLLM(), clock)
     with worker.open_store() as db:
@@ -406,6 +406,10 @@ def test_corrections_are_claimed_ahead_of_earlier_extraction(tmp_path: Path) -> 
         second = db.jobs.claim(clock(), 30)
     assert first is not None and second is not None
     assert (first.job_id, second.job_id) == (correction.job_id, extraction.job_id)
+    # Reader relationship jobs queued before they were retired still run ahead of extraction.
+    from stock_ontology.services.processing import RETIRED_CORRECTION_KINDS, job_priority
+
+    assert {job_priority(kind) for kind in RETIRED_CORRECTION_KINDS} == {job_priority("note.entity.delete")}
 
 
 def test_three_attempts_with_exponential_backoff_and_a_new_revision_resets_the_budget(

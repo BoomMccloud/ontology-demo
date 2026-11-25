@@ -50,9 +50,13 @@ from stock_ontology.services import (
     job_priority,
 )
 from stock_ontology.services.notes import has_changes
-from stock_ontology.services.corrections import review_note_correction
+from stock_ontology.services.corrections import (
+    READER_RELATIONSHIP_KINDS,
+    review_note_correction,
+    review_reader_correction,
+)
 from stock_ontology.services.processing import process_job_id
-from stock_ontology.services.registry import changed_fields, unique_labels
+from stock_ontology.services.registry import changed_fields, identity_labels, labels_taken, unique_labels
 
 logger = logging.getLogger(__name__)
 
@@ -148,16 +152,14 @@ def _rollout_record_metadata(
             elif matches:
                 node = matches[0]
                 requested = {edit["field"]: edit["after"] for edit in edits}
-                introduced = set(map(normalize_name_key, [requested.get("name", ""), *requested.get("aliases", [])])) - {""}
+                introduced = identity_labels(requested.get("name"), *requested.get("aliases", []))
                 ticker = normalize_ticker(requested.get("ticker"))
-                if any(
-                    other.id != node.id and (
-                        introduced & set(map(normalize_name_key, [other.name, *other.aliases]))
-                        or ticker and node_type == "entity"
-                        and other.facets.get("entity_type") == "company"
-                        and normalize_ticker(str(other.facets.get("ticker") or "")) == ticker
-                    )
-                    for other in nodes
+                others = [other for other in nodes if other.id != node.id]
+                if labels_taken(introduced, (identity_labels(other.name, *other.aliases) for other in others)) or any(
+                    ticker and node_type == "entity"
+                    and other.facets.get("entity_type") == "company"
+                    and normalize_ticker(str(other.facets.get("ticker") or "")) == ticker
+                    for other in others
                 ):
                     entry["effect"] = "ambiguous"
                 else:
@@ -491,7 +493,7 @@ class Worker:
         params = job.payload
         path = NotesService(self.settings, self.processing).resolve(job.target).resolve()
         pipeline = self._pipeline(db, job)
-        if job.kind == "note.ontology.correction":
+        if job.kind == "note.ontology.correction" or job.kind in READER_RELATIONSHIP_KINDS:
             return self._run_ontology_correction(db, job, pipeline, path)
         if job.stage == "write":
             expected = params.get("expected_hash")
@@ -503,17 +505,6 @@ class Worker:
                 pipeline.add_note_entity(path, params["entity_id"], expected)
             elif job.kind == "note.entity.delete":
                 pipeline.delete_note_entity(path, params["entity_id"], expected)
-            elif job.kind == "note.relationship":
-                pipeline.correct_note_relationship(
-                    path, params["edge_id"], params["relation"], bool(params.get("reverse")), expected,
-                    from_id=params.get("from_id"), to_id=params.get("to_id"),
-                )
-            elif job.kind == "note.relationship.add":
-                pipeline.add_note_relationship(
-                    path, params["from_id"], params["relation"], params["to_id"], expected, facets=params.get("facets"),
-                )
-            elif job.kind == "note.relationship.delete":
-                pipeline.delete_note_relationship(path, params["edge_id"], expected)
             else:
                 raise ServiceError("invalid", f"Unknown correction: {job.kind}")
             self._wrote(db, job)
@@ -527,9 +518,13 @@ class Worker:
         if job.stage == "write":
             with db.transaction(immediate=True):
                 self._check(db, job)
-                fresh = review_note_correction(db, path, self.settings.data_dir, **reviewed["request"])
-                if fresh != reviewed:
-                    raise ServiceError("conflict", "The source or graph changed after review.")
+                if job.kind in READER_RELATIONSHIP_KINDS:
+                    # Queued by the note reader before it reviewed at submit: review it now, by the same rules.
+                    fresh = review_reader_correction(db, path, self.settings.data_dir, job.kind, reviewed)
+                else:
+                    fresh = review_note_correction(db, path, self.settings.data_dir, **reviewed["request"])
+                    if fresh != reviewed:
+                        raise ServiceError("conflict", "The source or graph changed after review.")
                 pipeline.apply_note_correction(path, fresh)
                 self._wrote(db, job)
         updated = self._finish_consensus(db, pipeline, replace(job, stage="consensus"))

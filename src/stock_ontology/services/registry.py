@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,29 @@ def unique_labels(labels: list[str], *, excluding: str = "") -> list[str]:
             result.append(label)
             seen.add(key)
     return result
+
+
+def identity_aliases(
+    previous_name: str, name: str, aliases: list[str], *, keep_previous_name: bool, max_length: int,
+) -> list[str]:
+    """The one rule for a renamed or re-aliased record or node: keep the previous name as an alias
+    when asked, drop duplicates and the name itself, and refuse an alias over the name length limit."""
+    if keep_previous_name and name != previous_name:
+        aliases = [*aliases, previous_name]
+    aliases = unique_labels(aliases, excluding=name)
+    if any(len(alias) > max_length for alias in aliases):
+        raise ServiceError("invalid", "An alternate name exceeds the name length limit.", key="service_error.alternate_name_too_long")
+    return aliases
+
+
+def identity_labels(*labels: str | None) -> set[str]:
+    """Normalized names, aliases and tickers that identify one record or node."""
+    return set(map(normalize_name_key, (label or "" for label in labels))) - {""}
+
+
+def labels_taken(introduced: set[str], others: Iterable[set[str]]) -> bool:
+    """Whether a newly introduced label already identifies another record or node."""
+    return any(introduced & labels for labels in others)
 
 
 def changed_fields(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
@@ -94,22 +118,21 @@ class RegistryService:
             else:
                 text = edit_text(value, field, required=field not in {"ticker", "description"})
                 after[field] = (normalize_ticker(text) or None) if field == "ticker" else text
-        if keep_previous_name and after["name"] != before["name"]:
-            after["aliases"] = [*after["aliases"], before["name"]]
-        after["aliases"] = unique_labels(after["aliases"], excluding=after["name"])
         current.check_metadata(after["name"], after.get("description", ""))
-        if any(len(alias) > current.metadata_max_length["name"] for alias in after["aliases"]):
-            raise ServiceError("invalid", "An alternate name exceeds the name length limit.", key="service_error.alternate_name_too_long")
+        after["aliases"] = identity_aliases(
+            before["name"], after["name"], after["aliases"],
+            keep_previous_name=keep_previous_name, max_length=current.metadata_max_length["name"],
+        )
         if kind == "themes" and "stage" in changes and after["stage"] not in current._vocabulary("theme", "stage")["members"]:
             raise ServiceError("invalid", "Choose a stage from the published registry.", key="service_error.choose_stage")
         if "ticker" in changes and changes["ticker"].strip() and not after["ticker"]:
             raise ServiceError("invalid", "Enter a valid ticker.", key="service_error.invalid_ticker")
 
         def labels(item: dict[str, Any]) -> set[str]:
-            return set(map(normalize_name_key, [item["name"], item.get("ticker") or "", *item["aliases"]])) - {""}
+            return identity_labels(item["name"], item.get("ticker"), *item["aliases"])
 
         introduced = labels(after) - labels(before)
-        if any(introduced & labels(item.model_dump()) for idx, item in enumerate(records) if idx != index):
+        if labels_taken(introduced, (labels(item.model_dump()) for idx, item in enumerate(records) if idx != index)):
             raise ServiceError("conflict", "A name, alternate name, or ticker already identifies another record.", key="service_error.identifier_taken")
         diff = changed_fields(before, after)
         if not diff:

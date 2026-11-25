@@ -501,7 +501,8 @@ def test_note_reader_extraction_workflow(tmp_path: Path) -> None:
         assert 400 <= invalid.status_code < 500, invalid.text
     assert relationships() == [corrected]
     assert relationships("peer.txt") == peer_edges
-    assert 'data-job-state="failed"' in read_note(), "the reader must show the failed correction"
+    # An invalid correction is rejected at submit by the shared review, so no job is queued or failed.
+    assert 'data-job-state="failed"' not in read_note()
 
     focus.write_text("Extraction fails here.\n", encoding="utf-8")
     reader = read_note()
@@ -845,9 +846,11 @@ def test_note_reader_adds_and_deletes_relationships(tmp_path: Path) -> None:
         assert 400 <= response.status_code < 500, response.text
     assert note_edges() == []
 
-    for _ in range(2):
-        response = _note_action(client, settings, llm, add_url, {**add, "expected_hash": source_hash})
-        assert response.status_code == 200, response.text
+    response = _note_action(client, settings, llm, add_url, {**add, "expected_hash": source_hash})
+    assert response.status_code == 200, response.text
+    # The same relationship again is a duplicate, refused as on the Ontology page.
+    response = _note_action(client, settings, llm, add_url, {**add, "expected_hash": source_hash})
+    assert response.status_code == 409, response.text
     edge, = note_edges()
     assert (edge["from_id"], edge["relation"], edge["to_id"]) == ("alpha", "BUY", "beta")
     assert re.search(r"<tr\b[^>]*>\s*<td>Alpha</td>\s*<td>BUY\s*</td>\s*<td>Beta</td>",
@@ -1261,3 +1264,19 @@ def test_note_reader_form_opened_before_an_ontology_correction_cannot_reapply(tm
     assert (judged.phase, judged.status) == ("submit", 404), judged
     assert judged.detail == translate("service_error.relationship_missing", lang="en")
     assert _note_graph(settings) == corrected
+
+
+def test_note_reader_reverse_reviews_like_the_swapped_endpoints(tmp_path: Path) -> None:
+    from stock_ontology.services.corrections import review_reader_correction
+
+    settings, _, _ = _correction_workspace(tmp_path / "graph")
+    path = (settings.data_dir / "note.md").resolve()
+    with OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True) as db:
+        def review(params: dict[str, Any]) -> dict[str, Any]:
+            return review_reader_correction(db, path, settings.data_dir, "note.relationship",
+                                             {"edge_id": "original", "relation": "COMPETE", **params})
+
+        reversed_ = review({"reverse": True})
+        swapped = review({"from_id": "b", "to_id": "a"})
+    assert reversed_["edges"] == swapped["edges"]
+    assert reversed_["request"]["changes"] == swapped["request"]["changes"]
