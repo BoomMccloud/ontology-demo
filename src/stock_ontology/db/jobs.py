@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from collections.abc import Callable, Iterable
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import AbstractContextManager, closing, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 TERMINAL_STATES = ("succeeded", "failed", "superseded")
@@ -294,3 +295,20 @@ class JobStore:
                 "WHERE company_id = ? AND completed_revision < target_revision",
                 (error[:500], now.isoformat(), company_id),
             )
+
+
+@contextmanager
+def read_jobs(db_path: str | Path) -> Iterator[JobStore | None]:
+    """Read job rows on a plain read-only connection, or None when the database does not exist.
+
+    A status poll needs neither sqlite-vec nor the applied registry, so it skips `OntologyDB`."""
+    from stock_ontology.db.storage import BUSY_TIMEOUT_MS  # storage imports this module
+
+    if not Path(db_path).exists():
+        yield None
+        return
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only = ON;")
+        conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS};")
+        yield JobStore(conn, lambda **_: nullcontext())

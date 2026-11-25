@@ -59,6 +59,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_LEASE_SECONDS = 900
 # Reopen-and-retry limit when the applied registry keeps changing under one attempt.
 REGISTRY_REOPENS = 3
+# How often the service loop looks for spooled submissions between notes scans.
+SPOOL_SECONDS = 2.0
 
 
 class _Superseded(Exception):
@@ -247,6 +249,8 @@ class Worker:
         self.clock = clock or (lambda: datetime.now(UTC))
         self.processing = ProcessingService(settings)
         self._llm: Any = None
+        self._queue_db: OntologyDB | None = None
+        self._sessions = 0
 
     # --- connections and the queue
 
@@ -256,6 +260,41 @@ class Worker:
         target = settings or self.settings
         with OntologyDB(target.db_path, embedding_dim=target.embedding_dim) as db:
             yield db
+
+    @contextmanager
+    def _session(self) -> Iterator[None]:
+        """Hold one queue connection for a `run_forever` loop or one `run_once` / `run_until` call."""
+        self._sessions += 1
+        try:
+            yield
+        finally:
+            self._sessions -= 1
+            if self._sessions == 0:
+                self._close_queue()
+
+    def _close_queue(self) -> None:
+        if self._queue_db is not None:
+            self._queue_db.close()
+            self._queue_db = None
+
+    def _queue[T](self, op: Callable[[OntologyDB], T]) -> T:
+        """Run a queue operation on the session's connection; a changed registry reopens it once."""
+        for reopened in (False, True):
+            if self._queue_db is None:
+                self._queue_db = OntologyDB(self.settings.db_path, embedding_dim=self.settings.embedding_dim)
+            try:
+                return op(self._queue_db)
+            except RegistryChangedError:
+                self._close_queue()
+                if reopened:
+                    raise
+            except BaseException:
+                self._close_queue()
+                raise
+            finally:
+                if self._sessions == 0:
+                    self._close_queue()
+        raise AssertionError("unreachable")
 
     def llm(self) -> Any:
         if self._llm is None:
@@ -281,43 +320,48 @@ class Worker:
 
     def run_once(self, *, scan: bool = True) -> int:
         """Recover and run every due job, then (with `scan`) queue and run a scan for note changes."""
-        with self.open_store() as db:
-            self.intake(db)
-        ran = self._drain()
-        if scan and self._queue_scan():
-            ran += self._drain()
-        return ran
+        with self._session():
+            self._queue(self.intake)
+            ran = self._drain()
+            if scan and self._queue_scan():
+                ran += self._drain()
+            return ran
 
     def run_until(self, job_id: str, *, poll_seconds: float = 1.0) -> Job:
         """Run the worker loop in this process until `job_id` reaches a terminal state."""
-        while True:
-            with self.open_store() as db:
-                self.intake(db)
-            self._drain()
-            with self.open_store() as db:
-                job = db.jobs.get(job_id)
-            if job is None:
-                raise ServiceError("not_found", f"Job not found: {job_id}")
-            if job.state in TERMINAL_STATES:
-                return job
-            due = job.next_attempt_at if job.state == "queued" else job.lease_expires_at
-            wait = (datetime.fromisoformat(due) - self.clock()).total_seconds() if due else poll_seconds
-            time.sleep(min(max(wait, 0.05), poll_seconds * 5))
+        with self._session():
+            while True:
+                self._queue(self.intake)
+                self._drain()
+                job = self._queue(lambda db: db.jobs.get(job_id))
+                if job is None:
+                    raise ServiceError("not_found", f"Job not found: {job_id}")
+                if job.state in TERMINAL_STATES:
+                    return job
+                due = job.next_attempt_at if job.state == "queued" else job.lease_expires_at
+                wait = (datetime.fromisoformat(due) - self.clock()).total_seconds() if due else poll_seconds
+                time.sleep(min(max(wait, 0.05), poll_seconds * 5))
 
     def run_forever(self, interval_seconds: float) -> None:
-        """The long-running worker: recover pending jobs, scan for changes, sleep, repeat."""
-        while True:
-            try:
-                self.run_once(scan=True)
-            except Exception:  # noqa: BLE001 - one failing tick must not stop the worker
-                logger.exception("Worker tick failed; retrying after %s seconds", interval_seconds)
-            time.sleep(interval_seconds)
+        """The long-running worker: scan notes every `interval_seconds`, and between scans
+        start spooled submissions within `SPOOL_SECONDS`. One queue connection serves the loop."""
+        next_scan = time.monotonic()
+        with self._session():
+            while True:
+                try:
+                    if time.monotonic() >= next_scan:
+                        next_scan = time.monotonic() + interval_seconds
+                        self.run_once(scan=True)
+                    elif self.processing.has_submissions():
+                        self.run_once(scan=False)
+                except Exception:  # noqa: BLE001 - one failing tick must not stop the worker
+                    logger.exception("Worker tick failed; retrying after %s seconds", SPOOL_SECONDS)
+                time.sleep(max(0.0, min(SPOOL_SECONDS, next_scan - time.monotonic())))
 
     def _drain(self) -> int:
         ran = 0
         while True:
-            with self.open_store() as db:
-                job = db.jobs.claim(self.clock(), self.lease_seconds, max_attempts=MAX_ATTEMPTS)
+            job = self._queue(lambda db: db.jobs.claim(self.clock(), self.lease_seconds, max_attempts=MAX_ATTEMPTS))
             if job is None:
                 return ran
             self._execute(job)
@@ -325,7 +369,7 @@ class Worker:
 
     def _queue_scan(self) -> bool:
         """Queue one ingest scan when notes changed on disk or a consensus refresh is still pending."""
-        with self.open_store() as db:
+        def queue(db: OntologyDB) -> bool:
             if db.jobs.has_active("ingest"):
                 return False
             if not db.jobs.pending_consensus() and not has_changes(Path(self.settings.data_dir), db.get_ingestion_log()):
@@ -335,7 +379,9 @@ class Worker:
                 job_id=f"job_scan_{now.strftime('%Y%m%dT%H%M%S%f')}", kind="ingest", target="", revision="",
                 priority=job_priority("scan"), payload={"scan": True}, created_at=now.isoformat(), now=now,
             )
-        return True
+            return True
+
+        return self._queue(queue)
 
     # --- one attempt
 
@@ -383,8 +429,9 @@ class Worker:
             retry_at = now + timedelta(seconds=BACKOFF_SECONDS * 2 ** (job.attempts - 1))
         if not terminal and retry_at is None:
             code = "failed"
-        with self.open_store() as db:
-            db.jobs.fail(job.job_id, job.claim_id or "", code=code, error=error[:2000], retry_at=retry_at, now=now)
+        self._queue(lambda db: db.jobs.fail(
+            job.job_id, job.claim_id or "", code=code, error=error[:2000], retry_at=retry_at, now=now,
+        ))
 
     def _check(self, db: OntologyDB, job: Job) -> None:
         db.jobs.check_claim(job.job_id, job.claim_id or "", self.clock(), self.lease_seconds)

@@ -161,6 +161,7 @@ def test_agent_journey_through_cli_json_survives_worker_kill(
 # is unchanged; everything below exercises the job store, worker, and CLI contract directly.
 # ---------------------------------------------------------------------------
 
+import sqlite3  # noqa: E402
 import sys  # noqa: E402
 from collections.abc import Callable, Iterator  # noqa: E402
 from contextlib import contextmanager  # noqa: E402
@@ -819,3 +820,130 @@ def test_run_forever_continues_after_a_tick_raises(tmp_path: Path, monkeypatch: 
     with pytest.raises(_StopWorker):
         worker.run_forever(0)
     assert len(calls) == 2
+
+
+class _LoopTime:
+    """Fake `time` for `run_forever`: sleeping advances a monotonic clock and runs scheduled hooks."""
+
+    def __init__(self, hooks: dict[float, Callable[[], None]], stop_at: float) -> None:
+        self.now = 0.0
+        self.hooks = dict(sorted(hooks.items()))
+        self.stop_at = stop_at
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+        for at in [at for at in self.hooks if at <= self.now]:
+            self.hooks.pop(at)()
+        if self.now >= self.stop_at:
+            raise _StopWorker
+
+
+def _run_service(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings, hooks: dict[float, Callable[[], None]],
+) -> tuple[_LoopTime, list[float], list[float]]:
+    """Run the worker service loop on fake time; return it, the open times, and the job start times."""
+    import stock_ontology.worker as worker_module
+
+    loop = _LoopTime(hooks, stop_at=30)
+    opens: list[float] = []
+    starts: list[float] = []
+
+    class CountingDB(OntologyDB):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            opens.append(loop.now)
+            super().__init__(*args, **kwargs)
+
+    worker = Worker(settings, llm_factory=lambda _settings: _ScriptLLM())
+    execute = worker._execute
+
+    def timed_execute(job: Any) -> None:
+        starts.append(loop.now)
+        execute(job)
+
+    monkeypatch.setattr(worker_module, "OntologyDB", CountingDB)
+    monkeypatch.setattr(worker_module, "time", loop)
+    monkeypatch.setattr(worker, "_execute", timed_execute)
+    with pytest.raises(_StopWorker):
+        worker.run_forever(60)
+    return loop, opens, starts
+
+
+def test_idle_worker_opens_once_and_starts_a_spooled_job_within_two_seconds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _workspace(tmp_path)
+    refs: list[Any] = []
+
+    def submit() -> None:
+        _note(settings, "a.md", "Alpha note\n")
+        refs.append(ProcessingService(settings).request_processing("a.md"))
+
+    _loop, opens, starts = _run_service(monkeypatch, settings, {10: submit})
+
+    assert [t for t in opens if t < 10] == [0], "an idle worker must open the database once, not per tick"
+    assert len(starts) == 1 and 10 <= starts[0] <= 12, f"a spooled job must start within 2 s, started at {starts}"
+    assert len(opens) == 2, "the job attempt adds exactly one open"
+    assert ProcessingService(settings).get_status(refs[0].job_id)["state"] == "succeeded"
+
+
+def test_reused_worker_connection_detects_a_registry_change_between_ticks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _workspace(tmp_path)
+    adopted = create_minimal_registry()
+    adopted.version += 1
+    refs: list[Any] = []
+
+    def adopt() -> None:
+        with OntologyDB(settings.db_path, embedding_dim=DIM) as other:
+            other.record_registry_adoption(adopted, None, "test")
+
+    def submit() -> None:
+        _note(settings, "a.md", "Alpha note\n")
+        refs.append(ProcessingService(settings).request_processing("a.md"))
+
+    _loop, opens, starts = _run_service(monkeypatch, settings, {4: adopt, 10: submit})
+
+    assert "Worker tick failed" not in caplog.text
+    assert len(starts) == 1 and 10 <= starts[0] <= 12
+    assert len([t for t in opens if t >= 10]) == 2, "the stale queue connection reopens once, then the attempt opens"
+    status = ProcessingService(settings).get_status(refs[0].job_id)
+    assert (status["state"], status["attempts"]) == ("succeeded", 1), status
+    with _read(settings) as db:
+        assert db.registry.revision() == adopted.revision()
+
+
+def test_job_status_reads_skip_the_full_store_and_stay_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from stock_ontology.db import read_jobs
+    from stock_ontology.services import ServiceError
+
+    settings = _workspace(tmp_path)
+    service = ProcessingService(settings)
+    with pytest.raises(ServiceError):
+        service.get_status("job_missing")  # no database yet
+    _note(settings, "a.md", "Alpha note\n")
+    done = service.request_processing("a.md")
+    _worker(settings, _ScriptLLM(), _Clock()).run_once(scan=False)
+    _note(settings, "a.md", "Alpha note, revised\n")
+    spooled = service.request_processing("a.md")
+    expected = {done.job_id: service.get_status(done.job_id), spooled.job_id: service.get_status(spooled.job_id)}
+    latest = service.latest_for_note("a.md")
+
+    def no_full_store(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("a status read must not open a full OntologyDB")
+
+    monkeypatch.setattr(OntologyDB, "__init__", no_full_store)
+    assert {job_id: service.get_status(job_id) for job_id in expected} == expected
+    assert expected[done.job_id]["state"] == "succeeded" and expected[spooled.job_id]["state"] == "queued"
+    assert service.latest_for_note("a.md") == latest
+    with pytest.raises(ServiceError):
+        service.get_status("job_missing")
+    with read_jobs(settings.db_path) as jobs:
+        assert jobs is not None
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            jobs._conn.execute("DELETE FROM jobs")

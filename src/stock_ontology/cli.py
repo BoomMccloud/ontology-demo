@@ -292,7 +292,7 @@ def reembed(
 @app.command()
 def watch(
     interval: Annotated[
-        int, typer.Option("--interval", min=5, help="Polling interval in seconds.")
+        int, typer.Option("--interval", min=5, help="Seconds between note scans. Queued jobs start within 2 seconds.")
     ] = 60,
     data_dir: Annotated[
         Path | None, typer.Option("--data-dir", help="Root folder containing research notes (any folder layout).")
@@ -321,7 +321,7 @@ def watch(
 @app.command()
 def worker(
     once: Annotated[bool, typer.Option("--once", help="Run due work once and exit.")] = False,
-    interval: Annotated[int, typer.Option("--interval", min=1, help="Seconds between scans.")] = 60,
+    interval: Annotated[int, typer.Option("--interval", min=1, help="Seconds between note scans. Queued jobs start within 2 seconds.")] = 60,
     lease_seconds: Annotated[
         float, typer.Option("--lease-seconds", min=1, help="How long a claim holds a job without renewal.")
     ] = DEFAULT_LEASE_SECONDS,

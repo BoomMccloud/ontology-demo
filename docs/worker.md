@@ -15,6 +15,10 @@ everyday code deploy is in [deploy.md](deploy.md).
 - The worker moves submissions into the `jobs` table, claims due jobs with a
   15-minute lease, runs them, and records the outcome. A restarted worker reclaims
   jobs whose lease expired.
+- The worker checks the spool every 2 seconds, so a submitted job starts within
+  2 seconds when no other job is running. It rescans the notes folder once per
+  `--interval`. It keeps one database connection open for the queue and opens one
+  more for each job attempt.
 - Corrections run first, then operator commands, then note extraction. A job gets
   3 attempts with backoff starting at 60 seconds. Invalid input and conflicts fail
   at once.

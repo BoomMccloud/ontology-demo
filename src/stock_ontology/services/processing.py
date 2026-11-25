@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from stock_ontology.config import Settings, note_revision
-from stock_ontology.db import Job, OntologyDB
+from stock_ontology.db import Job, read_jobs
 from stock_ontology.search import resolve_safe_note_path
 from stock_ontology.services.errors import ServiceError
 
@@ -170,17 +170,9 @@ class ProcessingService:
 
     # --- status
 
-    def _open(self) -> OntologyDB | None:
-        if not Path(self.settings.db_path).exists():
-            return None
-        return OntologyDB(self.settings.db_path, embedding_dim=self.settings.embedding_dim, read_only=True)
-
     def _job(self, job_id: str) -> Job | None:
-        db = self._open()
-        if db is None:
-            return None
-        with db:
-            return db.jobs.get(job_id)
+        with read_jobs(self.settings.db_path) as jobs:
+            return jobs.get(job_id) if jobs is not None else None
 
     def _spooled(self, job_id: str) -> list[Submission]:
         return self.read_spool(f"*-{job_id}.json")
@@ -209,13 +201,10 @@ class ProcessingService:
     def latest_for_note(self, file: str) -> dict[str, Any] | None:
         """The most recent job for a note, spooled or recorded."""
         candidates: list[dict[str, Any]] = []
-        db = self._open()
-        job = None
-        if db is not None:
-            with db:
-                job = db.jobs.latest(target=file)
-            if job is not None:
-                candidates.append(_recorded_status(job, self._spooled(job.job_id)))
+        with read_jobs(self.settings.db_path) as jobs:
+            job = jobs.latest(target=file) if jobs is not None else None
+        if job is not None:
+            candidates.append(_recorded_status(job, self._spooled(job.job_id)))
         spooled = [s for s in self.read_spool() if s.op == "enqueue" and s.target == file]
         if spooled:
             found = self._find(spooled[-1].job_id)
@@ -224,6 +213,10 @@ class ProcessingService:
         return max(candidates, key=lambda status: status["created_at"]) if candidates else None
 
     # --- spool access for the worker
+
+    def has_submissions(self) -> bool:
+        """Whether any submission waits in the spool, without reading it."""
+        return self.spool.is_dir() and next(self.spool.glob("*.json"), None) is not None
 
     def read_spool(self, pattern: str = "*.json") -> list[Submission]:
         if not self.spool.is_dir():
