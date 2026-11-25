@@ -1,6 +1,6 @@
 ---
 proposal_id: "pipeline-correction-api"
-state: BUILT
+state: ACCEPTED
 witness: independent
 candidate: "2031c5e @ worktree claude/pipeline-correction-api-47e1d2"
 ---
@@ -148,9 +148,69 @@ Candidate: `2031c5e @ worktree claude/pipeline-correction-api-47e1d2`
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+Candidate: `2031c5e @ worktree claude/pipeline-correction-api-47e1d2` (audited at HEAD `f66d9f2`; `git diff --quiet 2031c5e HEAD -- src tests README.md` confirms the audited source, tests and README are identical to `2031c5e`)
+
+Independence: fresh-context. Before this audit I had seen only the task brief: the ledger path, the candidate identity and the repository. I read the ledger, the diffs and the witnesses myself and saw none of the builder's or prover's working context.
+
+Primary-claim verdict: PROVED. Evidence:
+- Both protected witnesses are unchanged. `git diff 1e2b8cf 2031c5e -- tests/` is empty, and `1e2b8cf` resolves to the recorded protected revision `1e2b8cf5e72037d58ae3bde8c0fcc8fb9928aac2`.
+- I reproduced RED myself on a `git archive 1e2b8cf` tree with `PYTHONPATH` pointed at that tree's `src`. Both tests failed: the pipeline witness with `AttributeError: 'IngestionPipeline' object has no attribute 'apply_note_correction'`, and the AST witness on its private-use and graph-write findings. Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/audit-red.log`.
+- On the candidate, `uv run pytest "tests/test_pipeline.py::test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_consensus" "tests/test_worker.py::test_worker_applies_graph_changes_only_through_public_pipeline_methods" -vv` gives 2 passed. Log: `.../scratchpad/audit-witness.log`.
+- The diff confirms the shape. `Worker._run_ontology_correction` now calls only `pipeline.apply_note_correction(path, fresh)`. `_finish_consensus` and `_run_ingest` call public `refresh_consensus`.
+- `grep` finds no `_refresh_consensus`, `_evidence_changed` or `_current_note_doc` reference outside `pipeline.py` in `src`.
+- In `worker.py`, the only remaining graph write is module-level `_rollout_record_metadata` at line 186. That is the rollout-preview path Proof deliberately scoped out of the check.
+
+Limit: the AST witness is static and name-based, so `getattr` or aliasing would evade it. "Outcomes stay the same" for the `relationship` and `relationship_add` ontology kinds rests on the existing end-to-end tests, not on the decisive witness.
+
+Guardrail verdicts:
+- Existing correction tests stay green without edits: PROVED. Evidence:
+  - `git diff --stat aa1d9f7 2031c5e -- tests` shows only the two witness additions.
+  - I ran the Frame and Proof guardrail set with `uv run pytest`: `test_web_ontology.py::test_ontology_registry_editing_note_correction`, `::test_ontology_registry_editing_relationship_add_source`, `test_web_notes.py::test_note_reader_extraction_workflow`, the four named `test_pipeline.py` correction tests and the two `test_worker.py` consensus tests. Result: 16 passed, counting parametrized cases. Log: `.../scratchpad/audit-guardrails.log`.
+
+  Limit: these tests cover only the scenarios they exercise.
+- Ontology correction moves its job to the consensus stage in the same transaction as its graph write: PROVED. Evidence:
+  - By inspection, `apply_note_correction` and `self._wrote(db, job)` both still run inside the worker's `db.transaction(immediate=True)`.
+  - `apply_note_correction` passes `refresh=False`, so no consensus publish happens inside the outer transaction.
+  - `OntologyDB.transaction` nesting means only the outer transaction commits.
+  - The end-to-end ontology correction tests pass unedited.
+
+  Limit: no test injects a crash between the graph write and `_wrote` to observe a retry directly. This rests on code inspection plus the existing tests.
+- A correction whose note or reviewed graph changed after review fails with a conflict and leaves the graph unchanged: PROVED. Evidence:
+  - The witness's conflict assertion passes: a stale note raises `NoteConflictError`, and the person node, the note's edges, its entity membership and the `consensus_refresh` rows are all unchanged.
+  - The worker's `fresh != reviewed` re-review comparison is retained unchanged.
+  - `test_ontology_registry_editing_note_correction` passes.
+
+  Limit: the graph-changed-after-review path is covered only by the existing web and worker tests, not by the new witness.
+
+Scope and duty verdict: scope HELD; duties HELD. Evidence:
+- The changed files are `src/stock_ontology/pipeline.py`, `src/stock_ontology/worker.py` (only `_run_ontology_correction`, `_finish_consensus` and `_run_ingest`), `README.md` and the ledger.
+- `open_store`, `run_once`, the elif dispatch, `services/corrections.py` and the JS files are untouched.
+- The supporting obligations are met:
+  - One private `_correct_note` frame. Its `doc_id` keyword is needed for the reviewed-doc check.
+  - The six note-reader methods are ported, with their per-method affected sets preserved: empty for `add_note_entity`, before-only for the deletes, before plus after for relink and correct, after-only for add.
+  - Public `apply_note_correction` with `refresh=False`.
+  - Public `refresh_consensus`.
+- The cheaper alternative was correctly not taken.
+- Frame lists `Invariants changed: None`, and no existing README invariant or non-Proof test was altered.
+- The one new `README.md` entry satisfies the constraint-capture duty. It has a `**Why:**`, and its `**Guarded by:**` names two tests that exist and pass.
+
+Limit: `relink_note_entity` with a replacement equal to the original now runs the second note check inside the transaction. Before, it returned early. In practice this changes behavior only if the note file changes between two in-transaction reads. `mark_consensus_pending(set())` writes nothing, so the no-op path is otherwise identical. Build disclosed this as a behavior note rather than a deviation. I judge it within the Frame's "no outcome change" exclusion, but it is not covered by a test. `refresh_consensus` now returns its `IngestReport`, which no caller uses. That is trivial added surface.
+
+Test homes: `tests/test_pipeline.py` (`test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_consensus`) is the permanent owner of `IngestionPipeline` correction behavior. `tests/test_worker.py` (`test_worker_applies_graph_changes_only_through_public_pipeline_methods`) is the permanent owner of `Worker` structure. Both were authored by Proof at `1e2b8cf` and left unedited by Build, which added no tests.
+
+Full gates: PASS. Results:
+- `uv run pytest -q`: 553 passed. Log: `.../scratchpad/audit-full.log`.
+- `uv run ruff check .`: all checks passed. Log: `.../scratchpad/audit-ruff.log`.
+
+Limit: offline suite with fake LLM clients only, as `AGENTS.md` requires. No live worker or web run was exercised.
+
+Residual risks:
+- The AST witness can be evaded by `getattr`, aliasing or a pipeline name that is neither annotated nor assigned from `IngestionPipeline(...)` or `self._pipeline(...)`. A future regression of that shape would pass.
+- The narrow race change in a no-op `relink_note_entity` (stale note now raises `NoteConflictError`) has no test.
+- The same-transaction retry guarantee for ontology corrections is shown by inspection, not by a crash-injection test.
+
+Recommendation: ACCEPT
+Packet: No further pipeline action. Merging and deploying the branch stay human-owned and need separate authorization. Logs are under `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/` (`audit-red.log`, `audit-witness.log`, `audit-full.log`, `audit-guardrails.log`, `audit-ruff.log`).
 
 ## Revisions
 
