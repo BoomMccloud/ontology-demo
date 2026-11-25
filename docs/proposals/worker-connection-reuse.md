@@ -1,6 +1,6 @@
 ---
 proposal_id: "worker-connection-reuse"
-state: BUILT
+state: ACCEPTED
 witness: builder
 candidate: "195d828 @ worktree/claude/worker-connection-reuse-d48cb4"
 ---
@@ -136,9 +136,31 @@ Candidate: `195d828 @ worktree/claude/worker-connection-reuse-d48cb4`
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+Candidate: `195d828 @ worktree/claude/worker-connection-reuse-d48cb4` (source tree audited at 195d828; HEAD 481b1b5 differs only in the ledger's Build section)
+
+Independence: fresh-context. Before this audit, the auditing context had seen only the orchestrator's brief, the ledger, AGENTS.md, and the proposal-audit skill. It had not seen the build session.
+
+Primary-claim verdict: PROVED. Evidence: `tests/test_worker.py::test_idle_worker_opens_once_and_starts_a_spooled_job_within_two_seconds` runs `Worker.run_forever(60)` on fake monotonic time and sleep, and counts `OntologyDB` constructions in `stock_ontology.worker`. It asserts one open before the submission at t=10 (that window covers the t=0 notes scan and four idle 2-second spool checks), a job start between t=10 and t=12, exactly one more open for the attempt, and a final state of `succeeded`. I verified RED by running the test against aa1d9f7 `src/` in a scratch copy: the opens were `[0.0, 0.0, 0.0]` instead of `[0]`, and no job started before the stop at fake t=30. It is GREEN on the candidate. In code, `run_forever` sets `next_scan = monotonic() + interval_seconds` and sleeps `min(SPOOL_SECONDS, next_scan - now)`. `open_store()` is unchanged, so each attempt still opens its own connection. Limit: the hook fires on a 2-second boundary, so the test proves pickup on the next spool check but not the worst case of a submission landing just after a check (bounded by 2 s by construction). The test stops at t=30, so "notes are still rescanned once per `--interval`" is proved by code reading only, with no witness of a second scan at t=60. The test does not exercise the claim that a job submitted during another job waits for it.
+
+Guardrail verdicts:
+- Registry change is still detected on the reused queue connection: PROVED. Evidence: `test_reused_worker_connection_detects_a_registry_change_between_ticks` adopts a new registry from another connection at t=4, then submits at t=10. It asserts no "Worker tick failed" log, a start between t=10 and t=12, exactly two opens at t>=10 (queue reopen plus attempt), `attempts == 1`, and the adopted revision in place. Detection still comes from `OntologyDB.transaction` (`storage.py:159-168`, BEGIN IMMEDIATE plus the `APPLIED_REVISION_KEY` check), and every queue operation goes through `Worker._queue`, which reopens and retries once: intake, claim, `_queue_scan`, `_fail`, and `run_until`'s get. A mutation in a scratch copy that removed the retry (`for reopened in (True,)`) made the test fail on the caplog assertion, so the witness is sensitive to the retry. Limit: on aa1d9f7 this test was RED for the timing reason only, because fresh connections trivially see a new registry, so its RED does not isolate detection. The mutation run supplies that evidence instead. Reads outside a transaction (`get_ingestion_log` and `jobs.get` in `run_until`) are not registry-checked, but they never use `db.registry`.
+- Writes stay worker-only: PROVED. Evidence: `read_jobs` in `src/stock_ontology/db/jobs.py` sets `PRAGMA query_only = ON` before yielding. The status test asserts `DELETE FROM jobs` raises `sqlite3.OperationalError` matching "readonly". The diff adds no write path outside `worker.py`. The web app, CLI reads, and `audit` are untouched, and the queue connection lives only in `Worker`. Limit: only the new status read path was re-witnessed. The other read-only paths are unchanged and rely on existing tests.
+- `/api/jobs/{job_id}` payload unchanged, with no `OntologyDB` construction: PROVED. Evidence: `test_job_status_reads_skip_the_full_store_and_stay_read_only` patches `OntologyDB.__init__` to raise and re-reads recorded, spooled, `latest_for_note`, and missing-job statuses. For behavioral RED, I removed the test's `read_jobs` import and final block in a scratch copy and ran it against aa1d9f7 `src/`. It failed with "a status read must not open a full OntologyDB". Payload equivalence with the old code rests on the unchanged existing tests, which all pass on the candidate: `tests/test_worker.py` around lines 420-490 (failed with a spooled retry, pending retry shown as fresh), `tests/test_web_notes.py:1002-1010` (queued, missing 404, succeeded) and `tests/test_web_ontology.py:448,576`. Limit: the new test's `expected` dict is computed on the candidate itself, so on its own it shows only self-consistency. The Build's RED note for this test is inaccurate: on aa1d9f7 it fails first with `ImportError` for `read_jobs`, not on the full-store assertion. I had to establish the behavioral RED myself.
+
+Scope and duty verdict: scope HELD; duties HELD. Evidence: `git diff aa1d9f7 195d828` touches only `worker.py` (session, `_queue`, `run_once`, `run_until`, `run_forever`, `_drain`, `_queue_scan`, `_fail`), `db/jobs.py` and `db/__init__.py` (`read_jobs`), `services/processing.py` (`has_submissions`, status reads), `cli.py` (help text only), `docs/worker.md`, `README.md`, `tests/test_worker.py`, and the ledger. `_run`, `_run_correction`, `_run_ontology_correction`, `pipeline.py`, all web JS, `OntologyDB`, existing `JobStore` methods, job state rules, the retry budget, and CLI flags are untouched. No existing test was edited. The one new `README.md` Ingestion Constraints entry (one connection per job attempt, a queue-only connection that reopens once on `RegistryChangedError`) is the constraint-capture entry step 7 requires. It has a `**Why:**` and two `**Guarded by:**` tests, and both exist and pass. Every supporting obligation is present, including `SPOOL_SECONDS = 2.0` and the doc and help-text updates. Limit: scope was judged against the re-run Frame, which added `src/stock_ontology/db/jobs.py` to allowed scope.
+
+Test homes: `tests/test_worker.py`. It is the Frame-named permanent owner for worker loop, registry reopen, and job-status behavior. It also holds the new status-read test, because the existing status assertions already live there alongside `test_web_notes.py`.
+
+Full gates: PASS. `uv run pytest -v` (run as `-q`): 554 passed in 22.1 s. `uv run ruff check src tests`: all checks passed. `uv run pytest tests/test_worker.py -q -W error::ResourceWarning`: 22 passed, with no leaked queue connections. Decisive witnesses: RED on aa1d9f7 source in a scratch copy (3 failed), GREEN on the candidate. The worktree was left clean (`git status --short` empty) and the scratch copy was removed. Limit: all evidence comes from offline tests on fake time. No run against the production service.
+
+Residual risks:
+- `has_submissions()` matches any `*.json` in the spool, but `read_spool` silently skips unparseable files and never deletes them. A corrupt or half-written submission therefore makes the loop run `run_once(scan=False)` every 2 seconds indefinitely: one intake plus one BEGIN IMMEDIATE claim on the reused connection, with no error. That costs little, but it is a quiet idle-cost regression that has no test.
+- A persistent intake or claim failure is now logged every 2 seconds instead of every 60, and each failure drops and reopens the queue connection. Log volume and reopen cost go up in that failure mode.
+- Backed-off retries and expired leases are still picked up only at the notes-scan cadence (`--interval`) or when a new submission arrives, not within 2 seconds. This matches the old behavior and the claim, but operators may expect otherwise.
+- The production rollout (deploy and restart `stock-ontology-worker`) stays human-owned and unverified.
+
+Recommendation: ACCEPT
+Packet: No re-audit is needed. Optional follow-ups for the human, outside this proposal: make `has_submissions` ignore or quarantine unparseable spool files, and correct the Build's RED note for the status test (on aa1d9f7 it fails first with `ImportError`, not on the full-store assertion). Deploying to the production server and restarting the worker still needs separate human authorization.
 
 ## Revisions
 
