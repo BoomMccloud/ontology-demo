@@ -8,6 +8,7 @@ for ingestion.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -24,6 +25,8 @@ from pydantic_ai.settings import ModelSettings
 
 from stock_ontology.config import ProviderName, Settings
 from stock_ontology.llm.base import ProviderConfigError, classify_error
+
+logger = logging.getLogger(__name__)
 
 _COOLDOWN_ERROR_KINDS = frozenset({"rate_limit", "auth", "config"})
 _COOLDOWN_ERROR_TYPES = (ModelRateLimitError, ModelQuotaExceededError, ModelAuthenticationError)
@@ -115,9 +118,17 @@ class AgentModelChain:
         if not isinstance(exc, ModelAPIError):
             return False
         kind = classify_error(exc, provider="agent", model=exc.model_name).error_kind
-        if (isinstance(exc, _COOLDOWN_ERROR_TYPES) or kind in _COOLDOWN_ERROR_KINDS) and self.cooldown_seconds > 0:
+        cools = (isinstance(exc, _COOLDOWN_ERROR_TYPES) or kind in _COOLDOWN_ERROR_KINDS) and self.cooldown_seconds > 0
+        if cools:
             with self._lock:
                 self._cooldown_until[exc.model_name] = self._clock() + self.cooldown_seconds
+        logger.warning(
+            "Agent model %s failed [%s]; falling back to the next model%s: %s",
+            exc.model_name,
+            kind,
+            f" and cooling it for {self.cooldown_seconds:g}s" if cools else "",
+            exc,
+        )
         return True
 
 

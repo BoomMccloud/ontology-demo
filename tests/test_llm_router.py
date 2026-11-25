@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import json
 from pathlib import Path
 from typing import Any
@@ -506,7 +508,9 @@ def test_build_agent_models_maps_chain_to_native_models() -> None:
         build_agent_models(Settings(llm_providers=["gemini"])).for_turn()
 
 
-def test_agent_model_chain_cools_failed_models_last_across_turns(tmp_path: Path) -> None:
+def test_agent_model_chain_cools_failed_models_last_across_turns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     db_path = tmp_path / "cross.db"
     with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
         db.upsert_node(
@@ -556,7 +560,13 @@ def test_agent_model_chain_cools_failed_models_last_across_turns(tmp_path: Path)
     with OntologyDB(db_path, embedding_dim=4, read_only=True) as ro_db:
         agent = OntologyAgent(ro_db, _StubProvider("gemini"), model=chain.for_turn())
         # Turn 1: Gemini calls a tool, then its follow-up request is rate limited and DashScope answers.
-        first = agent.chat("Check NVDA", ())
+        with caplog.at_level(logging.WARNING, logger="stock_ontology.llm.agent_model"):
+            first = agent.chat("Check NVDA", ())
+        # The fallback and the cooldown are logged, naming the failed model and the error kind.
+        fallback_logs = [r.getMessage() for r in caplog.records if r.name == "stock_ontology.llm.agent_model"]
+        assert len(fallback_logs) == 1
+        assert "gemini-x failed [rate_limit]" in fallback_logs[0]
+        assert "cooling it for 60s" in fallback_logs[0]
         assert calls == ["gemini", "gemini", "dashscope"]
         assert first.reply == "NVIDIA via DashScope fallback."
         assert (first.provider, first.model, first.fallback_used) == ("openai", "qwen-x", True)

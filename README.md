@@ -36,7 +36,7 @@ data/**/*.md|.txt   (any folder layout)
 - You can also set explicit chains with `LLM_PROVIDERS=gemini,dashscope,openai`, append fallbacks with `LLM_FALLBACK_PROVIDERS=...`, or specify a separate embedding chain with `EMBEDDING_PROVIDERS=...` (chat-only providers like Anthropic are automatically skipped for embeddings).
 - For ingestion (extraction, consensus synthesis) and embeddings, on `429 RESOURCE_EXHAUSTED`, auth errors, `5xx`, network timeouts, or invalid responses, `LLMRouter` automatically falls back to the next provider and places rate-limited/auth-failed providers on a configurable cooldown (`LLM_COOLDOWN_SECONDS`).
 - The query agent (Clippy, CLI `ask`/`chat`) answers through Pydantic AI's own models instead (`GoogleModel`, `OpenAIChatModel` for DashScope/OpenAI/OpenAI-compatible, `AnthropicModel`), built from the same provider chain by `build_agent_models(settings)` in `stock_ontology.llm.agent_model`. Each turn runs a Pydantic AI `FallbackModel` that moves to the next provider on any provider API error; a provider that failed with a rate-limit, auth or config error is tried last on later turns for `LLM_COOLDOWN_SECONDS`.
-- `/api/health` exposes configured LLM chain diagnostics (without secrets). `/api/chat` returns which provider and model served each reply, but Clippy does not show it; fallbacks are logged on the server.
+- `/api/health` exposes configured LLM chain diagnostics (without secrets). `/api/chat` returns which provider and model served each reply, but Clippy does not show it. Every agent fallback is logged as a server warning naming the failed model, the error kind and any cooldown.
 
 ### Calling the Agent (`stock_ontology.agent`)
 Other components call the agent through two entry points and nothing else.
