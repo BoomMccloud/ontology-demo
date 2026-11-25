@@ -1,8 +1,8 @@
 ---
 proposal_id: "unified-note-corrections"
-state: PROVED
+state: BUILT
 witness: independent
-candidate: "a8abf55 @ worktree claude/unified-note-corrections-0faa55"
+candidate: "90e1230 @ worktree claude/unified-note-corrections-0faa55"
 ---
 
 # Proposal: One review path for note corrections
@@ -135,8 +135,51 @@ Candidate: `a8abf55 @ worktree claude/unified-note-corrections-0faa55` (witness 
 
 ## Build
 
-<!-- Replaced only by proposal-build. Reference changed paths, protected witnesses,
-exact GREEN command(s), concise result, candidate identity, and deviations. -->
+Candidate: `90e1230 @ worktree claude/unified-note-corrections-0faa55`
+
+### Files changed
+
+- `src/stock_ontology/db/storage.py`, `src/stock_ontology/db/__init__.py`: add `OntologyDB.check_edge(relation, from_id, to_id, facets)` and `EdgeRejected(reason)`, the one check for a corrected or added edge: mapped relation, two different existing endpoints, allowed endpoint types, registry facets. Satisfies the primary claim (one validator).
+- `src/stock_ontology/services/corrections.py`: `_review_edge` calls `check_edge`, maps `EdgeRejected` to the existing `service_error.*` keys and `FacetSchemaError` to `ServiceError("invalid")`. `review_note_correction` also lists the note's pending edges (marked `pending`, skipped by the person `WORKS_AT` scan and the duplicate check), adds a `relationship_delete` kind, and applies the `relationship_add` anchor rule only when `record` is given. New `READER_RELATIONSHIP_KINDS` and `review_reader_correction` turn a note-reader request into a review request (resolving `reverse` against the current row) and refuse a different `expected_hash` as `conflict`. The person branch uses the shared identity helpers. Satisfies the primary claim and the stale-note guardrail.
+- `src/stock_ontology/services/registry.py`: adds `identity_aliases`, `identity_labels` and `labels_taken`, and `review_record_edit` uses them. Satisfies the identity obligation.
+- `src/stock_ontology/pipeline.py`: removes `add_note_relationship`, `delete_note_relationship`, `correct_note_relationship` and `_find_note_edge`. `_canonical_note_edge` (relink) calls `check_edge`. `apply_note_correction` deletes on an empty `after`, and replaces an edge whose relation or endpoints change, or a pending edge, with a new ID that keeps `created_at`. A facet-only edit still uses `update_edge`. Satisfies the primary claim and the stale-form guardrail.
+- `src/stock_ontology/services/processing.py`: `note.relationship*` move from `CORRECTION_KINDS` to `RETIRED_CORRECTION_KINDS`, so `submit_correction` refuses them while `job_priority` keeps them at correction priority. Satisfies the legacy-job guardrail.
+- `src/stock_ontology/worker.py`: `_run_correction` sends `note.relationship*` jobs to `_run_ontology_correction`, which reviews them with `review_reader_correction` inside the same `immediate` transaction and applies them through `apply_note_correction`. The three legacy `elif` branches are removed and no other dispatch changed. `_rollout_record_metadata` checks name and alias collisions with `labels_taken` (ticker check unchanged, a collision is still `ambiguous`). `open_store` and `run_once` are untouched.
+- `src/stock_ontology/web/notes/routes.py`: new `_reviewed_correction` used by `/api/notes/relationship`, `/relationship/add` and `/relationship/delete`. It reviews at submit, maps `ServiceError` through `http_error` and `ValueError` to 422 (as the Ontology preview does), keeps `api.raw_note_not_found` for a missing file, and queues the reviewed payload as `note.ontology.correction`. Request models are unchanged.
+- `README.md`: one constraint entry after "Add relationships with the current note's document ID...": one review, one apply method, one edge check, one identity rule, and a new edge ID on a relation or endpoint change, guarded by the three Proof witnesses and the two new unit tests.
+- Invariant-changed tests, each to the rule the Frame states:
+  - `tests/test_web_notes.py::test_note_reader_extraction_workflow`: no failed job after an invalid correction.
+  - `::test_note_reader_adds_and_deletes_relationships`: second identical add gets 409.
+  - `tests/test_pipeline.py::test_note_correction_updates_only_current_note_edges[reverse]`, `::test_delete_note_relationship_removes_only_its_pending_edge` and `::test_add_note_relationship_accepts_required_fields_from_shipped_registry`: go through a new `_reader_correction` helper with `ServiceError` codes.
+  - `::test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_consensus`: new ID, same `created_at`.
+  - `tests/test_worker.py::test_corrections_are_claimed_ahead_of_earlier_extraction`: submits `note.entity.delete`.
+- New unit tests:
+  - `tests/test_db.py::test_check_edge_is_the_one_edge_check_for_corrections`
+  - `tests/test_registry_governance.py::test_record_edits_person_corrections_and_rollout_share_one_identity_rule`
+  - `tests/test_web_notes.py::test_note_reader_reverse_reviews_like_the_swapped_endpoints`
+  - a legacy-priority assertion in `tests/test_worker.py::test_corrections_are_claimed_ahead_of_earlier_extraction`
+- Coordination (`shared-editor-script`): `web/static/note_reader.js`, `web/static/ontology_edit.js`, `web/notes/views.py::_relationship_fields` and `relationship_editor_config` are not changed. The reader JS already shows a non-2xx `detail`, so submit-time rejection needs no JS change. Coordination (`worker-connection-reuse`): `Worker.open_store` and `run_once` are not changed.
+
+### Unit evidence
+
+- Proof witnesses: `uv run pytest tests/test_web_notes.py -k "judge_a_relationship_correction_alike or legacy_relationship_jobs or cannot_reapply" -v`. RED on `a8abf55` is recorded in Proof.
+- The new unit tests, run against the `a8abf55` source tree with this candidate's test files: `uv run pytest -q tests/test_db.py::test_check_edge_is_the_one_edge_check_for_corrections tests/test_registry_governance.py::test_record_edits_person_corrections_and_rollout_share_one_identity_rule tests/test_web_notes.py::test_note_reader_reverse_reviews_like_the_swapped_endpoints tests/test_worker.py::test_corrections_are_claimed_ahead_of_earlier_extraction`. RED: 4 failed on missing `EdgeRejected`, `identity_aliases`, `review_reader_correction` and `RETIRED_CORRECTION_KINDS`. Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/unit-red.log`. They are GREEN on `90e1230` (in the gate below).
+
+### Green evidence
+
+- Decisive witness: `uv run pytest -q tests/test_web_notes.py -k "judge_a_relationship_correction_alike or legacy_relationship_jobs or cannot_reapply"`. 13 passed. Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/witness-green.log`.
+- Gate: `uv run pytest -q`. 569 passed (553 before, plus 13 witness cases and 3 new unit tests). Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/build-green.log`.
+- `uv run ruff check .`: all checks passed.
+- Protected witnesses: `git diff a8abf55 HEAD -- tests/test_web_ontology.py` is empty. In `tests/test_web_notes.py` the diff from `a8abf55` touches only the two invariant-changed tests and appends one new test. In `tests/test_pipeline.py` it touches only the four invariant-changed tests and adds a helper. `test_person_accuracy_correction_is_checked_stored_and_refreshes_all_their_rumors` is unchanged.
+
+### Intervention record
+
+- None: no measured user-facing outcome. The note reader's visible change (errors shown at submit instead of after the job) needs no new UI.
+
+### Deviations
+
+- None blocking. A note for Audit on edge IDs: the Frame's supporting obligation says to replace an edited edge "instead of `update_edge`". Build replaces it only when its relation or an endpoint changes, or when it was pending, and keeps `update_edge` for a facet-only edit. The protected guardrail `tests/test_web_ontology.py::test_ontology_registry_editing_note_correction[person|relationship]` asserts that a facet-only `WORKS_AT` edit keeps `employment-0`, and the Frame requires it to stay green without edits. The stale-form witness changes an endpoint, so it still gets a new ID. A note-reader edit only changes relation or endpoints (a no-op edit is refused as `no_changes`), so every applied reader edit still rotates the ID, as before.
+- Behavior note: a note-reader edit whose values equal the current edge used to succeed silently and now returns 422 `service_error.no_changes`, as on the Ontology page. No test covered the old behavior.
 
 ## Audit
 
