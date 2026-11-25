@@ -1,8 +1,8 @@
 ---
 proposal_id: "pipeline-correction-api"
-state: PROVED
+state: BUILT
 witness: independent
-candidate: "1e2b8cf @ worktree claude/pipeline-correction-api-47e1d2"
+candidate: "2031c5e @ worktree claude/pipeline-correction-api-47e1d2"
 ---
 
 # Proposal: Corrections owned by the pipeline, not the worker
@@ -119,8 +119,32 @@ Candidate: `1e2b8cf @ worktree claude/pipeline-correction-api-47e1d2` (witness c
 
 ## Build
 
-<!-- Replaced only by proposal-build. Reference changed paths, protected witnesses,
-exact GREEN command(s), concise result, candidate identity, and deviations. -->
+Candidate: `2031c5e @ worktree claude/pipeline-correction-api-47e1d2`
+
+### Files changed
+
+- `src/stock_ontology/pipeline.py` — adds private `_correct_note(path, expected_hash, edit, *, doc_id=None, refresh=True)`, the one transaction frame (check note, edit, recheck, queue consensus, refresh after commit). Ports `add_note_entity`, `delete_note_entity`, `relink_note_entity`, `add_note_relationship`, `delete_note_relationship` and `correct_note_relationship` onto it with their existing affected-company sets. Adds public `apply_note_correction(path, reviewed)`, which applies a reviewed `note.ontology.correction` with `refresh=False` and raises `NoteConflictError` when the current doc is not the reviewed `doc_id`. Renames `_refresh_consensus` to public `refresh_consensus(company_ids, report=None) -> IngestReport`. Satisfies the primary claim.
+- `src/stock_ontology/worker.py` — `_run_ontology_correction` keeps the outer `immediate` transaction, `_check`, the re-review comparison and `_wrote`, and replaces its graph writes with `pipeline.apply_note_correction(path, fresh)`. `_finish_consensus` and `_run_ingest` call `pipeline.refresh_consensus`. `open_store`, `run_once` and the `_run_correction` dispatch are untouched. Satisfies the primary claim and the same-transaction guardrail.
+- `README.md` — one constraint entry: apply correction graph changes through public `IngestionPipeline` methods and keep graph writes and private pipeline calls out of `Worker`, guarded by both witnesses.
+
+### Unit evidence
+
+- `uv run pytest "tests/test_pipeline.py::test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_consensus" "tests/test_worker.py::test_worker_applies_graph_changes_only_through_public_pipeline_methods" -vv` — RED on `1e2b8cf` (recorded in Proof); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/proof-red.log`.
+- No new unit tests: the shared frame's supporting obligations are owned by the existing correction tests Proof's supporting test plan names, which pass unedited.
+
+### Green evidence
+
+- Decisive witness and gate: `uv run pytest -q` — 553 passed (551 before plus the 2 witnesses); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/build-green.log`.
+- `git diff 1e2b8cf -- tests/` — empty; protected witnesses and guardrail tests unchanged.
+- `uv run ruff check .` — all checks passed.
+
+### Intervention record
+
+- None: internal refactor with no user-facing outcome to measure.
+
+### Deviations
+
+- None. One behavior note for Audit: `relink_note_entity` with a replacement equal to the original entity used to return inside the transaction before the second note check and the empty consensus queue; it now runs both (queueing nothing), so a stale note there raises `NoteConflictError` instead of silently doing nothing.
 
 ## Audit
 
