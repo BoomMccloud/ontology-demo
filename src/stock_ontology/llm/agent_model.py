@@ -11,8 +11,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
 from pydantic_ai.exceptions import (
@@ -89,23 +89,27 @@ class _CooldownFallbackModel(FallbackModel):
 
     def __init__(self, chain: AgentModelChain) -> None:
         super().__init__(*chain.models, fallback_on=chain._falls_back)
-        self._cooldowns = chain
+        self._agent_chain = chain
 
-    async def request(self, *args: Any, **kwargs: Any) -> Any:
-        configured, self.models = self.models, self._cooldowns.ordered()
+    @contextmanager
+    def _cooldown_order(self) -> Iterator[None]:
+        # `FallbackModel` walks `self.models` only inside `request` and `request_stream`,
+        # so swapping the list around those two calls is enough.
+        configured, self.models = self.models, self._agent_chain.ordered()
         try:
-            return await super().request(*args, **kwargs)
+            yield
         finally:
             self.models = configured
+
+    async def request(self, *args: Any, **kwargs: Any) -> Any:
+        with self._cooldown_order():
+            return await super().request(*args, **kwargs)
 
     @asynccontextmanager
     async def request_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        configured, self.models = self.models, self._cooldowns.ordered()
-        try:
+        with self._cooldown_order():
             async with super().request_stream(*args, **kwargs) as stream:
                 yield stream
-        finally:
-            self.models = configured
 
 
 class AgentModelChain:
@@ -113,7 +117,8 @@ class AgentModelChain:
 
     Call `for_turn()` for each agent turn. It returns a `FallbackModel` that puts
     cooled models last (still tried, as a last resort) on every request of the turn,
-    or the model itself when there is only one.
+    or the model itself when there is only one. Each turn gets its own instance
+    because the instance swaps its model list for the length of a request.
     """
 
     def __init__(
@@ -130,7 +135,7 @@ class AgentModelChain:
         self._cooldown_until: dict[str, float] = {}
 
     def ordered(self) -> list[Model]:
-        """The models for the next turn: active ones in priority order, then cooled ones."""
+        """The models for the next request: active ones in priority order, then cooled ones."""
         with self._lock:
             now = self._clock()
             cooled = {name for name, until in self._cooldown_until.items() if until > now}

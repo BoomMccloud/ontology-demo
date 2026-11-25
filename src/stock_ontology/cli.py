@@ -772,7 +772,7 @@ def chat(
                 console.print(f"[dim]{cleared_msg}[/dim]")
                 continue
             try:
-                # Each turn gets a fresh fallback order, so a cooled provider goes last.
+                # Each turn gets its own fallback model; cooled providers go last on every request.
                 agent.model = agent_models.for_turn()
                 reply = agent.ask(user_input)
                 console.print(Markdown(reply))

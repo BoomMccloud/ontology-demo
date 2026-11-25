@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import logging
-
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +49,23 @@ class _FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
+
+
+def _seed_nvda(db_path: Path) -> Path:
+    """A 4-dim ontology with one NVIDIA entity, for agent turns that look it up."""
+    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
+        db.upsert_node(
+            Node(
+                id="ent_nvda",
+                node_type="entity",
+                name="NVIDIA",
+                summary="GPU leader",
+                aliases=["NVDA"],
+                facets={"entity_type": "company", "ticker": "NVDA"},
+            ),
+            embedding=[1.0, 0.0, 0.0, 0.0],
+        )
+    return db_path
 
 
 class _StubProvider(BaseLLMProvider):
@@ -511,19 +527,7 @@ def test_build_agent_models_maps_chain_to_native_models() -> None:
 def test_agent_model_chain_cools_failed_models_last_across_turns(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    db_path = tmp_path / "cross.db"
-    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
-        db.upsert_node(
-            Node(
-                id="ent_nvda",
-                node_type="entity",
-                name="NVIDIA",
-                summary="GPU leader",
-                aliases=["NVDA"],
-                facets={"entity_type": "company", "ticker": "NVDA"},
-            ),
-            embedding=[1.0, 0.0, 0.0, 0.0],
-        )
+    db_path = _seed_nvda(tmp_path / "cross.db")
 
     calls: list[str] = []
     gemini_errors: list[Exception | None] = [None, ModelHTTPError(429, "gemini-x", {"error": "quota"})]
@@ -609,19 +613,7 @@ def test_agent_model_chain_cools_failed_models_last_across_turns(
 
 def test_agent_model_chain_skips_a_model_cooled_earlier_in_the_same_turn(tmp_path: Path) -> None:
     """A model that fails on a turn's first request is not retried on that turn's later requests."""
-    db_path = tmp_path / "same_turn.db"
-    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
-        db.upsert_node(
-            Node(
-                id="ent_nvda",
-                node_type="entity",
-                name="NVIDIA",
-                summary="GPU leader",
-                aliases=["NVDA"],
-                facets={"entity_type": "company", "ticker": "NVDA"},
-            ),
-            embedding=[1.0, 0.0, 0.0, 0.0],
-        )
+    db_path = _seed_nvda(tmp_path / "same_turn.db")
 
     calls: list[str] = []
 
@@ -656,19 +648,7 @@ def test_agent_model_chain_skips_a_model_cooled_earlier_in_the_same_turn(tmp_pat
 
 
 def test_web_health_and_chat_report_provider_and_no_secret_leak(tmp_path: Path) -> None:
-    db_path = tmp_path / "web_router.db"
-    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
-        db.upsert_node(
-            Node(
-                id="ent_nvda",
-                node_type="entity",
-                name="NVIDIA",
-                summary="GPU leader",
-                aliases=["NVDA"],
-                facets={"entity_type": "company", "ticker": "NVDA"},
-            ),
-            embedding=[1.0, 0.0, 0.0, 0.0],
-        )
+    db_path = _seed_nvda(tmp_path / "web_router.db")
 
     p_gem = _StubProvider("gemini", chat_model="gemini-3.8-flash")
     p_ds = _StubProvider("dashscope", chat_model="qwen3.8-flash")

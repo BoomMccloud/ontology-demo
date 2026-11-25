@@ -80,6 +80,14 @@ def resolve_note(data_dir: Path, file: str) -> Path:
     return path
 
 
+def _recorded_status(job: Job, spooled: list[Submission]) -> dict[str, Any]:
+    """A recorded job's status, showing a spooled retry as the fresh job `JobStore.reopen` will store."""
+    status = job.to_status()
+    if status["state"] == "failed" and any(s.op == "retry" for s in spooled):
+        status.update(state="queued", attempts=0, error_code=None, error=None)
+    return status
+
+
 def process_job_id(file: str, revision: str) -> str:
     return "job_" + hashlib.sha256(f"{PROCESS_KIND}\0{file}\0{revision}".encode()).hexdigest()[:24]
 
@@ -122,7 +130,7 @@ class ProcessingService:
         if existing is not None:
             # The job id is fixed per revision, so asking again for a failed revision is a retry.
             if existing["state"] == "failed":
-                return self.retry(job_id)
+                return self._reopen(job_id)
             return JobRef(job_id, existing["state"])
         return self._submit(job_id, PROCESS_KIND, file, revision, {"file": file})
 
@@ -154,6 +162,9 @@ class ProcessingService:
         status = self.get_status(job_id)
         if status["state"] != "failed":
             raise ServiceError("conflict", f"Only a failed job can be retried; this one is {status['state']}.", key="service_error.retry_not_failed", params={"state": status["state"]}, enums={"state": "job_state"})
+        return self._reopen(job_id)
+
+    def _reopen(self, job_id: str) -> JobRef:
         self._write("retry", job_id, {})
         return JobRef(job_id, "queued")
 
@@ -178,11 +189,7 @@ class ProcessingService:
         job = self._job(job_id)
         spooled = self._spooled(job_id)
         if job is not None:
-            status = job.to_status()
-            if status["state"] == "failed" and any(s.op == "retry" for s in spooled):
-                # Report what the worker's reopen will store, not the old attempt and its error.
-                status.update(state="queued", attempts=0, error_code=None, error=None)
-            return status
+            return _recorded_status(job, spooled)
         enqueued = next((s for s in spooled if s.op == "enqueue"), None)
         if enqueued is None:
             return None
@@ -208,7 +215,7 @@ class ProcessingService:
             with db:
                 job = db.jobs.latest(target=file)
             if job is not None:
-                candidates.append(job.to_status())
+                candidates.append(_recorded_status(job, self._spooled(job.job_id)))
         spooled = [s for s in self.read_spool() if s.op == "enqueue" and s.target == file]
         if spooled:
             found = self._find(spooled[-1].job_id)
