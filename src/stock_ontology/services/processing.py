@@ -115,11 +115,14 @@ class ProcessingService:
         return note_revision(resolve_note(Path(self.settings.data_dir), file).read_text(encoding="utf-8"))
 
     def request_processing(self, file: str) -> JobRef:
-        """Queue extraction and consensus for the note's current revision."""
+        """Queue extraction and consensus for the note's current revision, reopening it if it failed."""
         revision = self._note_revision(file)
         job_id = process_job_id(file, revision)
         existing = self._find(job_id)
         if existing is not None:
+            # The job id is fixed per revision, so asking again for a failed revision is a retry.
+            if existing["state"] == "failed":
+                return self.retry(job_id)
             return JobRef(job_id, existing["state"])
         return self._submit(job_id, PROCESS_KIND, file, revision, {"file": file})
 

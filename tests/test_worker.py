@@ -457,6 +457,31 @@ def test_three_attempts_with_exponential_backoff_and_a_new_revision_resets_the_b
     assert service.request_processing("a.md").job_id == newer.job_id, "duplicate requests share a job"
 
 
+def test_processing_an_unchanged_note_again_reopens_its_failed_job(tmp_path: Path) -> None:
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    clock = _Clock()
+
+    def provider_down(_call: int) -> None:
+        raise RuntimeError("provider down")
+
+    llm = _ScriptLLM(on_extract=provider_down)
+    service = ProcessingService(settings)
+    ref = service.request_processing("a.md")
+    worker = _worker(settings, llm, clock)
+    for _ in range(3):
+        worker.run_once(scan=False)
+        clock.advance(10_000)
+    assert service.get_status(ref.job_id)["state"] == "failed"
+
+    again = service.request_processing("a.md")
+    assert (again.job_id, again.state) == (ref.job_id, "queued")
+    worker.run_once(scan=False)
+    status = service.get_status(ref.job_id)
+    assert len(llm.extract_calls) == 4, "the reopened job did not run"
+    assert (status["state"], status["attempts"]) == ("queued", 1), "a fresh attempt budget"
+
+
 def test_stale_consensus_keeps_its_date_and_citations_until_replaced(tmp_path: Path) -> None:
     settings = _workspace(tmp_path)
     _note(settings, "a.md", "Alpha note\n")
