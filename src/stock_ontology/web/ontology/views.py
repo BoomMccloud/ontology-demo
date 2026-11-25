@@ -355,7 +355,7 @@ def build_registry_edit_context(
         actions.update(
             registry_operator_edit=operator_allowed and published is not None and not pending,
             registry_edit_values=before.model_dump(),
-            theme_stage_choices=next(field.options for field in applied.field_specs("theme") if field.name == "stage"),
+            theme_stage_choices=next((field.options for field in applied.field_specs("theme") if field.name == "stage"), ()),
         )
         if pending and published is not None:
             browser_revision = RegistryService.browser_publication(db, published, applied)
