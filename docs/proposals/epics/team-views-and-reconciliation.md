@@ -14,9 +14,12 @@ Ship comparison once [Scenarios & Prediction](scenarios-and-prediction.md) suppo
 
 ## Draft user journey
 
-### Reconcile two views of the same delay
+### Reconcile two views of the same qualification
 
-1. After a data center operator announces a one-quarter deployment delay, two analysts save their views against the same graph baseline and two-quarter horizon. One expects enough orders to slip for the supplier's exposure to turn mixed. The other expects deliveries to recover within the window and exposure to stay positive.
-2. The portfolio manager opens the side-by-side comparison and sees that both analysts accept the announced delay. They differ on whether it will push supplier orders beyond the forecast window. When weights are available, the comparison also shows the weight each analyst assigned to the same outcome.
-3. After discussing the evidence, the team records a shared view that exposure stays positive for now, with a second delay as the trigger for revisiting it. The decision cites the supporting evidence and retains the more cautious analyst's view.
-4. At the next update, the team reopens the decision and checks whether delivery guidance changes the shared view or the weight it gives the downside outcome.
+This journey continues the Supplier X example from [Scenarios & Prediction](scenarios-and-prediction.md#draft-user-journey).
+
+1. After Supplier X qualifies its 1.6T modules with a hyperscaler, two analysts save their views against the same graph baseline and two-quarter horizon. One expects volume orders to follow and puts Supplier X's entry into the data center rollout thesis at 60%. The other puts entry at 30%, citing the hyperscaler's long-term supply agreements with incumbents.
+2. The portfolio manager opens the side-by-side comparison. Both analysts accept the qualification and the proposed qualified-supplier relationship. They differ on whether qualification leads to volume orders within the window. The comparison shows each analyst's probability and the evidence behind it.
+3. After discussing the evidence, the team records a shared view: Supplier X stays a candidate for now, with entry at 45% and a first volume order as the trigger for revisiting. The decision cites the supply agreements and keeps both individual views.
+4. A month later, a channel check finds only sample orders. Each view takes the same moderate update toward Supplier X staying a candidate. The first analyst's entry probability drops to 33%, the second's to 13%, and the team's to 21%.
+5. At the end of the window, no volume order has come and the entry prediction resolves as did not follow. Each view is scored separately: 0.11 for the first analyst, 0.02 for the second, and 0.05 for the team. The team can see that the dissenting view was better calibrated on this call.
