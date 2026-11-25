@@ -1,8 +1,8 @@
 ---
 proposal_id: "worker-connection-reuse"
-state: FRAMED
+state: BUILT
 witness: builder
-candidate: "aa1d9f7 @ worktree/claude/worker-connection-reuse-d48cb4"
+candidate: "195d828 @ worktree/claude/worker-connection-reuse-d48cb4"
 ---
 
 # Proposal: Fewer database opens in the worker and status polling
@@ -102,8 +102,37 @@ result, and candidate identity. -->
 
 ## Build
 
-<!-- Replaced only by proposal-build. Reference changed paths, protected witnesses,
-exact GREEN command(s), concise result, candidate identity, and deviations. -->
+Candidate: `195d828 @ worktree/claude/worker-connection-reuse-d48cb4`
+
+### Files changed
+
+- `src/stock_ontology/worker.py` — `SPOOL_SECONDS = 2.0`; a session-scoped queue connection (`_session`, `_queue`, `_close_queue`) used by intake, claim, scan check, `_fail` and `run_until`'s status read, reopened once on `RegistryChangedError` and dropped on any other exception; `run_forever` rescans notes every `interval_seconds` and between scans runs `run_once(scan=False)` when the spool has a submission. `open_store()` is unchanged, so each job attempt still opens its own connection. `_run`, `_run_correction`, `_run_ontology_correction` untouched. Satisfies the primary claim and the registry guardrail.
+- `src/stock_ontology/services/processing.py` — `has_submissions()`; `_job` and `latest_for_note` read through `read_jobs` instead of a full read-only `OntologyDB`. Satisfies the status-poll guardrail.
+- `src/stock_ontology/db/jobs.py`, `src/stock_ontology/db/__init__.py` — `read_jobs(db_path)`: a `JobStore` on a plain `query_only` connection, or None when the database is missing. Satisfies the read-only and status-poll guardrails.
+- `src/stock_ontology/cli.py` — `--interval` help text for `watch` and `worker` now says it is the note-scan interval and queued jobs start within 2 seconds.
+- `docs/worker.md` — one bullet on the 2-second spool check, the notes rescan interval, and connection use.
+- `README.md` — one Ingestion Constraints entry: run each job attempt on its own `open_store()` connection; the queue connection serves only queue work. Guarded by the two new worker tests.
+- `tests/test_worker.py` — decisive witness `test_idle_worker_opens_once_and_starts_a_spooled_job_within_two_seconds`, guardrail tests `test_reused_worker_connection_detects_a_registry_change_between_ticks` and `test_job_status_reads_skip_the_full_store_and_stay_read_only`, fake-time helper `_LoopTime` and `_run_service`.
+
+### Unit evidence
+
+- Builder-owned decisive witness: `uv run pytest tests/test_worker.py -q -k "opens_once or registry_change_between or status_reads_skip"` on `aa1d9f7` source — RED, 3 failed: idle opens `[0.0, 0.0, 0.0]` instead of `[0]`; no job started before the stop at fake 30 s (the 60 s sleep skipped the submission window); status read constructed a full `OntologyDB`; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-worker-connection-reuse-d48cb4/c87b9c70-1a49-4345-8d52-ee0d5a520fc2/scratchpad/red.log`.
+- Same command on the candidate — GREEN, 3 passed (part of the full run below).
+- `uv run pytest tests/test_worker.py -q -W error::ResourceWarning` — GREEN, 22 passed; no leaked connections from sessions.
+
+### Green evidence
+
+- Decisive witness: `uv run pytest tests/test_worker.py -q` — pass, 22 passed.
+- Gate: `uv run pytest -v` — pass, 554 passed in 22.7 s; log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-worker-connection-reuse-d48cb4/c87b9c70-1a49-4345-8d52-ee0d5a520fc2/scratchpad/green.log`.
+- Gate: `uv run ruff check src tests` — pass.
+
+### Intervention record
+
+- None. The repository keeps no intervention ledger; the user-facing outcome (job pickup within 2 s) is measured by the decisive witness.
+
+### Deviations
+
+- None open. The first full run failed `tests/test_architecture.py::test_only_storage_touches_sqlite` because the light reader sat in `services/processing.py`. Frame was rerun to add `src/stock_ontology/db/jobs.py` to allowed scope before this Build section was written; the reader now lives there.
 
 ## Audit
 
