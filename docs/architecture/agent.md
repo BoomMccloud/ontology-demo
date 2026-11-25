@@ -28,8 +28,8 @@ two ways to call it:
 
 `provider` and `model` come from the run's last `ModelResponse`
 (`provider_name`, `model_name`). `fallback_used` is true when a response came
-from a model other than the first in the turn's `FallbackModel`, or carries
-failed attempts.
+from a model other than the configured primary (the first provider in the
+chain), or carries failed attempts.
 
 Other attributes (`messages`, `tool_trace`, `last_provider`, `last_model`,
 `last_fallback_used`) are internal and may change.

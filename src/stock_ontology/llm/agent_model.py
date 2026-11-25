@@ -11,7 +11,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
+from typing import Any
 
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -76,12 +78,42 @@ def build_native_model(name: ProviderName, settings: Settings) -> Model:
     return OpenAIChatModel(model, provider=OpenAIProvider(base_url=base_url, api_key=api_key), settings=defaults)
 
 
+class _CooldownFallbackModel(FallbackModel):
+    """A `FallbackModel` that re-reads the chain's cooldowns before every request.
+
+    A turn makes one request per tool round plus the final answer. Ordering once per
+    turn would retry a model that just failed on every later request of that turn.
+    `models` keeps the configured order between requests, so `models[0]` is the
+    configured primary when the agent decides whether a fallback answered.
+    """
+
+    def __init__(self, chain: AgentModelChain) -> None:
+        super().__init__(*chain.models, fallback_on=chain._falls_back)
+        self._cooldowns = chain
+
+    async def request(self, *args: Any, **kwargs: Any) -> Any:
+        configured, self.models = self.models, self._cooldowns.ordered()
+        try:
+            return await super().request(*args, **kwargs)
+        finally:
+            self.models = configured
+
+    @asynccontextmanager
+    async def request_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        configured, self.models = self.models, self._cooldowns.ordered()
+        try:
+            async with super().request_stream(*args, **kwargs) as stream:
+                yield stream
+        finally:
+            self.models = configured
+
+
 class AgentModelChain:
     """One per process: the agent's native models in priority order, plus a cooldown map.
 
-    Call `for_turn()` for each agent turn. It returns a `FallbackModel` over the
-    models with cooled ones last (still tried, as a last resort), or the model
-    itself when there is only one.
+    Call `for_turn()` for each agent turn. It returns a `FallbackModel` that puts
+    cooled models last (still tried, as a last resort) on every request of the turn,
+    or the model itself when there is only one.
     """
 
     def __init__(
@@ -108,10 +140,9 @@ class AgentModelChain:
     def for_turn(self) -> Model:
         if not self.models:
             raise ProviderConfigError("No configured chat provider for the agent.", provider="agent")
-        ordered = self.ordered()
-        if len(ordered) == 1:
-            return ordered[0]
-        return FallbackModel(*ordered, fallback_on=self._falls_back)
+        if len(self.models) == 1:
+            return self.models[0]
+        return _CooldownFallbackModel(self)
 
     def _falls_back(self, exc: Exception) -> bool:
         """`fallback_on` handler: fall back on any API error, cooling the model on rate-limit/auth/config."""

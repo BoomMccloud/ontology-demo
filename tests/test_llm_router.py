@@ -580,10 +580,11 @@ def test_agent_model_chain_cools_failed_models_last_across_turns(
         clock.advance(30.0)
         calls.clear()
         agent.model = chain.for_turn()
-        assert [m.model_name for m in agent.model.models] == ["qwen-x", "gemini-x"]
+        assert [m.model_name for m in chain.ordered()] == ["qwen-x", "gemini-x"]
         second = agent.chat("Again", first.history)
         assert calls == ["dashscope"]
-        assert (second.provider, second.model) == ("openai", "qwen-x")
+        # Gemini is still the configured primary, so a DashScope answer is a fallback.
+        assert (second.provider, second.model, second.fallback_used) == ("openai", "qwen-x", True)
 
         # Turn 3: if DashScope fails while Gemini is cooled, Gemini is still the last resort.
         calls.clear()
@@ -604,6 +605,54 @@ def test_agent_model_chain_cools_failed_models_last_across_turns(
         assert chain._falls_back(ModelHTTPError(status, "m1")) is True
         assert [m.model_name for m in chain.ordered()] == (["m2", "m1"] if cools else ["m1", "m2"])
     assert AgentModelChain([], clock=clock)._falls_back(ValueError("not an API error")) is False
+
+
+def test_agent_model_chain_skips_a_model_cooled_earlier_in_the_same_turn(tmp_path: Path) -> None:
+    """A model that fails on a turn's first request is not retried on that turn's later requests."""
+    db_path = tmp_path / "same_turn.db"
+    with OntologyDB(db_path, embedding_dim=4, read_only=False) as db:
+        db.upsert_node(
+            Node(
+                id="ent_nvda",
+                node_type="entity",
+                name="NVIDIA",
+                summary="GPU leader",
+                aliases=["NVDA"],
+                facets={"entity_type": "company", "ticker": "NVDA"},
+            ),
+            embedding=[1.0, 0.0, 0.0, 0.0],
+        )
+
+    calls: list[str] = []
+
+    def gemini(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append("gemini")
+        raise ModelHTTPError(429, "gemini-x", {"error": "quota"})
+
+    def dashscope(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append("dashscope")
+        if not any(isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, "parts", [])):
+            return ModelResponse(
+                parts=[ToolCallPart("get_entity_overview", {"entity_name_or_id": "NVDA"})], provider_name="openai"
+            )
+        return ModelResponse(parts=[TextPart("NVIDIA via DashScope.")], provider_name="openai")
+
+    chain = AgentModelChain(
+        [FunctionModel(gemini, model_name="gemini-x"), FunctionModel(dashscope, model_name="qwen-x")],
+        cooldown_seconds=60.0,
+        clock=_FakeClock(start=1000.0),
+    )
+    with OntologyDB(db_path, embedding_dim=4, read_only=True) as ro_db:
+        turn = OntologyAgent(ro_db, _StubProvider("gemini"), model=chain.for_turn()).chat("Check NVDA", ())
+
+    # Gemini fails once on the tool round; the final-answer request goes straight to DashScope.
+    assert calls == ["gemini", "dashscope", "dashscope"]
+    assert (turn.reply, turn.provider, turn.model, turn.fallback_used) == (
+        "NVIDIA via DashScope.",
+        "openai",
+        "qwen-x",
+        True,
+    )
 
 
 def test_web_health_and_chat_report_provider_and_no_secret_leak(tmp_path: Path) -> None:
