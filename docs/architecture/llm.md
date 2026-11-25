@@ -45,7 +45,9 @@ openai_compatible) and `AnthropicModel` (anthropic, with `/v1` stripped from
 `ANTHROPIC_API_URL`). `AgentModelChain.for_turn()` returns a Pydantic AI
 `FallbackModel` that moves on after any provider API error. A model that failed
 with 429/401/403, or an error `classify_error` calls rate_limit, auth or config,
-goes last for `LLM_COOLDOWN_SECONDS` but stays the last resort. Each fallback
+goes last for `LLM_COOLDOWN_SECONDS` but stays the last resort. The order is
+re-read before every model request, so it applies from the next request of the
+same turn. Each fallback
 logs a warning naming the failed model, the error kind and any cooldown.
 
 ## Depends on
