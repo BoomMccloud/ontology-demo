@@ -1,8 +1,8 @@
 ---
 proposal_id: "unified-note-corrections"
-state: FRAMED
+state: PROVED
 witness: independent
-candidate: "aa33b7f @ worktree claude/unified-note-corrections-0faa55"
+candidate: "a8abf55 @ worktree claude/unified-note-corrections-0faa55"
 ---
 
 # Proposal: One review path for note corrections
@@ -98,9 +98,40 @@ Candidate: `aa33b7f @ worktree claude/unified-note-corrections-0faa55`
 
 ## Proof
 
-<!-- Replaced only by proposal-prove, or by the orchestrator with the builder-route
-deferred-witness status. Reference native witness path, exact command, concise RED
-result, and candidate identity. -->
+Candidate: `a8abf55 @ worktree claude/unified-note-corrections-0faa55` (witness commit on top of `e62635d`; production source unchanged from `e62635d`)
+
+**Protected witness**
+- Primary: a relationship correction from the note reader and the same correction from the Ontology page get one judgement. Path: `tests/test_web_notes.py` / `test_note_reader_and_ontology_page_judge_a_relationship_correction_alike` (11 rows: `unregistered-relation`, `forbidden-endpoints`, `same-node`, `missing-required-facet`, `duplicate-add`, `delete-other-notes-edge`, `note-changed`, `valid-edit`, `valid-pending-edit`, `valid-add`, `valid-delete`).
+  - Defect and boundary: the reader queues raw requests that a second validator in the worker (`IngestionPipeline` `note.relationship*` methods) judges, while the Ontology page reviews at preview with `review_note_correction`. They disagree on error phase, status, message, duplicates, pending edges and delete. The defect crosses web submit, the job queue, the worker and the graph.
+  - Assertion: each row builds two identical fixtures. One runs through `/api/notes/relationship*`, the other through `/api/ontology/corrections/preview` and confirm. For delete rows the Ontology side calls `review_note_correction(kind="relationship_delete", edge_id=..., changes={})` and submits that payload as `note.ontology.correction`, because the page has no delete form and its routes are out of scope. Each run gives phase (submit or worker), HTTP status, detail and the note's main, pending and peer edges without IDs. Invalid rows must be rejected at submit with the pinned locale key (`missing-required-facet` pins only 422), the graph must be untouched, and the reader's judgement must equal the Ontology one. Valid rows must produce the expected graph on both paths. Proves the claim at the public HTTP and graph boundary, including "rejected at submit, nothing queued". Limit: delete compares at the service and worker level, not the Ontology HTTP route. `valid-edit` and `valid-add` already pass and act as regression guards, not proof. Edge-ID replacement is covered by the stale-form guardrail.
+- Guardrail: queued legacy jobs are judged by the same review, and new ones can't be submitted. Path: `tests/test_web_notes.py` / `test_queued_legacy_relationship_jobs_are_judged_by_the_same_review`.
+  - Defect and boundary: the legacy executor upserts a duplicate add silently, and `ProcessingService.submit_correction` still accepts `note.relationship*`. Boundary: job store to worker to graph, and the submit API.
+  - Assertion: three legacy jobs are inserted directly with `db.jobs.insert` (the pre-deploy queue). A duplicate `note.relationship.add` fails 409 with the graph unchanged. A `note.relationship` edit of a pending edge and a `note.relationship.delete` succeed with the expected graph. Then `submit_correction` raises `ServiceError("invalid")` for all three kinds. Limit: doesn't check the job error text, and doesn't prove legacy jobs keep correction priority.
+- Guardrail: a reader form opened before an Ontology correction can't re-apply. Path: `tests/test_web_notes.py` / `test_note_reader_form_opened_before_an_ontology_correction_cannot_reapply`.
+  - Defect and boundary: `apply_note_correction` keeps the edge ID through `update_edge`, so a stale reader form with the old `edge_id` applies on top. Boundary: the Ontology confirm, the worker and the graph, then the reader's submit.
+  - Assertion: after an Ontology edit of `original` (to_id becomes c), a reader edit holding `edge_id="original"` is rejected at submit with 404 `service_error.relationship_missing`, and the graph stays as corrected. Limit: doesn't separately assert that `created_at` is kept.
+- The `note-changed` row covers the stale-source part of the second guardrail at submit. The worker-time race is still covered by the existing `test_ontology_registry_editing_note_correction[stale-note]`.
+- The third guardrail needs no new witness. Its tests are protected as-is: `tests/test_web_ontology.py::test_ontology_registry_editing_note_correction`, `::test_ontology_registry_editing_relationship_add_source` and `tests/test_pipeline.py::test_person_accuracy_correction_is_checked_stored_and_refreshes_all_their_rumors`. All 9 cases pass on `a8abf55`. Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/guardrail-existing-green.log`.
+- Protected paths: the three new tests in `tests/test_web_notes.py` and their helpers (`_FIXTURE_SOURCE`, `_correction_workspace`, `_note_graph`, `_Judgement`, `_run_job`, `_judged`, `_reader_judgement`, `_ontology_judgement`, `_edit`, `_add`, `_delete`, and the row constants). Also the three existing guardrail tests named above. Build may still edit the invariant-changed tests the Frame lists elsewhere in `tests/test_web_notes.py`.
+- Protected revision: `a8abf55` (compare with `git diff a8abf55 -- tests/test_web_notes.py tests/test_web_ontology.py tests/test_pipeline.py`).
+
+**Red evidence**
+- `uv run pytest tests/test_web_notes.py -k "judge_a_relationship_correction_alike or legacy_relationship_jobs or cannot_reapply" -v` gives 11 failed and 2 passed (`valid-edit`, `valid-add`). Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/red.log`. The failures, all from missing behavior:
+  - `unregistered-relation`, `forbidden-endpoints`, `same-node`, `missing-required-facet`, `note-changed`: the Ontology side matches the expected key, but the reader decides in the worker (`phase 'worker' != 'submit'`) with a different detail.
+  - `duplicate-add`: the reader succeeds (200) where the Ontology page returns 409 `relationship_exists`.
+  - `delete-other-notes-edge`, `valid-delete`: the review has no delete kind. It returns 422 "Choose a person or relationship correction."
+  - `valid-pending-edit`: the Ontology review can't see pending edges (404).
+  - Legacy test: `assert 200 == 409`, because the duplicate legacy add is upserted silently.
+  - Stale form: `('worker', 200) != ('submit', 404)`, because the old edge ID re-applied and the graph became a BUY d.
+- The legacy test's submit refusal, observed before the asserts were reordered (pytest reported `DID NOT RAISE ServiceError`), is reproduced standalone: `submit_correction` accepts and queues all three `note.relationship*` kinds. Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/red-submit-legacy-kind.log`.
+- The rest of `tests/test_web_notes.py` is unaffected: 32 passed, and only the 11 new witnesses fail. Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-unified-note-corrections-0faa55/23990f0d-aeb2-4ecd-b74d-f0968dcaed6a/scratchpad/web-notes-full.log`. `ruff check` is clean.
+- The primary claim and the first two guardrails have no proof until the command above is observed RED, and it was observed RED on `a8abf55`.
+
+**Supporting test plan**
+- Shared identity rule (Frame witness 2) goes to Build, in `tests/test_registry_governance.py` or `tests/test_web_ontology.py`. It catches drift between `RegistryService.review_record_edit` and the person branch of `review_note_correction` on keep-previous-name, alias dedup, the alias length limit and `conflict` on a label taken by another record. There's no Proof witness because today both functions already apply these rules the same way, and both raise `conflict`, though with different keys (`identifier_taken` vs `name_taken`) that the Frame doesn't require to match. Nothing can fail before the change, so this is a refactor guard Build owns. Also covers `_rollout_record_metadata` still marking a collision `ambiguous`.
+- Shared edge check (`OntologyRegistry.check_edge`) goes to Build, in `tests/test_registry*.py`. It catches relink (`_canonical_note_edge`) and `_review_edge` disagreeing on registered relation, distinct existing endpoints, allowed endpoints and facets.
+- Note-reader converter (`reverse` resolved against the current row) goes to Build, in `tests/test_web_notes.py` outside the protected tests. It catches a reader `reverse: true` edit producing a different `after` than the same explicit endpoints.
+- Legacy priority goes to Build, in `tests/test_worker.py::test_corrections_are_claimed_ahead_of_earlier_extraction`. It catches an already-queued `note.relationship*` job losing correction priority once it can't be submitted.
 
 ## Build
 
