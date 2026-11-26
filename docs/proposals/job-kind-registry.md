@@ -1,8 +1,8 @@
 ---
 proposal_id: "job-kind-registry"
-state: FRAMED
+state: PROVED
 witness: independent
-candidate: "e1304fb @ worktree pipeline-correction-api-47e1d2, branch claude/job-kind-registry"
+candidate: "7c333f8 @ worktree pipeline-correction-api-47e1d2, branch claude/job-kind-registry"
 ---
 
 # Proposal: One table of job kinds
@@ -85,9 +85,41 @@ Candidate: `e1304fb @ worktree pipeline-correction-api-47e1d2, branch claude/job
 
 ## Proof
 
-<!-- Replaced only by proposal-prove, or by the orchestrator with the builder-route
-deferred-witness status. Reference native witness path, exact command, concise RED
-result, and candidate identity. -->
+Candidate: `6a1161a @ worktree pipeline-correction-api-47e1d2, branch claude/job-kind-registry`, with the witness tests from `7c333f8` added (no `src/` changes)
+
+Build must implement these exact names, which are taken from Frame's example: `stock_ontology.services.processing.JOB_KINDS`, a plain mutable `dict[str, JobKind]`, where each entry has the attributes `.priority` and `.submit`. `submit` is one of `"correction"`, `"operator"`, `"process"` or `"retired"`. Of the two intake behaviors Frame allows, the witness takes the first. An undeclared spooled kind gets a job row recorded `failed` with `error_code="invalid"`, and its error names the kind. It is not dropped before insert. The `Worker` construction check must read `JOB_KINDS` when `__init__` runs, so that changing the dict in place is seen. It may raise any exception whose message names the mismatched kind.
+
+**Protected witness**
+- Undeclared kind is refused at spool intake: `tests/test_worker.py` / `test_spooled_job_of_an_undeclared_kind_fails_invalid_at_intake_and_is_never_claimed`
+  - Defect and boundary: `Worker.intake` inserts any spooled kind with priority 20, and it fails only after being claimed, as "Unknown job kind". The submission crosses from the services spool file into the worker's jobs table.
+  - Assertion: a hand-written `enqueue` spool file with kind `note.unknown` is consumed by `intake`, and `db.jobs.claim` then returns `None`. `ProcessingService.get_status("job_unknown")` reports `state=failed`, `error_code=invalid`, and an error containing `note.unknown`. Proves an undeclared kind is refused with a clear `invalid` error and never runs. Limit: it does not prove anything about the `retry` op, and does not check the exact error wording beyond the kind name.
+- The executor map and the kind table agree, checked at construction: `tests/test_worker.py` / `test_worker_construction_fails_when_executors_and_the_kind_table_disagree`
+  - Defect and boundary: executors are spread across if-chains in `_run` and `_run_correction`, and no check ties them to the services-side kind declarations. This crosses the services/worker boundary.
+  - Assertion: `Worker(...)` builds with the shipped table. It raises, naming the kind, when `note.undeclared.executor` is added to `JOB_KINDS` (a declared kind with no executor). It also raises, naming `reembed`, when `reembed` is deleted from `JOB_KINDS` (an executor with no declared kind). Proves a mismatch fails when the worker is constructed, not at run time. Limit: it does not prove dispatch is a single map lookup. That shape belongs to Audit's scope review.
+- Each kind is declared once, with priority and submitter, and the existing guardrail errors are kept: `tests/test_worker.py` / `test_kind_table_declares_each_kind_once_with_its_priority_and_submitter`
+  - Defect and boundary: priority and the right to submit are split across `CORRECTION_KINDS`, `RETIRED_CORRECTION_KINDS`, `OPERATOR_KINDS`, `PROCESS_KIND` and `job_priority`. These are read both by `ProcessingService` and by the worker's priority.
+  - Assertion 1: `submit_correction` refuses `note.relationship.add` (a retired kind) and `note.unknown` with `("invalid", "Unknown correction: <kind>")`. `submit_operator("note.relink")` refuses with `("invalid", "Unknown operator job: note.relink")`. This is a guardrail and already passes today.
+  - Assertion 2: `{kind: (priority, submit)}` from `JOB_KINDS` equals exactly the current 14 kinds:
+    - the four correction kinds: priority 0, `correction`
+    - the three `note.relationship*` kinds: priority 0, `retired`
+    - the six operator kinds: priority 10, `operator`
+    - `process`: priority 20, `process`
+  - Assertion 3: `job_priority(kind)` equals each entry's priority.
+  - Proves one table declares every kind with its current priority, retired kinds keep correction priority, and no kind names change. Limit: it does not cover the `"scan"` pseudo-kind priority, which Frame moves to a named constant.
+- Protected paths: `tests/test_worker.py`, limited to the three tests above plus the `_DECLARED_KINDS` constant and the `_job_kinds` helper next to them. Frame's Invariants changed lets Build edit lines 411-413 of `test_corrections_are_claimed_ahead_of_earlier_extraction` and nothing else in this file.
+- Protected revision: `7c333f8` (commit on `claude/job-kind-registry`, not pushed).
+
+**Red evidence**
+- `uv run pytest tests/test_worker.py -v -k "undeclared_kind or disagree or declares_each_kind"` gives 3 failed, 25 deselected. Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/jobkind-red.log`.
+  - Intake witness: `AssertionError: an undeclared kind must never be claimed, got note.unknown`. The job was claimed with `priority=20` and `state=running`.
+  - Construction and table witnesses: `AssertionError: services.processing.JOB_KINDS must be the one table of job kinds`, because the table is missing.
+  - Full `uv run pytest tests/test_worker.py -q` gives 3 failed, 25 passed, so no other test is affected. `ruff check` is clean.
+- The construction check's raise is guarded by the missing-table assertion. Its raising behavior has no proof until Build adds `JOB_KINDS` and that test is re-observed failing when the table is changed, before it passes.
+
+**Supporting test plan**
+- The retired `note.relationship*` jobs already queued still run with their current outcome. Build: the existing owner `tests/test_web_notes.py` (the `queue_legacy` test near line 1224) must stay green. It catches a retired kind losing its executor.
+- `test_corrections_are_claimed_ahead_of_earlier_extraction` must read the retired kinds from `JOB_KINDS` (entries with `submit == "retired"`) instead of `RETIRED_CORRECTION_KINDS`. Build: `tests/test_worker.py:411-413`. It catches the old sets surviving alongside the table.
+- `request_processing` checks the table for `process`. Build: the existing `tests/test_worker.py` processing tests stay green. They catch `process` being dropped from the table.
 
 ## Build
 
