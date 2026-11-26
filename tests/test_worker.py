@@ -413,6 +413,86 @@ def test_corrections_are_claimed_ahead_of_earlier_extraction(tmp_path: Path) -> 
     assert {job_priority(kind) for kind in RETIRED_CORRECTION_KINDS} == {job_priority("note.entity.delete")}
 
 
+# --- proposal `job-kind-registry`: one table of job kinds
+
+_DECLARED_KINDS = {
+    **{kind: (0, "correction") for kind in (
+        "note.relink", "note.entity.add", "note.entity.delete", "note.ontology.correction",
+    )},
+    **{kind: (0, "retired") for kind in ("note.relationship", "note.relationship.add", "note.relationship.delete")},
+    **{kind: (10, "operator") for kind in (
+        "ingest", "reembed", "repair", "registry.publish", "registry.apply", "registry.apply.preview",
+    )},
+    "process": (20, "process"),
+}
+
+
+def _job_kinds() -> dict[str, Any]:
+    from stock_ontology.services import processing
+
+    table = getattr(processing, "JOB_KINDS", None)
+    assert isinstance(table, dict), "services.processing.JOB_KINDS must be the one table of job kinds"
+    return table
+
+
+def test_spooled_job_of_an_undeclared_kind_fails_invalid_at_intake_and_is_never_claimed(tmp_path: Path) -> None:
+    settings = _workspace(tmp_path)
+    clock = _Clock()
+    service = ProcessingService(settings)
+    service.spool.mkdir(parents=True)
+    (service.spool / "00000000000000000001-enqueue-job_unknown.json").write_text(json.dumps({
+        "op": "enqueue", "job_id": "job_unknown", "kind": "note.unknown", "target": "a.md", "revision": "",
+        "payload": {"file": "a.md"}, "created_at": clock().isoformat(),
+    }), encoding="utf-8")
+
+    worker = _worker(settings, _ScriptLLM(), clock)
+    with worker.open_store() as db:
+        worker.intake(db)
+        claimed = db.jobs.claim(clock(), 30)
+    assert claimed is None, f"an undeclared kind must never be claimed, got {claimed and claimed.kind}"
+    assert not service.has_submissions()
+    status = service.get_status("job_unknown")
+    assert (status["state"], status["error_code"]) == ("failed", "invalid")
+    assert "note.unknown" in (status["error"] or "")
+
+
+def test_worker_construction_fails_when_executors_and_the_kind_table_disagree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _workspace(tmp_path)
+    table = _job_kinds()
+    _worker(settings, _ScriptLLM(), _Clock())  # the shipped table and executors agree
+
+    monkeypatch.setitem(table, "note.undeclared.executor", table["note.relink"])
+    with pytest.raises(Exception, match="note.undeclared.executor"):
+        _worker(settings, _ScriptLLM(), _Clock())
+    monkeypatch.delitem(table, "note.undeclared.executor")
+
+    monkeypatch.delitem(table, "reembed")
+    with pytest.raises(Exception, match="reembed"):
+        _worker(settings, _ScriptLLM(), _Clock())
+
+
+def test_kind_table_declares_each_kind_once_with_its_priority_and_submitter(tmp_path: Path) -> None:
+    from stock_ontology.services import ServiceError
+    from stock_ontology.services.processing import job_priority
+
+    settings = _workspace(tmp_path)
+    _note(settings, "a.md", "Alpha note\n")
+    service = ProcessingService(settings)
+    for kind in ("note.relationship.add", "note.unknown"):
+        with pytest.raises(ServiceError) as refused:
+            service.submit_correction(kind, "a.md", {"expected_hash": None})
+        assert (refused.value.code, refused.value.message) == ("invalid", f"Unknown correction: {kind}")
+    with pytest.raises(ServiceError) as refused:
+        service.submit_operator("note.relink", {})
+    assert (refused.value.code, refused.value.message) == ("invalid", "Unknown operator job: note.relink")
+
+    table = _job_kinds()
+    assert {kind: (entry.priority, entry.submit) for kind, entry in table.items()} == _DECLARED_KINDS
+    assert {kind: job_priority(kind) for kind in table} == {kind: entry.priority for kind, entry in table.items()}
+
+
 def test_three_attempts_with_exponential_backoff_and_a_new_revision_resets_the_budget(
     tmp_path: Path,
 ) -> None:
