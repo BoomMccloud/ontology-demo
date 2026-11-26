@@ -4,7 +4,7 @@
 
 [Open the local HTML prototype](../../prototypes/ontolog.html) in a browser. Choose **Start empty** to try the first-note journey. AI replies and ontology processing are simulated.
 
-The prototype follows this file and uses the Margin notes direction below. It covers Recent, capture with processing status, company and theme pages with disagreement and sources, the note reader, Search, and chat with **Save as note**. It is the starting point for design work, not a finished design.
+The prototype follows this file and uses the Margin notes direction below. It covers Recent, capture with processing status, company and theme pages with disagreement and sources, the note reader, Ontology with search, and chat with **Save as note**. It is the starting point for design work, not a finished design.
 
 ## Outcome
 
@@ -41,15 +41,20 @@ The earlier draft used its own terms. They map to the ontology as follows.
 
 ## Navigation
 
-The bottom bar is the same on every screen: **Recent · + · Search**.
+Recent and Ontology are two ways into the same company and theme pages. The three-slot bottom bar changes with the screen.
+
+| View | Left | Center | Right |
+| --- | --- | --- | --- |
+| Recent, Ontology, or Note | **Recent** opens the home screen | **+** opens capture | **Ontology** opens the directory and search |
+| Company or Theme | **Sources** jumps to the notes behind this page | **+** captures a note for this company or theme | **Chat** opens or resumes research chat over this page |
 
 - **Recent** is the home screen. It lists companies and themes touched by recently processed notes, newest first.
+- **Ontology** lists companies, themes, and entities, with a search field on top. Search uses the same search service as the web app, so results match.
 - **+** opens capture. On a company or theme page, the note carries that page as a hint.
-- **Search** opens a mobile search screen backed by the same search service as the web app, so results match.
 
-Company and theme pages have a **Chat** button in the header. Chat opens as a sheet over the current page and uses that page as context. Minimizing it keeps the analyst's place, and reopening it resumes the conversation. Sources is a section on the detail page, not a bottom bar slot.
+Chat opens as a panel over the current page, above the bottom bar, and can expand to full height. Minimizing it keeps the analyst's place, and reopening it resumes the conversation. A note page has a **Research this note** action that opens chat focused on that note.
 
-The top **Back** control returns to the previous screen. After opening a company from Search and then one of its notes, Back returns to the company, then to Search.
+The top **Back** control names and returns to the actual previous screen. After opening a company from Ontology and then one of its notes, Back returns to the company, then to Ontology. With no previous screen, the top left shows the OntoLog name, which returns to Recent.
 
 ## Visual design
 
@@ -85,13 +90,13 @@ Stance comes from the View's stance and sentiment as extraction records them. De
 
 ### Daily use
 
-1. The analyst opens a company or theme from Recent or Search. The page shows the consensus, recent Events and Views, and the notes behind them.
-2. The Sources section lists that item's notes. The analyst opens a note to read it, see its processing status, and inspect what was extracted from it.
+1. The analyst opens a company or theme from Recent or Ontology. The page shows the consensus, recent Events and Views, and the notes behind them.
+2. **Sources** jumps to that item's notes. The analyst opens a note to read it, see its processing status, and inspect what was extracted from it.
 3. The analyst taps **+** to log new information for the current item. The worker processes it and the item moves to the top of Recent.
 
 ### Deep research
 
-1. The analyst taps **Chat** on a company or theme page. The agent uses the page, its Views, and the notes behind them. From a note, chat focuses on that note.
+1. The analyst taps **Chat** on a company or theme page. The agent uses the page, its Views, and the notes behind them. From a note, **Research this note** focuses chat on that note. In capture, **Research** saves the note without processing it and opens chat focused on it.
 2. The analyst asks the agent to verify or refute the information. The agent cites the notes it uses and helps identify counterevidence or what would settle an open question.
 3. The analyst saves a reply as a note, editing it first if needed. The note keeps the agent's citations and goes through normal processing.
 
@@ -116,7 +121,7 @@ These already work on the server and the mobile screens reuse them: the note pas
 
 These are new:
 
-- The `/m` web module: its own templates, CSS, design tokens, navigation, and the fixed bottom bar.
+- The `/m` web module: its own templates, CSS, design tokens, navigation, and the bottom bar that changes with the screen.
 - The Recent screen.
 - A page hint on captured notes. Today every pasted note is saved under `_general/`.
 - **Save as note** on a chat reply, keeping its citations.

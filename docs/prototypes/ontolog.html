@@ -58,8 +58,8 @@ a { color: inherit; }
 .top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; background: var(--paper); display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 6px var(--gutter) 0; }
 .back { border: 0; background: none; padding: 8px 0; color: var(--ink-2); font-size: var(--size-meta); }
 .back[hidden] { display: none; }
-.chat-open { border: 1px solid var(--rule-strong); background: none; border-radius: 8px; padding: 6px 12px; font-size: var(--size-meta); font-weight: 500; }
-.chat-open[hidden] { display: none; }
+.brand { border: 0; background: none; padding: 8px 0; font-weight: 600; letter-spacing: -0.2px; }
+.brand[hidden] { display: none; }
 main { padding: 0 var(--gutter) calc(var(--bar-height) + 32px); }
 
 h1 { font-size: var(--size-title); font-weight: 500; letter-spacing: -0.4px; line-height: 1.15; margin: 4px 0 4px; }
@@ -104,8 +104,10 @@ h2 { font-size: var(--size-meta); font-weight: 600; margin: 28px 0 0; padding-bo
 .proto { margin-top: 40px; color: var(--ink-2); font-size: var(--size-small); }
 
 .bar { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; height: calc(var(--bar-height) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); background: var(--paper); border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; z-index: 3; }
+.slot { display: flex; justify-content: center; }
+.bar button[hidden] { display: none; }
 .bar button { border: 0; background: none; color: var(--ink-2); font-size: var(--size-meta); padding: 12px; }
-.bar button[aria-current="page"] { color: var(--ink); font-weight: 600; }
+.bar button[aria-current="page"], .bar button[aria-expanded="true"] { color: var(--ink); font-weight: 600; }
 .bar .plus { width: 44px; height: 44px; border-radius: 12px; background: var(--ink); color: var(--paper); font-size: 24px; line-height: 1; padding: 0; }
 
 .search { width: 100%; border: 0; border-bottom: 1px solid var(--rule-strong); background: none; padding: 10px 0; font-size: 17px; outline-offset: 4px; }
@@ -120,6 +122,16 @@ dialog.sheet[open] { display: flex; flex-direction: column; animation: rise 180m
 .sheet-head button { border: 0; background: none; color: var(--ink-2); padding: 6px 0; font-size: var(--size-meta); }
 .sheet-body { padding: 12px var(--gutter) 16px; overflow-y: auto; }
 .sheet-foot { padding: 10px var(--gutter) calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--rule); }
+
+.chat { position: fixed; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; bottom: calc(var(--bar-height) + env(safe-area-inset-bottom)); height: 62vh; background: var(--sheet); border-top: 1px solid var(--rule-strong); border-radius: 16px 16px 0 0; display: flex; flex-direction: column; z-index: 4; }
+.chat.expanded { height: calc(100vh - var(--bar-height) - 48px - env(safe-area-inset-bottom) - env(safe-area-inset-top)); }
+.chat[hidden] { display: none; }
+.chat .sheet-body { flex: 1; min-height: 0; }
+.chat .sheet-foot { padding-bottom: 12px; }
+.chat-heading { min-width: 0; }
+.chat-context { color: var(--ink-2); font-size: var(--size-small); }
+.chat-tools { display: flex; gap: 14px; }
+.foot-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; }
 
 .field { width: 100%; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); padding: 10px 12px; }
 textarea.field { min-height: 180px; resize: vertical; font-family: var(--font-source); font-size: 16px; line-height: 1.55; }
@@ -147,15 +159,15 @@ textarea.field { min-height: 180px; resize: vertical; font-family: var(--font-so
 <body>
 <div class="app">
   <header class="top">
-    <button class="back" id="back" hidden>Back</button>
+    <button class="brand" id="brand">OntoLog</button>
+    <button class="back" id="back" hidden><span aria-hidden="true">‹ </span><span id="back-label"></span></button>
     <span></span>
-    <button class="chat-open" id="chat-open" hidden>Chat</button>
   </header>
   <main id="screen" tabindex="-1"></main>
-  <nav class="bar" aria-label="Main">
-    <button id="nav-recent">Recent</button>
+  <nav class="bar" id="bar" aria-label="Main navigation">
+    <div class="slot"><button id="nav-recent">Recent</button><button id="nav-sources" aria-controls="sources" hidden>Sources</button></div>
     <button class="plus" id="nav-capture" aria-label="Capture a note">+</button>
-    <button id="nav-search">Search</button>
+    <div class="slot"><button id="nav-ontology">Ontology</button><button id="nav-chat" aria-controls="chat" aria-expanded="false" hidden>Chat</button></div>
   </nav>
 </div>
 
@@ -170,12 +182,13 @@ textarea.field { min-height: 180px; resize: vertical; font-family: var(--font-so
       <p class="error" id="capture-error" role="alert"></p>
       <button type="button" class="link meta" id="capture-sample">Use a sample note</button>
     </div>
-    <div class="sheet-foot"><button class="primary" type="submit" style="width:100%">Save and process</button></div>
+    <div class="sheet-foot foot-actions"><button class="secondary" type="submit" value="research">Research</button><button class="primary" type="submit" value="process">Save and process</button></div>
   </form>
 </dialog>
 
-<dialog class="sheet" id="chat" aria-labelledby="chat-title">
-  <div class="sheet-head"><strong id="chat-title">Chat</strong><button type="button" id="chat-close">Minimize</button></div>
+<section class="chat" id="chat" role="dialog" aria-modal="false" aria-labelledby="chat-title" hidden>
+  <div class="sheet-head"><div class="chat-heading"><strong id="chat-title">Research chat</strong><div class="chat-context" id="chat-context"></div></div>
+    <div class="chat-tools"><button type="button" id="chat-expand" aria-expanded="false">Expand</button><button type="button" id="chat-close">Minimize</button></div></div>
   <div class="sheet-body" id="chat-log" aria-live="polite"></div>
   <div class="sheet-foot">
     <div class="chips">
@@ -187,7 +200,7 @@ textarea.field { min-height: 180px; resize: vertical; font-family: var(--font-so
       <button class="primary" type="submit">Send</button>
     </form>
   </div>
-</dialog>
+</section>
 
 <div class="toast" id="toast" role="status" hidden></div>
 
@@ -264,6 +277,7 @@ function ago(at) {
 const since = at => { const value = ago(at); return value === "now" ? "just now" : value + " ago"; };
 const viewsFor = id => state.views.filter(view => view.item === id).sort((a, b) => b.at - a.at);
 const notesFor = id => Object.values(state.notes).filter(note => note.items.includes(id)).sort((a, b) => b.at - a.at);
+const statusWord = { ready: "Not processed", queued: "Queued", processing: "Processing" };
 const stanceWord = { challenge: "Challenges a view", support: "Supports", routine: "Adds" };
 
 function quoteBlock(view, withStance) {
@@ -285,12 +299,12 @@ function renderRecent() {
       <p class="proto">Prototype. <button class="link" data-action="sample">Load sample research</button></p>`;
   }
   const pendingRows = pending.map(note => `<button class="row" data-go="note" data-id="${note.id}">
-      <div class="row-head"><span class="row-name">${esc(note.title)}</span><span class="status ${note.status}">${note.status === "queued" ? "Queued" : "Processing"}</span></div></button>`).join("");
+      <div class="row-head"><span class="row-name">${esc(note.title)}</span><span class="status ${note.status}">${statusWord[note.status]}</span></div></button>`).join("");
   const rows = items.map(({ item, latest }) => `<div class="row">
       <div class="row-head"><button class="link row-name" style="text-decoration:none" data-go="item" data-id="${item.id}">${esc(item.name)}<span class="kind">${item.kind}</span></button><span class="when">${ago(latest.at)}</span></div>
       ${quoteBlock(latest, false)}</div>`).join("");
   return `<h1>Recent</h1>
-    ${pending.length ? `<h2>Processing</h2>${pendingRows}` : ""}
+    ${pending.length ? `<h2>Captured</h2>${pendingRows}` : ""}
     ${items.length ? `<h2>Changed</h2>${rows}` : ""}
     <p class="proto">Prototype. <button class="link" data-action="empty">Start empty</button> · <button class="link" data-action="sample">Reload sample</button></p>`;
 }
@@ -313,27 +327,37 @@ function renderItem(id) {
     <h2>Consensus</h2><p class="lede" style="font-family:var(--font-source);line-height:1.55">${esc(item.consensus)}</p>
     ${pairs ? `<h2>Disagreement</h2>${pairs}` : ""}
     ${list ? `<h2>Views and events</h2>${list}` : ""}
-    <h2 id="sources">Sources</h2>${sources}`;
+    <h2 id="sources" tabindex="-1">Sources</h2>${sources}`;
 }
 
 function renderNote(id) {
   const note = state.notes[id];
   const done = note.status === "processed";
   const linked = note.items.filter(item => state.items[item]).map(item => `<button class="row" data-go="item" data-id="${item}"><span class="row-name">${esc(state.items[item].name)}<span class="kind">${state.items[item].kind}</span></span></button>`).join("");
-  const status = done ? `<span class="status">Processed ${since(note.at)}</span>` : `<span class="status ${note.status}">${note.status === "queued" ? "Queued for processing" : "Processing"}</span>`;
+  const status = done ? `<span class="status">Processed ${since(note.at)}</span>` : `<span class="status ${note.status}">${{ ready: "Not processed", queued: "Queued for processing", processing: "Processing" }[note.status]}</span>`;
   return `<p class="kind">note</p><h1>${esc(note.title)}</h1>${status}
     <p class="source-text">${esc(note.text)}</p>
-    ${done ? `<h2>Extracted</h2>${linked || '<p class="meta">No companies or themes found in this note.</p>'}
-      <div class="actions"><button class="secondary" data-action="chat">Research this note</button></div>` : ""}`;
+    ${done ? `<h2>Extracted</h2>${linked || '<p class="meta">No companies or themes found in this note.</p>'}` : ""}
+    <div class="actions">${note.status === "ready" ? '<button class="primary" data-action="process">Process</button>' : ""}<button class="secondary" data-action="chat">Research this note</button></div>`;
 }
 
-function renderSearch() {
-  return `<h1>Search</h1><input class="search" id="search-input" type="search" placeholder="Groq, packaging, margin" aria-label="Search" value="${esc(current.query || "")}"><div id="results">${searchResults(current.query || "")}</div>`;
+function renderOntology() {
+  return `<h1>Ontology</h1><input class="search" id="search-input" type="search" placeholder="Search companies, themes, and notes" aria-label="Search the ontology" value="${esc(current.query || "")}"><div id="results">${searchResults(current.query || "")}</div>`;
+}
+
+function directory() {
+  const groups = [["company", "Companies"], ["theme", "Themes"], ["entity", "Entities"]];
+  const items = Object.values(state.items);
+  if (!items.length) return `<p class="meta" style="margin-top:16px">Companies, themes, and entities appear here once a note is processed.</p>`;
+  return groups.map(([kind, heading]) => {
+    const group = items.filter(item => item.kind === kind).sort((a, b) => a.name.localeCompare(b.name));
+    return group.length ? `<h2>${heading}</h2>${group.map(item => `<button class="row" data-go="item" data-id="${item.id}"><div class="row-head"><span class="row-name">${esc(item.name)}</span><span class="when">${notesFor(item.id).length} ${notesFor(item.id).length === 1 ? "note" : "notes"}</span></div></button>`).join("")}` : "";
+  }).join("");
 }
 
 function searchResults(query) {
   const q = query.trim().toLowerCase();
-  if (!q) return `<p class="meta" style="margin-top:16px">Search companies, themes, and notes.</p>`;
+  if (!q) return directory();
   const items = Object.values(state.items).filter(item => (item.name + " " + item.consensus).toLowerCase().includes(q));
   const notes = Object.values(state.notes).filter(note => (note.title + " " + note.text).toLowerCase().includes(q));
   if (!items.length && !notes.length) return `<p class="meta" style="margin-top:16px">Nothing matches “${esc(query)}”. Try a company or theme name.</p>`;
@@ -342,16 +366,22 @@ function searchResults(query) {
 }
 
 function render(focus) {
-  const views = { recent: renderRecent, item: () => renderItem(current.id), note: () => renderNote(current.id), search: renderSearch };
+  const views = { recent: renderRecent, item: () => renderItem(current.id), note: () => renderNote(current.id), ontology: renderOntology };
   screen.innerHTML = views[current.screen]();
-  $("#back").hidden = history.length === 0;
-  if (history.length) $("#back").textContent = "Back to " + label(history.at(-1));
-  $("#chat-open").hidden = current.screen !== "item";
+  const previous = history.at(-1);
+  $("#back").hidden = !previous;
+  $("#brand").hidden = Boolean(previous);
+  if (previous) { $("#back-label").textContent = label(previous); $("#back").setAttribute("aria-label", "Back to " + label(previous)); }
+  const contextual = current.screen === "item";
+  $("#bar").setAttribute("aria-label", contextual ? "Research navigation" : "Main navigation");
+  $("#nav-recent").hidden = $("#nav-ontology").hidden = contextual;
+  $("#nav-sources").hidden = $("#nav-chat").hidden = !contextual;
+  $("#nav-chat").setAttribute("aria-expanded", String(!$("#chat").hidden));
   $("#nav-recent").toggleAttribute("aria-current", current.screen === "recent");
-  $("#nav-search").toggleAttribute("aria-current", current.screen === "search");
+  $("#nav-ontology").toggleAttribute("aria-current", current.screen === "ontology");
   if (current.screen === "recent") $("#nav-recent").setAttribute("aria-current", "page");
-  if (current.screen === "search") {
-    $("#nav-search").setAttribute("aria-current", "page");
+  if (current.screen === "ontology") {
+    $("#nav-ontology").setAttribute("aria-current", "page");
     const input = $("#search-input");
     input.addEventListener("input", () => { current.query = input.value; $("#results").innerHTML = searchResults(input.value); });
     if (focus) input.focus();
@@ -360,12 +390,13 @@ function render(focus) {
 
 function label(entry) {
   if (entry.screen === "item") return state.items[entry.id].name;
-  if (entry.screen === "note") return "note";
-  return entry.screen === "search" ? "Search" : "Recent";
+  if (entry.screen === "note") return state.notes[entry.id].title;
+  return entry.screen === "ontology" ? "Ontology" : "Recent";
 }
 
 function go(screenName, id) {
   if (current.screen === screenName && current.id === id) return;
+  closeChat();
   history.push(current);
   current = { screen: screenName, id };
   render(true);
@@ -373,8 +404,9 @@ function go(screenName, id) {
 }
 
 function root(screenName) {
+  closeChat();
   history = [];
-  current = { screen: screenName, query: screenName === "search" ? current.query : undefined };
+  current = { screen: screenName, query: screenName === "ontology" ? current.query : undefined };
   render(true);
   window.scrollTo(0, 0);
 }
@@ -409,13 +441,25 @@ function stanceOf(text) {
 
 function submitCapture(event) {
   event.preventDefault();
+  const research = event.submitter && event.submitter.value === "research";
   const text = $("#capture-text").value.trim();
   if (!text) { $("#capture-error").textContent = "Write or paste the note first."; return; }
   const title = $("#capture-name").value.trim() || text.split(/[.!?]/)[0].slice(0, 48);
   const id = "c" + Date.now();
-  const note = { id, title, text, at: Date.now(), status: "queued", items: [], hint: captureHint, summary: captureSummary };
+  const note = { id, title, text, at: Date.now(), status: "ready", items: [], hint: captureHint, summary: captureSummary };
   state.notes[id] = note;
   $("#capture").close();
+  if (research) {
+    go("note", id);
+    toast("Saved. Not processed yet.");
+    openChat();
+    return;
+  }
+  startProcessing(note);
+}
+
+function startProcessing(note) {
+  note.status = "queued";
   toast("Saved. Queued for processing.");
   render();
   setTimeout(() => { note.status = "processing"; render(); }, 1500);
@@ -446,10 +490,29 @@ function openChat(ask) {
   chatKey = context.key;
   if (!chats[chatKey]) chats[chatKey] = { context, messages: [] };
   chats[chatKey].context = context;
-  $("#chat-title").textContent = "About " + context.name;
+  $("#chat-context").textContent = (current.screen === "note" ? "Focused on " : "About ") + context.name;
   drawChat();
-  $("#chat").showModal();
+  $("#chat").hidden = false;
+  $("#nav-chat").setAttribute("aria-expanded", "true");
   if (ask) send(ask); else $("#chat-input").focus();
+}
+
+function closeChat() {
+  $("#chat").hidden = true;
+  $("#nav-chat").setAttribute("aria-expanded", "false");
+}
+
+function toggleExpand() {
+  const expanded = $("#chat").classList.toggle("expanded");
+  $("#chat-expand").setAttribute("aria-expanded", String(expanded));
+  $("#chat-expand").textContent = expanded ? "Collapse" : "Expand";
+}
+
+function showSources() {
+  closeChat();
+  const heading = $("#sources");
+  heading.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  heading.focus({ preventScroll: true });
 }
 
 function drawChat() {
@@ -499,25 +562,28 @@ document.addEventListener("click", event => {
   const target = event.target.closest("[data-go],[data-action],[data-save],[data-ask]");
   if (!target) return;
   if (target.dataset.go) {
-    if ($("#chat").open) $("#chat").close();
     go(target.dataset.go, target.dataset.id);
   } else if (target.dataset.save) {
     const message = chats[chatKey].messages[Number(target.dataset.save)];
-    $("#chat").close();
+    closeChat();
     openCapture({ title: message.title, text: message.plain, summary: message.summary });
   } else if (target.dataset.action === "capture") openCapture();
   else if (target.dataset.action === "chat") openChat(target.dataset.ask);
+  else if (target.dataset.action === "process") startProcessing(state.notes[current.id]);
   else if (target.dataset.action === "empty") load(true);
   else if (target.dataset.action === "sample") load(false);
-  else if (target.dataset.ask && $("#chat").open) send(target.dataset.ask);
+  else if (target.dataset.ask && !$("#chat").hidden) send(target.dataset.ask);
 });
 
-$("#back").addEventListener("click", () => { current = history.pop(); render(true); });
+$("#back").addEventListener("click", () => { closeChat(); current = history.pop(); render(true); });
+$("#brand").addEventListener("click", () => root("recent"));
 $("#nav-recent").addEventListener("click", () => root("recent"));
-$("#nav-search").addEventListener("click", () => root("search"));
+$("#nav-ontology").addEventListener("click", () => root("ontology"));
 $("#nav-capture").addEventListener("click", () => openCapture());
-$("#chat-open").addEventListener("click", () => openChat());
-$("#chat-close").addEventListener("click", () => $("#chat").close());
+$("#nav-sources").addEventListener("click", showSources);
+$("#nav-chat").addEventListener("click", () => { if ($("#chat").hidden) openChat(); else closeChat(); });
+$("#chat-close").addEventListener("click", closeChat);
+$("#chat-expand").addEventListener("click", toggleExpand);
 $("#capture-cancel").addEventListener("click", () => $("#capture").close());
 $("#capture-form").addEventListener("submit", submitCapture);
 $("#capture-sample").addEventListener("click", () => { $("#capture-text").value = SAMPLE_TEXT; $("#capture-name").value = "Supplier call, packaging"; $("#capture-error").textContent = ""; });
@@ -528,7 +594,7 @@ $("#chat-form").addEventListener("submit", event => {
   const input = $("#chat-input");
   if (input.value.trim()) { send(input.value.trim()); input.value = ""; }
 });
-setInterval(() => { if (!$("#capture").open && current.screen !== "search") render(); }, 60e3);
+setInterval(() => { if (!$("#capture").open && current.screen !== "ontology") render(); }, 60e3);
 
 load(false);
 </script>
