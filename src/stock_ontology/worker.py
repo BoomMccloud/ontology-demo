@@ -17,7 +17,6 @@ import json
 import logging
 import tempfile
 import time
-import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
@@ -28,7 +27,6 @@ from typing import Any
 
 from stock_ontology.config import NoteConflictError, Settings, note_revision
 from stock_ontology.db import TERMINAL_STATES, Job, LeaseLostError, OntologyDB, RegistryChangedError
-from stock_ontology.models import Edge, Node
 from stock_ontology.pipeline import IngestionPipeline, IngestReport, reembed_all_nodes, reembed_nodes
 from stock_ontology.registry import (
     OntologyRegistry,

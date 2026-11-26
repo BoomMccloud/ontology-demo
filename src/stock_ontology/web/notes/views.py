@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 from stock_ontology.config import note_revision
-from stock_ontology.i18n import DEFAULT_LANGUAGE, translate, translate_enum, translate_facet_label
+from stock_ontology.i18n import DEFAULT_LANGUAGE, translate, translate_facet_label
 from stock_ontology.search import resolve_safe_note_path
 from stock_ontology.services import GraphStore
 from stock_ontology.services.notes import scan_notes
