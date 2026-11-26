@@ -808,6 +808,7 @@
   "note_reader.delete_row": "削除",
   "note_reader.confirm_delete_relationship": "このノートからこの関係を削除しますか？",
   "note_reader.select_node": "ノードを選択",
+  "note_reader.search_node": "名前を入力して検索",
   "note_reader.edit_row": "編集",
   "note_reader.select_relationship": "関係を選択",
   "note_reader.reverse": "方向を反転",

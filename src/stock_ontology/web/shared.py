@@ -17,29 +17,29 @@ from stock_ontology.services import GraphStore
 GENERAL_FOLDERS = {"_general", "(root)"}
 
 
+def editor_node(node: Node, lang: str) -> dict[str, str]:
+    """A node as `static/editor.js` shows it: id, "name (type)" label, and registry endpoint type."""
+    entity_type = node.facets.get("entity_type") if node.node_type == "entity" else None
+    kind = (translate_enum("entity_type", entity_type, lang=lang) if entity_type
+            else translate_enum("node_type", node.node_type, lang=lang))
+    return {"id": node.id, "label": f"{node.name} ({kind})", "type": node_type_label(node.node_type, entity_type)}
+
+
 def relationship_editor_model(registry: OntologyRegistry, nodes: list[Node], lang: str) -> dict[str, Any]:
     """Choices for the relationship editor in `static/editor.js`, shared by the note reader and Ontology page.
 
-    Each node carries its registry endpoint type so the browser offers only endpoints a relation allows.
-    Relation fields leave out `basis`, which a correction sets itself.
+    `nodes` are only the nodes the page already shows (its current endpoints); the editor finds any other
+    node through `/api/nodes/search`. Each node carries its registry endpoint type so the browser offers only
+    endpoints a relation allows. Relation fields leave out `basis`, which a correction sets itself.
     """
-    def node_label(node: Node) -> str:
-        entity_type = node.facets.get("entity_type") if node.node_type == "entity" else None
-        kind = (translate_enum("entity_type", entity_type, lang=lang) if entity_type
-                else translate_enum("node_type", node.node_type, lang=lang))
-        return f"{node.name} ({kind})"
-
     return {
         "placeholders": {
             "node": translate("note_reader.select_node", lang=lang),
             "relation": translate("note_reader.select_relationship", lang=lang),
+            "search": translate("note_reader.search_node", lang=lang),
             "none": translate("common.none", lang=lang),
         },
-        "nodes": [
-            {"id": node.id, "label": node_label(node),
-             "type": node_type_label(node.node_type, node.facets.get("entity_type"))}
-            for node in sorted(nodes, key=lambda node: node.name.casefold())
-        ],
+        "nodes": [editor_node(node, lang) for node in sorted(nodes, key=lambda node: node.name.casefold())],
         "relations": [
             {
                 "name": relation.name, "label": translate_enum("relation", relation.name, lang=lang),

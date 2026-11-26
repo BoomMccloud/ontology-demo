@@ -13,7 +13,9 @@
   };
 
   const nodeLabels = new Map(model?.nodes.map((node) => [node.id, node.label]) || []);
-  const nodeLabel = (id) => nodeLabels.get(id) || id;
+  // A node found by search is not in the model; its option in the editor carries the label.
+  const nodeLabel = (id) => nodeLabels.get(id)
+    || document.querySelector(`[data-edit-field] option[value="${CSS.escape(id)}"]`)?.text || id;
 
   function displayValue(value) {
     if (value === null || value === undefined || value === "") return "–";

@@ -41,28 +41,105 @@ window.StockEditor = (() => {
     return text;
   }
 
+  // The one place a node is chosen: a search box before `select` that fills it with the nodes
+  // `/api/nodes/search` finds. `filter()` returns `{types, exclude}` for the next search (types are
+  // registry endpoint types; empty means any). Options the template put in `select` with a value stay first.
+  // Pickers that pass one `known` map can look up each other's nodes.
+  function nodePicker(select, { placeholder, label, filter = () => ({}), known = new Map() }) {
+    const blank = [...select.options].find((option) => !option.value) || new Option(placeholder, "");
+    const lead = [...select.options].filter((option) => option.value);
+    const box = document.createElement("input");
+    box.type = "search";
+    box.autocomplete = "off";
+    box.placeholder = label;
+    box.setAttribute("aria-label", label);
+    select.before(box);
+    let timer = null;
+    let latest = 0;
+    let isFixed = false;
+
+    function remember(nodes) {
+      for (const node of nodes) known.set(node.id, node);
+    }
+
+    // Offer `nodes` and select `selected` when it is one of them.
+    function show(nodes, selected = "") {
+      remember(nodes);
+      select.replaceChildren(blank, ...lead, ...nodes.map((node) => new Option(node.label, node.id)));
+      select.value = nodes.some((node) => node.id === selected) || lead.some((option) => option.value === selected)
+        ? selected : "";
+    }
+
+    async function search() {
+      const text = box.value.trim();
+      if (!text || isFixed) return;
+      const request = ++latest;
+      const { types = [], exclude = [] } = filter();
+      const query = new URLSearchParams([["q", text], ...types.map((type) => ["type", type])]);
+      let found;
+      try {
+        found = (await readJson(await fetch(`/api/nodes/search?${query}`), "")).nodes;
+      } catch {
+        return;
+      }
+      if (request !== latest) return;
+      const nodes = found.filter((node) => !exclude.includes(node.id));
+      show(nodes, nodes[0]?.id);
+      select.dispatchEvent(new Event("change"));
+    }
+
+    box.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(search, 200);
+    });
+    return {
+      show,
+      remember,
+      node: (id) => known.get(id),
+      // A picker fixed to the nodes `show` gave takes no search.
+      fixed(value) {
+        isFixed = value;
+        box.disabled = value;
+        if (value) box.value = "";
+      },
+    };
+  }
+
   // Drive the from, relation, and to selects and the facet inputs of one relationship form from the
   // server's editor model (`relationship_editor_model`). Only endpoints the relation allows are offered;
   // with an `anchor`, one endpoint must be that node.
   function relationshipEditor({ from, relation, to, fields }, model, { anchor = "" } = {}) {
-    const nodes = new Map(model.nodes.map((node) => [node.id, node]));
     const relations = new Map(model.relations.map((item) => [item.name, item]));
     const matches = (node, types) => !types.length || types.includes(node.type) || types.includes(node.type.split(":")[0]);
-    const compatible = (start, end, item) => start.id !== end.id && (
-      (matches(start, item.from) && matches(end, item.to))
-      || (item.symmetric && matches(end, item.from) && matches(start, item.to))
-    );
-    const targets = (start, item) => model.nodes.filter(
-      (end) => (!anchor || anchor === start.id || anchor === end.id) && compatible(start, end, item),
-    );
-    const sources = model.nodes.filter((node) => model.relations.some((item) => targets(node, item).length));
+    // Endpoint types `relation` allows opposite `start` ([] means any), or null when `start` cannot take part.
+    const targetTypes = (start, item) => {
+      const sides = [
+        ...(matches(start, item.from) ? [item.to] : []),
+        ...(item.symmetric && matches(start, item.to) ? [item.from] : []),
+      ];
+      if (!sides.length) return null;
+      return sides.some((types) => !types.length) ? [] : [...new Set(sides.flat())];
+    };
+    const compatible = (start, end, item) => {
+      const types = start.id === end.id ? null : targetTypes(start, item);
+      return types !== null && matches(end, types);
+    };
+    const sourceTypes = model.relations.some((item) => !item.from.length || item.symmetric && !item.to.length)
+      ? [] : [...new Set(model.relations.flatMap((item) => item.symmetric ? [...item.from, ...item.to] : item.from))];
+    const known = new Map(model.nodes.map((node) => [node.id, node]));
+    const pickerText = { placeholder: model.placeholders.node, label: model.placeholders.search, known };
+    const fromPicker = nodePicker(from, { ...pickerText, filter: () => ({ types: sourceTypes }) });
+    const toPicker = nodePicker(to, {
+      ...pickerText,
+      filter: () => {
+        const start = fromPicker.node(from.value);
+        const item = relations.get(relation.value);
+        return { types: start && item ? targetTypes(start, item) || [] : [], exclude: start ? [start.id] : [] };
+      },
+    });
+    const anchorNode = model.nodes.find((node) => node.id === anchor);
     let initial = {};
     let shownRelation = null;
-
-    // The one place a node is chosen; the node typeahead replaces this.
-    function nodeChoices(select, items, previous) {
-      choices(select, items.map((node) => [node.id, node.label]), previous, model.placeholders.node);
-    }
 
     function showFields() {
       if (shownRelation === relation.value) return;
@@ -91,30 +168,46 @@ window.StockEditor = (() => {
     }
 
     function showTargets(prior) {
-      const start = nodes.get(from.value);
+      const start = fromPicker.node(from.value);
       const item = relations.get(relation.value);
-      nodeChoices(to, start && item ? targets(start, item) : [], prior);
+      if (!start || !item) {
+        toPicker.show([]);
+        toPicker.fixed(true);
+      } else if (anchorNode && start.id !== anchor) {
+        toPicker.show(compatible(start, anchorNode, item) ? [anchorNode] : [], anchor);
+        toPicker.fixed(true);
+      } else {
+        const end = toPicker.node(prior);
+        toPicker.show(end && compatible(start, end, item) ? [end] : [], prior);
+        toPicker.fixed(false);
+      }
     }
 
     function showRelations(priorRelation, priorTarget) {
-      const start = nodes.get(from.value);
-      const allowed = start ? model.relations.filter((item) => targets(start, item).length) : [];
+      const start = fromPicker.node(from.value);
+      const allowed = start ? model.relations.filter((item) => (anchorNode && start.id !== anchor
+        ? compatible(start, anchorNode, item) : targetTypes(start, item) !== null)) : [];
       choices(relation, allowed.map((item) => [item.name, item.label]), priorRelation, model.placeholders.relation);
       showTargets(priorTarget);
       showFields();
+    }
+
+    function showSource(id) {
+      const node = fromPicker.node(id);
+      fromPicker.show(node ? [node] : [], id);
     }
 
     // Show `values` ({from_id, relation, to_id, facets}); an empty object starts a new relationship.
     function set(values) {
       initial = values;
       shownRelation = null;
-      nodeChoices(from, sources, values.from_id || anchor);
+      showSource(values.from_id || anchor);
       showRelations(values.relation, values.to_id);
     }
 
     function swap() {
       const [start, end] = [to.value, from.value];
-      nodeChoices(from, sources, start);
+      showSource(start);
       showRelations(relation.value, end);
     }
 
@@ -130,8 +223,8 @@ window.StockEditor = (() => {
       showTargets(to.value);
       showFields();
     });
-    return { set, swap, facetChanges, nodeLabel: (id) => nodes.get(id)?.label || id };
+    return { set, swap, facetChanges };
   }
 
-  return { postJson, readJson, waitForJob, relationshipEditor };
+  return { postJson, readJson, waitForJob, nodePicker, relationshipEditor };
 })();

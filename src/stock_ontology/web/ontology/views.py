@@ -390,7 +390,9 @@ def build_registry_edit_context(
         documents = set(relationship_source_evidence(db, anchor))
         actions["relationship_note_choices"] = _record_note_choices(db, data_dir, documents, log)
     actions["registry_note_actions"] = True
-    actions["relationship_model"] = relationship_editor_model(db.registry, db.list_all_nodes(), lang)
+    # The editors search the graph through `/api/nodes/search`; the page carries only the nodes it shows.
+    shown = {*anchor_ids, *(edge[key] for edge in ctx.get("registry_relationships", ()) for key in ("from_id", "to_id"))}
+    actions["relationship_model"] = relationship_editor_model(db.registry, db.get_nodes(sorted(shown)), lang)
     return actions
 
 

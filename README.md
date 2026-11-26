@@ -242,6 +242,9 @@ Run `./deploy.sh` after pushing `main`. See [docs/deploy.md](docs/deploy.md).
 - Submit browser edits, wait for their jobs, and build relationship editor choices only through `src/stock_ontology/web/static/editor.js` (`StockEditor`) and the one server model `web/shared.py::relationship_editor_model`; never add a job poller, JSON POST helper, or list-facet parser to a page script. Web code reads facet specs only through `OntologyRegistry.field_specs`, never `_facet_specs` or `_vocabulary`.
   **Why:** the note reader and Ontology page each had their own copy, and they drifted: one poller gave up after 300 tries while the other waited forever, and one split list facets on commas only (proposal `shared-editor-script`, 2026-11-25).
   **Guarded by:** `tests/test_web_ontology.py::test_page_scripts_post_and_poll_jobs_through_the_shared_editor_script` and `tests/test_web_ontology.py::test_note_reader_and_ontology_record_share_one_relationship_editor`.
+- Never load every node or every entity to fill an editor. Pages embed only the nodes they show in `relationship_editor_model`; the editors find any other node by name or alias through `/api/nodes/search` (`OntologyDB.search_nodes_by_name`, at most 20 results, filtered by the endpoint types the relation allows).
+  **Why:** the note reader and the Ontology record page put the whole graph into their HTML on every view, so page size and render time grew with every ingested note (proposal `node-typeahead`, 2026-11-26).
+  **Guarded by:** `tests/test_web_ontology.py::test_editors_find_nodes_by_search_instead_of_loading_the_graph` and `tests/test_db.py::test_search_nodes_by_name_matches_names_and_aliases_within_types`.
 
 ## Tests (Offline)
 

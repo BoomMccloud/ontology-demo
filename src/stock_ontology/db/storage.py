@@ -12,7 +12,7 @@ import sqlite3
 import struct
 import uuid
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1014,6 +1014,35 @@ class OntologyDB:
         params += [pattern, limit]
         rows = self.conn.execute(sql, params).fetchall()
         return [row_to_node(r) for r in rows]
+
+    def search_nodes_by_name(
+        self, query: str, *, types: Iterable[str] = (), limit: int = 20,
+    ) -> list[Node]:
+        """Nodes whose name or an alias contains `query` (case-insensitive), names starting with it first.
+
+        `types` holds registry endpoint types: a node type such as `theme`, or `entity:<entity_type>`.
+        Empty means any type.
+        """
+        cleaned = query.strip()
+        if not cleaned or limit <= 0:
+            return []
+        escaped = cleaned.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        params: list[Any] = [f"%{escaped}%", f"%{escaped}%"]
+        sql = "SELECT * FROM nodes WHERE (name LIKE ? ESCAPE '\\' OR aliases_json LIKE ? ESCAPE '\\')"
+        clauses = []
+        for item in dict.fromkeys(types):
+            node_type, _, subtype = item.partition(":")
+            if subtype:
+                clauses.append("(node_type = ? AND json_extract(facets_json, '$.entity_type') = ?)")
+                params += [node_type, subtype]
+            else:
+                clauses.append("node_type = ?")
+                params.append(node_type)
+        if clauses:
+            sql += " AND (" + " OR ".join(clauses) + ")"
+        sql += " ORDER BY CASE WHEN name LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END, lower(name), id LIMIT ?"
+        params += [f"{escaped}%", limit]
+        return [row_to_node(row) for row in self.conn.execute(sql, params).fetchall()]
 
     def get_incident_edges(self, node_id: str) -> list[dict[str, Any]]:
         """Return all outgoing and incoming edges for `node_id` with neighbor metadata."""
