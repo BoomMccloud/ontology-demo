@@ -5,7 +5,7 @@
 from the submodules, so callers don't depend on the split.
 """
 
-from stock_ontology.db.jobs import TERMINAL_STATES, Job, JobStore, LeaseLostError
+from stock_ontology.db.jobs import TERMINAL_STATES, Job, JobStore, LeaseLostError, read_jobs
 from stock_ontology.db.schema import (
     SIGNAL_CATEGORY_ALIASES,
     THEME_EXPOSURE_RELATIONS,
@@ -28,5 +28,6 @@ __all__ = [
     "merge_edge_facets",
     "node_meta",
     "node_to_dict",
+    "read_jobs",
     "reconcile_sentiment",
 ]

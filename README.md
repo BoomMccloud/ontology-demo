@@ -185,6 +185,9 @@ Run `./deploy.sh` after pushing `main`. See [docs/deploy.md](docs/deploy.md).
 - Drop a person's `accuracy` from extracted facets before ingest writes them, on both the single-call and staged paths, and refresh consensus for every company with a rumor by that person when the app changes it.
   **Why:** `accuracy` is our hand-set view of an author; ingest adds any facet a stored node lacks, so an extraction could otherwise rate an author from the note's own claims, and the note-scoped correction refresh would leave the person's other rumors weighed by the old rating (proposal `author-accuracy`, 2026-11-25).
   **Guarded by:** `tests/test_pipeline.py::test_reingest_never_sets_or_changes_person_accuracy`, `tests/test_staged_extraction.py::test_staged_extraction_cannot_set_a_person_accuracy`, and `tests/test_pipeline.py::test_person_accuracy_correction_is_checked_stored_and_refreshes_all_their_rumors`.
+- Run each worker job attempt on its own `Worker.open_store()` connection. The worker's long-lived queue connection serves only spool intake, claims, scan checks and failure records, and reopens once on `RegistryChangedError`.
+  **Why:** executors change a connection's registry (`IngestionPipeline` calls `use_registry`), so a shared connection would carry one job's registry into the next; the queue connection replaced three opens per idle tick (proposal `worker-connection-reuse`, 2026-11-25).
+  **Guarded by:** `tests/test_worker.py::test_idle_worker_opens_once_and_starts_a_spooled_job_within_two_seconds` and `tests/test_worker.py::test_reused_worker_connection_detects_a_registry_change_between_ticks`.
 
 ## Query Agent Constraints
 
