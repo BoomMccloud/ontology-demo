@@ -2,7 +2,7 @@
 proposal_id: "node-typeahead"
 state: BUILT
 witness: builder
-candidate: "3fc4fb2 @ worktree/shared-editor-script-8b7869"
+candidate: "df077e3 @ worktree/shared-editor-script-8b7869"
 ---
 
 # Proposal: Typeahead instead of the whole graph in edit pages
@@ -92,7 +92,7 @@ Builder route: the decisive witness is deferred to Build. The builder authors th
 
 ## Build
 
-Candidate: `3fc4fb2 @ worktree/shared-editor-script-8b7869` (branch claude/shared-editor-script-8b7869; code in `2b51b29`, README entry in `3fc4fb2`)
+Candidate: `df077e3 @ worktree/shared-editor-script-8b7869` (branch claude/shared-editor-script-8b7869; code in `2b51b29`, README entry in `3fc4fb2`, R1 guardrail tests in `df077e3`)
 
 ### Changed paths
 - `src/stock_ontology/db/storage.py` — `OntologyDB.search_nodes_by_name(query, *, types=(), limit=20)`: case-insensitive name-or-alias substring, LIKE wildcards escaped, `node_type` / `entity:<subtype>` filters, names starting with the query first, then by name.
@@ -105,7 +105,7 @@ Candidate: `3fc4fb2 @ worktree/shared-editor-script-8b7869` (branch claude/share
 - `src/stock_ontology/web/templates/partials/note_reader.html` — no per-entity `<option>` loop; `data-note-entity-ids` and `data-search-label` added; add buttons use the new flags.
 - `src/stock_ontology/locales/{en,fr,es,ja,ko,zh}.json` — `note_reader.search_node`.
 - `README.md` "Web UI Constraints" — new entry for the rule, with Why and Guarded by.
-- Tests: `tests/test_db.py::test_search_nodes_by_name_matches_names_and_aliases_within_types`, `tests/test_web_ontology.py::test_editors_find_nodes_by_search_instead_of_loading_the_graph` (new); `tests/test_web_ontology.py::test_note_reader_and_ontology_record_share_one_relationship_editor` (node-set assertion narrowed, as listed under Frame's Invariants changed).
+- Tests: `tests/test_db.py::test_search_nodes_by_name_matches_names_and_aliases_within_types`, `tests/test_web_ontology.py::test_editors_find_nodes_by_search_instead_of_loading_the_graph`, `tests/test_web_ontology.py::test_search_route_is_bounded_and_add_buttons_need_an_addable_node` (new, R1); `tests/test_web_ontology.py::test_note_reader_and_ontology_record_share_one_relationship_editor` (node-set assertion narrowed, as listed under Frame's Invariants changed).
 
 ### Protected witnesses
 - None independently authored (builder route). Existing note-reader and Ontology action tests were not edited.
@@ -113,6 +113,7 @@ Candidate: `3fc4fb2 @ worktree/shared-editor-script-8b7869` (branch claude/share
 ### Evidence
 - RED: the new and changed tests copied onto a detached `2ce9522` worktree, `uv run pytest -q tests/test_db.py tests/test_web_ontology.py -k "search_nodes_by_name or search_instead or share_one"` — 3 failed.
 - GREEN on `2b51b29`: `uv run pytest -q` — 556 passed; `uv run ruff check src tests` — clean. `3fc4fb2` changes only `README.md`.
+- R1 guardrail witness `test_search_route_is_bounded_and_add_buttons_need_an_addable_node`: the add flags keep the old comparisons, so the pre-change code would pass it too. Its RED is shown by mutation instead. Each of these, applied alone and then reverted, made `uv run pytest -q tests/test_web_ontology.py -k bounded_and_add` fail (1 failed): route `limit=21`, `can_add_entity` with `>=`, `can_add_relationship` with `> 0`. GREEN on `df077e3`: `uv run pytest -q` — 557 passed; ruff clean.
 - Manual browser check (built-in browser, scratch fixture app with a worker thread, minimal registry, three entities, one note, one edge):
   - Note reader relationship add: the model held only the note's two nodes. Typing "rob" found the person. Relations were offered by type. Typing "t" in the target found TSMC, and the source was excluded from its own target search. Submitting posted `/api/notes/relationship/add` and reloaded with the new row.
   - Note reader entity relink: typing "n" listed matches after the kept "create entity" option, and choosing it showed the new-entity fields.
@@ -125,12 +126,15 @@ Candidate: `3fc4fb2 @ worktree/shared-editor-script-8b7869` (branch claude/share
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+<!-- Cleared for the R1 re-audit; the outgoing REVISE verdict is under Revisions. -->
 
 ## Revisions
 
 <!-- Append-only, written by the orchestrator. One entry per audit REVISE and the
 work that answered it. Never delete an entry, never edit an earlier one, and never
 move Frame, Proof, Build or Audit history into it. Empty until the first REVISE. -->
+
+### R1 — 2026-11-26 — add-button and search-bound guardrails unproved
+- Verdict: REVISE. Two guardrails had no negative witness: "Add entity" and "Add relationship" were asserted present but never absent, and no test showed the route caps results at 20. Primary claim PROVED, scope and duties HELD, gates PASS (556 passed, ruff clean) on `3fc4fb2`.
+- Changed: `tests/test_web_ontology.py::test_search_route_is_bounded_and_add_buttons_need_an_addable_node` seeds 25 matches and asserts 20 come back. It also asserts "Add entity" is absent when the note holds every entity, and "Add relationship" is absent with one node. RED was shown by mutating the route limit and each flag. No product code changed.
+- Re-audit: pending; candidate `df077e3 @ worktree/shared-editor-script-8b7869`
