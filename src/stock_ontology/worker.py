@@ -556,8 +556,10 @@ class Worker:
                 )
             elif job.kind == "note.entity.add":
                 pipeline.add_note_entity(path, params["entity_id"], expected)
-            else:
+            elif job.kind == "note.entity.delete":
                 pipeline.delete_note_entity(path, params["entity_id"], expected)
+            else:
+                raise ServiceError("invalid", f"Unknown correction: {job.kind}")
             self._wrote(db, job)
         updated = self._finish_consensus(db, pipeline, job)
         return {"file": job.target, "consensus_updated_for": updated}

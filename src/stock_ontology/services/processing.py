@@ -42,6 +42,7 @@ class JobKind:
     submit: str
 
 
+PROCESS_KIND = "process"
 # The one table of job kinds. The worker keys its executors by it and refuses to start when they
 # disagree; a submission or spooled job of a kind not listed here is refused as `invalid`.
 JOB_KINDS: dict[str, JobKind] = {
@@ -54,9 +55,8 @@ JOB_KINDS: dict[str, JobKind] = {
     **{kind: JobKind(10, "operator") for kind in (
         "ingest", "reembed", "repair", "registry.publish", "registry.apply", "registry.apply.preview",
     )},
-    "process": JobKind(20, "process"),
+    PROCESS_KIND: JobKind(20, "process"),
 }
-PROCESS_KIND = "process"
 # A notes scan is an `ingest` job queued by the worker itself, after note extraction.
 SCAN_PRIORITY = 20
 
@@ -147,6 +147,8 @@ class ProcessingService:
 
     def request_processing(self, file: str) -> JobRef:
         """Queue extraction and consensus for the note's current revision, reopening it if it failed."""
+        if not _declared(PROCESS_KIND, "process"):
+            raise ServiceError("invalid", f"Unknown job kind: {PROCESS_KIND}")
         revision = self._note_revision(file)
         job_id = process_job_id(file, revision)
         existing = self._find(job_id)
