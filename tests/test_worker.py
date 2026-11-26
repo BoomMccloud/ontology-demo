@@ -850,3 +850,44 @@ def test_run_forever_continues_after_a_tick_raises(tmp_path: Path, monkeypatch: 
     with pytest.raises(_StopWorker):
         worker.run_forever(0)
     assert len(calls) == 2
+
+
+def test_worker_applies_graph_changes_only_through_public_pipeline_methods() -> None:
+    """The worker claims and runs jobs; graph edits and consensus rules belong to `IngestionPipeline`."""
+    import ast
+    import inspect
+
+    import stock_ontology.worker as worker_module
+
+    tree = ast.parse(inspect.getsource(worker_module))
+    worker_class, = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Worker"]
+
+    def is_pipeline_annotation(annotation: ast.expr | None) -> bool:
+        return isinstance(annotation, ast.Name) and annotation.id == "IngestionPipeline"
+
+    pipeline_names: set[str] = set()
+    for node in ast.walk(worker_class):
+        if isinstance(node, ast.arg) and is_pipeline_annotation(node.annotation):
+            pipeline_names.add(node.arg)
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            func = node.value.func
+            built = (isinstance(func, ast.Name) and func.id == "IngestionPipeline") or (
+                isinstance(func, ast.Attribute) and func.attr == "_pipeline"
+            )
+            if built:
+                pipeline_names.update(target.id for target in node.targets if isinstance(target, ast.Name))
+    assert "pipeline" in pipeline_names
+
+    private_uses = sorted(
+        f"line {node.lineno}: {node.value.id}.{node.attr}" for node in ast.walk(worker_class)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+        and node.value.id in pipeline_names and node.attr.startswith("_")
+    )
+    graph_writes = sorted(
+        f"line {node.lineno}: {node.func.attr}" for node in ast.walk(worker_class)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"upsert_node", "update_edge", "upsert_edge", "add_note_entities"}
+    )
+    assert {"private pipeline members": private_uses, "graph row writes": graph_writes} == {
+        "private pipeline members": [], "graph row writes": [],
+    }

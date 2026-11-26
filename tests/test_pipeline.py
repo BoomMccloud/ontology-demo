@@ -2454,3 +2454,157 @@ def test_person_accuracy_correction_is_checked_stored_and_refreshes_all_their_ru
 
     correct({"accuracy": None})
     assert "accuracy" not in stored(), "clearing accuracy must leave the person unrated"
+
+
+def test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_consensus(tmp_path: Path) -> None:
+    """A reviewed `note.ontology.correction` payload applies through the public pipeline method."""
+    from stock_ontology.config import NoteConflictError
+    from stock_ontology.registry import load_registry
+    from stock_ontology.services.corrections import review_note_correction
+
+    ron = _person("p_ron", "Ron Rumorson", role="Trader", organization="Acme Widgets")
+
+    class ThreeNotesLLM(FakePipelineLLM):
+        def extract_document(self, *, source_meta: dict[str, Any], **_: Any) -> ExtractionResult:
+            file = source_meta["file_path"]
+            if "acme" in file:
+                result = _extraction([_company("e_c", "Acme Widgets", "ACMW"), ron], [])
+                result.edges.append(ExtractedEdge(
+                    from_ref="p_ron", to_ref="e_c", relation="WORKS_AT", facets=[FacetKV(key="role", value="Trader")],
+                ))
+                return result
+            if "beta" in file:
+                return _extraction([_company("e_c", "Beta Gears", "BTAG"), ron],
+                                   [_authored_view("v_ron", "Ron Hears Beta Delay", "rumor", "e_c", "p_ron")])
+            return _extraction([_company("e_c", "Gamma Tools", "GMTL")], [])
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    acme_note = data_dir / "2026-11-20_acme.md"
+    acme_note.write_text("Ron works at Acme.", encoding="utf-8")
+    (data_dir / "2026-11-21_beta.md").write_text("Ron on Beta.", encoding="utf-8")
+    (data_dir / "2026-11-22_gamma.md").write_text("Gamma Tools.", encoding="utf-8")
+    registry = load_registry(SHIPPED_REGISTRY)
+    with OntologyDB(tmp_path / "ontology.db", embedding_dim=DIM, registry=registry) as db:
+        pipeline = IngestionPipeline(db, ThreeNotesLLM(), data_dir, registry=registry)
+        assert pipeline.run().errors == []
+        ids = {name: node.id for name in ("Ron Rumorson", "Acme Widgets", "Beta Gears", "Gamma Tools")
+               if (node := db.find_by_name_or_alias(name, node_type="entity")) is not None}
+        assert len(ids) == 4, ids
+        doc_id = db.get_note_state("2026-11-20_acme.md")["doc_id"]
+        works_at, = [row for row in db.list_note_edges(doc_id) if row["relation"] == "WORKS_AT"]
+        assert works_at["to_id"] == ids["Acme Widgets"]
+
+        reviewed = review_note_correction(db, acme_note, data_dir, kind="person", record=ids["Ron Rumorson"],
+                                          changes={"organization": "Gamma Tools", "accuracy": "low"})
+        assert reviewed["edges"], "the organization change must review the supporting WORKS_AT edge"
+
+        def snapshot() -> tuple[Any, ...]:
+            return (
+                db.get_node(ids["Ron Rumorson"]), sorted(map(str, db.list_note_edges(doc_id))),
+                {node.id for node in db.list_note_entities(doc_id)}, db.jobs.list_consensus_refresh(),
+            )
+
+        # The note changed after review: the correction conflicts and writes nothing.
+        before = snapshot()
+        acme_note.write_text("Ron works at Acme, revised.", encoding="utf-8")
+        with pytest.raises(NoteConflictError):
+            pipeline.apply_note_correction(acme_note, reviewed)
+        assert snapshot() == before
+
+        # The reviewed revision is back: the same payload now applies.
+        acme_note.write_text("Ron works at Acme.", encoding="utf-8")
+        targets = {company: db.jobs.consensus_target(ids[company])
+                   for company in ("Acme Widgets", "Beta Gears", "Gamma Tools")}
+        pipeline.apply_note_correction(acme_note, reviewed)
+
+        person = db.get_node(ids["Ron Rumorson"])
+        assert person is not None
+        assert (person.facets.get("organization"), person.facets.get("accuracy")) == ("Gamma Tools", "low")
+        works_at, = [row for row in db.list_note_edges(doc_id) if row["relation"] == "WORKS_AT"]
+        assert (works_at["edge_id"], works_at["to_id"]) == (reviewed["edges"][0]["before"]["edge_id"], ids["Gamma Tools"])
+        assert ids["Gamma Tools"] in {node.id for node in db.list_note_entities(doc_id)}
+        # Consensus is queued, not run: the note's companies before and after, and the companies of
+        # Ron's rumor in another note (an accuracy change reweighs it), all wait for a refresh.
+        pending = set(db.jobs.pending_consensus())
+        for company, target in targets.items():
+            assert db.jobs.consensus_target(ids[company]) > target, company
+            assert ids[company] in pending, company
+
+
+# --- One review path for note corrections (docs/proposals/unified-note-corrections.md)
+
+# Each row is one relationship edit, given once as the note reader submits it (`add_note_relationship`
+# or `correct_note_relationship`) and once as the Ontology page submits it (`review_note_correction`
+# then `apply_note_correction`). The seeded note records `focus` (A OWNS B) and `second` (A COMPETE C).
+_SAME_RULES_ROWS = {
+    "unregistered relation": ("add", {"from_id": "company_a", "relation": "FROBNICATES", "to_id": "company_c"}),
+    "registry forbids endpoint types": ("add", {"from_id": "company_a", "relation": "EXPOSED_TO", "to_id": "company_c"}),
+    "duplicate add": ("add", {"from_id": "company_a", "relation": "OWNS", "to_id": "company_b"}),
+    "unlisted facet key": ("add", {"from_id": "company_a", "relation": "OWNS", "to_id": "company_c",
+                                   "facets": {"bogus_key": "x"}}),
+    "missing endpoint": ("add", {"from_id": "company_a", "relation": "OWNS", "to_id": "company_missing"}),
+    "identical endpoints": ("add", {"from_id": "company_a", "relation": "OWNS", "to_id": "company_a"}),
+    "valid add through an inverse alias": ("add", {"from_id": "company_d", "relation": "SUBSIDIARY_OF",
+                                                   "to_id": "company_a"}),
+    "change into a duplicate": ("change", {"edge_id": "second", "relation": "OWNS", "to_id": "company_b"}),
+    "valid change": ("change", {"edge_id": "focus", "relation": "COMPETE"}),
+}
+
+
+@pytest.mark.parametrize("row", list(_SAME_RULES_ROWS))
+def test_note_reader_and_ontology_page_apply_the_same_relationship_rules(tmp_path: Path, row: str) -> None:
+    """The same relationship edit from either surface is accepted or rejected alike, with the same
+    message, and an accepted edit stores the same note edges."""
+    from stock_ontology.models import Edge
+    from stock_ontology.registry import load_registry
+    from stock_ontology.services.corrections import review_note_correction
+    from stock_ontology.services.errors import ServiceError
+
+    kind, edit = _SAME_RULES_ROWS[row]
+    registry = load_registry(SHIPPED_REGISTRY)
+
+    def run(surface: str) -> tuple[Any, ...]:
+        data_dir = tmp_path / surface
+        data_dir.mkdir()
+        path = data_dir / "note.md"
+        path.write_text("Source", encoding="utf-8")
+        content_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        with OntologyDB(data_dir / "ontology.db", embedding_dim=DIM, registry=registry) as db:
+            for entity_id in ("company_a", "company_b", "company_c", "company_d"):
+                db.upsert_node(Node(id=entity_id, name=entity_id, node_type="entity", summary="",
+                                    facets={"entity_type": "company", "sector": "Industrials"}))
+            db.upsert_ingestion_log("note.md", "note", content_hash,
+                                    entity_ids=("company_a", "company_b", "company_c"))
+            db.upsert_edge(Edge(id="focus", from_id="company_a", to_id="company_b", relation="OWNS",
+                                facets={"basis": "extracted"}, source_doc_id="note"))
+            db.upsert_edge(Edge(id="second", from_id="company_a", to_id="company_c", relation="COMPETE",
+                                facets={"basis": "extracted"}, source_doc_id="note"))
+            pipeline = IngestionPipeline(db, FakePipelineLLM(), data_dir, registry=registry)
+            try:
+                if surface == "reader" and kind == "add":
+                    pipeline.add_note_relationship(path, edit["from_id"], edit["relation"], edit["to_id"],
+                                                   content_hash, facets=edit.get("facets"))
+                elif surface == "reader":
+                    pipeline.correct_note_relationship(path, edit["edge_id"], edit["relation"], False, content_hash,
+                                                       from_id=edit.get("from_id"), to_id=edit.get("to_id"))
+                else:
+                    changes = {key: value for key, value in edit.items() if key != "edge_id"}
+                    reviewed = review_note_correction(
+                        db, path, data_dir, kind="relationship_add" if kind == "add" else "relationship",
+                        record="company_a", edge_id=edit.get("edge_id", ""), changes=changes,
+                    )
+                    pipeline.apply_note_correction(path, reviewed)
+            except ServiceError as exc:
+                assert exc.key, f"{row}: the Ontology page needs a locale key to show this rejection"
+                return ("rejected", exc.message)
+            except ValueError as exc:
+                return ("rejected", str(exc))
+            return ("accepted", sorted(
+                (edge["from_id"], edge["to_id"], edge["relation"], sorted(edge["facets"].items()))
+                for edge in db.list_note_edges("note")
+            ))
+
+    reader, ontology = run("reader"), run("ontology")
+    assert reader[0] == ontology[0], f"{row}: note reader {reader}, Ontology page {ontology}"
+    assert reader == ontology, f"{row}: note reader {reader}, Ontology page {ontology}"

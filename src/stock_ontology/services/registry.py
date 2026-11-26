@@ -45,6 +45,21 @@ def unique_labels(labels: list[str], *, excluding: str = "") -> list[str]:
     return result
 
 
+def edit_identity(
+    registry: OntologyRegistry, after: dict[str, Any], *, previous_name: str, summary: str,
+    keep_previous_name: bool,
+) -> list[str]:
+    """Return the edited record's alternate names, keeping the previous name when asked, and check
+    the name and every alternate name against the registry's limits. Shared by registry records
+    and people."""
+    aliases = [*after["aliases"], previous_name] if keep_previous_name and after["name"] != previous_name else after["aliases"]
+    aliases = unique_labels(aliases, excluding=after["name"])
+    registry.check_metadata(after["name"], summary)
+    if any(len(alias) > registry.metadata_max_length["name"] for alias in aliases):
+        raise ServiceError("invalid", "An alternate name exceeds the name length limit.", key="service_error.alternate_name_too_long")
+    return aliases
+
+
 def changed_fields(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {"field": field, "before": before.get(field), "after": value}
@@ -94,12 +109,8 @@ class RegistryService:
             else:
                 text = edit_text(value, field, required=field not in {"ticker", "description"})
                 after[field] = (normalize_ticker(text) or None) if field == "ticker" else text
-        if keep_previous_name and after["name"] != before["name"]:
-            after["aliases"] = [*after["aliases"], before["name"]]
-        after["aliases"] = unique_labels(after["aliases"], excluding=after["name"])
-        current.check_metadata(after["name"], after.get("description", ""))
-        if any(len(alias) > current.metadata_max_length["name"] for alias in after["aliases"]):
-            raise ServiceError("invalid", "An alternate name exceeds the name length limit.", key="service_error.alternate_name_too_long")
+        after["aliases"] = edit_identity(current, after, previous_name=before["name"],
+                                         summary=after.get("description", ""), keep_previous_name=keep_previous_name)
         if kind == "themes" and "stage" in changes and after["stage"] not in current._vocabulary("theme", "stage")["members"]:
             raise ServiceError("invalid", "Choose a stage from the published registry.", key="service_error.choose_stage")
         if "ticker" in changes and changes["ticker"].strip() and not after["ticker"]:

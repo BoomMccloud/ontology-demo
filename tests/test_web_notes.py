@@ -845,9 +845,11 @@ def test_note_reader_adds_and_deletes_relationships(tmp_path: Path) -> None:
         assert 400 <= response.status_code < 500, response.text
     assert note_edges() == []
 
-    for _ in range(2):
-        response = _note_action(client, settings, llm, add_url, {**add, "expected_hash": source_hash})
-        assert response.status_code == 200, response.text
+    response = _note_action(client, settings, llm, add_url, {**add, "expected_hash": source_hash})
+    assert response.status_code == 200, response.text
+    duplicate = _note_action(client, settings, llm, add_url, {**add, "expected_hash": source_hash})
+    assert 400 <= duplicate.status_code < 500, duplicate.text
+    assert "This note already records that relationship." in duplicate.text
     edge, = note_edges()
     assert (edge["from_id"], edge["relation"], edge["to_id"]) == ("alpha", "BUY", "beta")
     assert re.search(r"<tr\b[^>]*>\s*<td>Alpha</td>\s*<td>BUY\s*</td>\s*<td>Beta</td>",
