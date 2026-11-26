@@ -1,8 +1,8 @@
 ---
 proposal_id: "retire-reader-relationship-jobs"
-state: PROVED
+state: BUILT
 witness: independent
-candidate: "d215310 @ branch retire-reader-relationship-jobs"
+candidate: "fac6bfe @ branch retire-reader-relationship-jobs"
 ---
 
 # Proposal: Retire the legacy note-reader relationship jobs
@@ -131,8 +131,42 @@ Candidate: `e113c2e` (branch `retire-reader-relationship-jobs`), plus the test-o
 
 ## Build
 
-<!-- Replaced only by proposal-build. Reference changed paths, protected witnesses,
-exact GREEN command(s), concise result, candidate identity, and deviations. -->
+Candidate: `fac6bfe` (branch `retire-reader-relationship-jobs`)
+
+### Files changed
+
+- `src/stock_ontology/web/notes/routes.py`: replaces the three relationship request models with one `NoteRelationshipRequest` (`file`, `edge_id=""`, `changes={}`, `expected_hash`, extra fields forbidden). Each URL supplies its kind (`relationship`, `relationship_add`, `relationship_delete`) and calls `review_note_correction` directly. The `expected_hash` check moves here from the adapter, and `_note_error` gives `_submitted` and `_reviewed_correction` one not-found mapping. Satisfies the primary claim and Guardrail 2.
+- `src/stock_ontology/services/corrections.py`: deletes `READER_RELATIONSHIP_KINDS` and `review_reader_correction`. Satisfies the primary claim.
+- `src/stock_ontology/services/processing.py`: deletes the three `retired` entries from `JOB_KINDS`. Satisfies the primary claim and Guardrail 1. The `retired` submit value and its docstring stay, since README still names it for future retirements.
+- `src/stock_ontology/worker.py`: drops the adapter imports, maps only `note.ontology.correction` to `_run_ontology_correction`, and removes the legacy review branch. A leftover kind now reaches `_run`'s `Unknown job kind`. Satisfies Guardrail 1.
+- `src/stock_ontology/web/static/note_reader.js`: builds `payload.changes = {relation, from_id, to_id}`, adds `facets` on an add only when non-empty (as `ontology_edit.js:102-104` does), and sends `edge_id` on an edit. Satisfies the primary claim.
+- `tests/test_web_notes.py` (unprotected parts only): moves `test_note_reader_extraction_workflow` (the old `reverse` call becomes explicitly swapped endpoints), `test_note_reader_can_correct_both_relationship_endpoints`, `test_note_reader_adds_and_deletes_relationships`, `test_note_reader_adds_and_deletes_entities` and `test_note_reader_form_opened_before_an_ontology_correction_cannot_reapply` to the new shape, and removes `test_note_reader_reverse_reviews_like_the_swapped_endpoints`.
+- `tests/test_pipeline.py`: points `_reader_correction` at `review_note_correction`. The `reverse` case of `test_note_correction_updates_only_current_note_edges` becomes a `swap` case with explicit endpoints, which keeps its "a corrected edge gets a new ID" assertion. `test_delete_note_relationship_removes_only_its_pending_edge` and `test_add_note_relationship_accepts_required_fields_from_shipped_registry` move to the new kinds.
+- `tests/test_ontology_mutations.py`: removes the six `note.relationship*` cases, the `_legacy` and `_ids` helpers, and the now-unused imports.
+- `tests/test_worker.py`: drops the retired rows from `_DECLARED_KINDS`, and drops the retired-priority assertion from `test_corrections_are_claimed_ahead_of_earlier_extraction`.
+- `README.md:239`: rewrites the relationship-correction rule as Frame's Invariants changed states. The Why line names this proposal (2026-11-27), and Guarded by replaces `test_queued_legacy_relationship_jobs_are_judged_by_the_same_review` with `test_note_reader_refuses_the_retired_flat_relationship_payload` and `test_leftover_legacy_relationship_jobs_fail_as_unknown_kind`.
+
+### Unit evidence
+
+- Supporting tests were updated rather than newly authored. No new internal behavior needed a unit RED first: the route change is covered by the protected witness, and the remaining work was removal.
+- `uv run pytest tests/test_web_notes.py tests/test_worker.py tests/test_ontology_mutations.py tests/test_pipeline.py tests/test_relationships.py -q`, after the source change and before the test updates → 18 failed, 149 passed. Every failure was a supporting test still using the old shape, the legacy adapter or the retired kinds, matching Frame's list. No log kept.
+- The same command after the test updates → GREEN, all passed (included in the gate below).
+
+### Green evidence
+
+- Decisive witness: `uv run pytest tests/test_web_notes.py -q -p no:cacheprovider -k "judge_a_relationship_correction_alike or judge_more_relationship or retired_flat or older_revision or leftover_legacy"` → 22 passed. Log: `/private/tmp/claude-502/-Users-jasonbxu--claude-spares-spare-5wagqH/1f55141b-79fc-4311-8dae-7b370704d3ed/scratchpad/build-witness.log`.
+- Protected witness integrity: an AST comparison of the 17 protected functions and helpers in `tests/test_web_notes.py` against `d215310` shows none changed.
+- Gate: `uv run pytest -q -p no:cacheprovider` → 629 passed. Log: `/private/tmp/claude-502/-Users-jasonbxu--claude-spares-spare-5wagqH/1f55141b-79fc-4311-8dae-7b370704d3ed/scratchpad/build-gate.log`.
+- Gate: `uv run ruff check src tests` → clean.
+- Gate: `rg -n "note\.relationship" src` → no matches.
+
+### Intervention record
+
+- None. There is no repository intervention ledger, and the user-facing outcome (the reader's relationship editor behaving the same) has no metric. The browser payload built by `note_reader.js` was not exercised in a browser.
+
+### Deviations
+
+- None. One note for Audit: Frame's supporting obligation said to remove the `reverse` case of `test_note_correction_updates_only_current_note_edges`. Build converted it to an explicit endpoint swap in the same test file instead, so the new-ID assertion keeps an owner. The file is in scope, and no protected path changed.
 
 ## Audit
 
