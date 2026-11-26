@@ -2,7 +2,7 @@
   const reader = document.querySelector("[data-note-reader]");
   if (!reader) return;
 
-  const { postJson, waitForJob, relationshipEditor } = window.StockEditor;
+  const { postJson, waitForJob, nodePicker, relationshipEditor } = window.StockEditor;
   const feedback = reader.querySelector("[data-note-feedback]");
   let relationshipInputs = null;
 
@@ -18,7 +18,7 @@
         if (opening) {
           openEditor(button);
           button.setAttribute("aria-expanded", "true");
-          editor.querySelector("select").focus();
+          editor.querySelector('input[type="search"], select').focus();
         }
       });
     }
@@ -34,6 +34,13 @@
     const pickerLabel = relink.querySelector("[data-note-entity-picker-label]");
     const save = relink.querySelector('button[type="submit"]');
     const editOnly = match.querySelectorAll("[data-edit-only]");
+    const noteEntityIds = JSON.parse(relink.dataset.noteEntityIds);
+    let adding = false;
+    // Adding offers only entities the note does not already hold.
+    const entityPicker = nodePicker(match, {
+      label: match.dataset.searchLabel,
+      filter: () => ({ types: ["entity"], exclude: adding ? noteEntityIds : [] }),
+    });
     const setNewEntityFields = () => {
       const creating = match.value === "__new__";
       newEntity.hidden = !creating;
@@ -44,8 +51,9 @@
     match.addEventListener("change", setNewEntityFields);
     entityType.addEventListener("change", setNewEntityFields);
     bindInlineEditor(relink, "[data-note-match], [data-note-entity-add]", (button) => {
-      const adding = button.hasAttribute("data-note-entity-add");
+      adding = button.hasAttribute("data-note-entity-add");
       relink.reset();
+      entityPicker.show([]);
       relink.dataset.noteAction = adding ? "entity/add" : "relink";
       entityId.value = adding ? "" : button.dataset.noteMatch;
       pickerLabel.textContent = adding ? pickerLabel.dataset.addLabel : pickerLabel.dataset.editLabel;

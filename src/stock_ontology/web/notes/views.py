@@ -420,9 +420,11 @@ class NoteExtraction:
     content_hash: str = ""
     entities: tuple[NoteEntity, ...] = ()
     relationships: tuple[NoteRelationship, ...] = ()
-    choices: tuple[NoteEntity, ...] = ()
+    # The entity editor can add an entity only when the graph holds one the note does not.
+    can_add_entity: bool = False
     entity_types: tuple[NoteEntityType, ...] = ()
     relations: tuple[str, ...] = ()
+    can_add_relationship: bool = False
     # The `static/editor.js` relationship editor model, or None when relationships cannot be corrected.
     relationship_model: dict[str, Any] | None = None
 
@@ -448,20 +450,13 @@ def _note_extraction(
         for pending in (False, True) for edge in db.list_note_edges(doc_id, pending=pending)
     )
     relations = tuple(sorted(spec.name for spec in db.registry.relations)) if actions_enabled else ()
-    available_nodes = []
-    if relations:
-        available_nodes = db.list_all_nodes()
-    elif actions_enabled:
-        available_nodes = db.list_nodes(node_type="entity", limit=-1)
-    available_nodes.sort(key=lambda node: node.name.casefold())
-
-    choices = ()
+    # The editors search the graph through `/api/nodes/search`; the page carries only the nodes it shows.
+    shown_ids = {entity.id for entity in entities} | {
+        node_id for edge in relationships for node_id in (edge.start_id, edge.end_id)}
+    shown_nodes = db.get_nodes(sorted(shown_ids)) if relations else []
+    node_counts = db.get_stats()["nodes"] if actions_enabled else {}
     entity_types = ()
     if actions_enabled:
-        choices = tuple(
-            NoteEntity(node.id, node.name, node.facets["entity_type"], "")
-            for node in available_nodes if node.node_type == "entity"
-        )
         entity_types = tuple(
             NoteEntityType(kind, tuple(
                 (key, translate_facet_label(key, lang=lang))
@@ -470,8 +465,10 @@ def _note_extraction(
             for kind in ENTITY_TYPE.members
         )
     return NoteExtraction(
-        "extracted", actions_enabled, job_state, content_hash, entities, relationships, choices, entity_types,
-        relations, relationship_editor_model(db.registry, available_nodes, lang) if relations else None,
+        "extracted", actions_enabled, job_state, content_hash, entities, relationships,
+        can_add_entity=node_counts.get("entity", 0) > len(entities), entity_types=entity_types, relations=relations,
+        can_add_relationship=bool(relations) and sum(node_counts.values()) > 1,
+        relationship_model=relationship_editor_model(db.registry, shown_nodes, lang) if relations else None,
     )
 
 

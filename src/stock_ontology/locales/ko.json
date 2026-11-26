@@ -808,6 +808,7 @@
   "note_reader.delete_row": "삭제",
   "note_reader.confirm_delete_relationship": "이 노트에서 이 관계를 삭제하시겠습니까?",
   "note_reader.select_node": "노드 선택",
+  "note_reader.search_node": "이름을 입력해 검색",
   "note_reader.edit_row": "수정",
   "note_reader.select_relationship": "관계 선택",
   "note_reader.reverse": "방향 반전",

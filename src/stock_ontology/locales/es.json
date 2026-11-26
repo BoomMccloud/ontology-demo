@@ -808,6 +808,7 @@
   "note_reader.delete_row": "Eliminar",
   "note_reader.confirm_delete_relationship": "¿Eliminar esta relación de la nota?",
   "note_reader.select_node": "Seleccionar un nodo",
+  "note_reader.search_node": "Escriba para buscar por nombre",
   "note_reader.edit_row": "Editar",
   "note_reader.select_relationship": "Seleccionar una relación",
   "note_reader.reverse": "Invertir la dirección",

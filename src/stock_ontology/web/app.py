@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -30,6 +30,7 @@ from stock_ontology.web.notes.routes import build_router as build_notes_router
 from stock_ontology.web.ontology.routes import build_router as build_ontology_router
 from stock_ontology.web.research.routes import build_router as build_research_router
 from stock_ontology.web.search.routes import build_router as build_search_router
+from stock_ontology.web.shared import editor_node
 from stock_ontology.web.shell import STATIC_DIR, WebShell, http_error, sanitize_next_path, set_lang_cookie
 
 
@@ -63,6 +64,16 @@ def create_app(
             return JSONResponse(shell.processing.get_status(job_id))
         except ServiceError as exc:
             raise http_error(exc, shell.lang(request)) from exc
+
+    @app.get("/api/nodes/search")
+    def search_nodes(
+        request: Request, q: str = "", type: list[str] = Query(default=[]),  # noqa: A002 - query parameter name
+    ) -> JSONResponse:
+        """Typeahead for the browser editors: up to 20 nodes whose name or alias contains `q`."""
+        lang = shell.lang(request)
+        with shell.open_db(lang) as db:
+            nodes = db.search_nodes_by_name(q, types=type, limit=20)
+        return JSONResponse({"nodes": [editor_node(node, lang) for node in nodes]})
 
     @app.get("/set-language")
     def set_language_route(

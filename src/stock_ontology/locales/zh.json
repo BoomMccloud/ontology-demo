@@ -808,6 +808,7 @@
   "note_reader.delete_row": "删除",
   "note_reader.confirm_delete_relationship": "要从此笔记中删除该关系吗？",
   "note_reader.select_node": "选择节点",
+  "note_reader.search_node": "输入名称搜索",
   "note_reader.edit_row": "编辑",
   "note_reader.select_relationship": "选择关系",
   "note_reader.reverse": "反转方向",

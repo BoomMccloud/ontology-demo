@@ -1522,3 +1522,25 @@ def test_job_tables_are_added_to_a_database_created_before_them(tmp_path: Path) 
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"jobs", "consensus_refresh", "nodes", "ingestion_log"} <= tables
+
+
+def test_search_nodes_by_name_matches_names_and_aliases_within_types(tmp_path: Path) -> None:
+    with OntologyDB(tmp_path / "graph.db", embedding_dim=8) as db:
+        for node in (
+            Node(id="nvda", name="NVIDIA", summary="chip maker", aliases=["Green Team"], node_type="entity",
+                 facets={"entity_type": "company"}),
+            Node(id="jensen", name="Jensen Huang", summary="", node_type="entity", facets={"entity_type": "person"}),
+            Node(id="ai", name="AI chips", summary="", node_type="theme", facets={"stage": "emerging"}),
+            Node(id="pct", name="100% Club", summary="", node_type="theme", facets={"stage": "emerging"}),
+        ):
+            db.upsert_node(node)
+        ids = lambda query, **kwargs: [node.id for node in db.search_nodes_by_name(query, **kwargs)]  # noqa: E731
+        assert ids("nvi") == ["nvda"]
+        assert ids("green") == ["nvda"]  # alias
+        assert ids("chip") == ["ai"]  # names only, not summaries
+        assert ids("n", types=["entity:person"]) == ["jensen"]
+        assert ids("i", types=["theme", "entity:company"]) == ["ai", "nvda"]
+        assert ids("a") == ["ai", "jensen", "nvda"]
+        assert ids("%") == ["pct"]  # LIKE wildcards are literal
+        assert ids("n", limit=1) == ["nvda"]  # "NVIDIA" starts with it, "Jensen Huang" only contains it
+        assert ids("  ") == []

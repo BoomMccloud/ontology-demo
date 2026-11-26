@@ -37,10 +37,9 @@
   </div>
 
   {% set extraction = active_note.extraction %}
-  {% set can_add_entity = extraction.actions_enabled and extraction.choices | length > extraction.entities | length %}
-  {% set note_entity_ids = extraction.entities | map(attribute='id') | list %}
+  {% set can_add_entity = extraction.actions_enabled and extraction.can_add_entity %}
   {% set can_correct_relationship = extraction.actions_enabled and extraction.relations %}
-  {% set can_add_relationship = can_correct_relationship and extraction.relationship_model.nodes | length > 1 %}
+  {% set can_add_relationship = can_correct_relationship and extraction.can_add_relationship %}
   <div class="section-block note-extraction" data-note-reader data-file="{{ active_note.rel_path }}" data-hash="{{ extraction.content_hash }}"
        data-failed-label="{{ t('note_reader.action_failed') }}" data-queued-label="{{ t('note_reader.job_queued') }}">
     <h2>{{ t('note_reader.extraction') }}</h2>
@@ -95,18 +94,14 @@
           <p>{{ t('note_reader.no_entities') }}</p>
         {% endif %}
         {% if can_add_entity or (extraction.actions_enabled and extraction.entities) %}
-          <form class="note-correction note-inline-editor" id="note-entity-editor" data-note-action="relink" hidden>
+          <form class="note-correction note-inline-editor" id="note-entity-editor" data-note-action="relink" hidden
+                data-note-entity-ids="{{ extraction.entities | map(attribute='id') | list | tojson | forceescape }}">
             <input type="hidden" name="entity_id">
             <label><span data-note-entity-picker-label data-edit-label="{{ t('note_reader.match_entity') }}"
                          data-add-label="{{ t('note_reader.select_entity') }}">{{ t('note_reader.match_entity') }}</span>
-              <select name="replacement_id" required>
+              <select name="replacement_id" required data-search-label="{{ t('note_reader.search_node') }}">
                 <option value="" selected disabled>{{ t('note_reader.select_entity') }}</option>
                 <option value="__new__" data-edit-only>{{ t('note_reader.create_entity') }}</option>
-                {% for entity in extraction.choices %}
-                  <option value="{{ entity.id }}" {% if entity.id in note_entity_ids %}data-edit-only{% endif %}>
-                    {{ entity.name }} ({{ t_enum('entity_type', entity.kind) }})
-                  </option>
-                {% endfor %}
               </select>
             </label>
             <fieldset data-new-entity hidden disabled>
