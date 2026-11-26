@@ -1,8 +1,8 @@
 ---
 proposal_id: "job-kind-registry"
-state: PROVED
+state: BUILT
 witness: independent
-candidate: "7c333f8 @ worktree pipeline-correction-api-47e1d2, branch claude/job-kind-registry"
+candidate: "cd571b7 @ worktree pipeline-correction-api-47e1d2, branch claude/job-kind-registry"
 ---
 
 # Proposal: One table of job kinds
@@ -123,8 +123,35 @@ Build must implement these exact names, which are taken from Frame's example: `s
 
 ## Build
 
-<!-- Replaced only by proposal-build. Reference changed paths, protected witnesses,
-exact GREEN command(s), concise result, candidate identity, and deviations. -->
+Candidate: `cd571b7 @ worktree pipeline-correction-api-47e1d2, branch claude/job-kind-registry`
+
+### Files changed
+
+- `src/stock_ontology/services/processing.py` — replaces `CORRECTION_KINDS`, `RETIRED_CORRECTION_KINDS` and `OPERATOR_KINDS` with `JobKind(priority, submit)` and the one table `JOB_KINDS` (14 kinds, with names and priorities unchanged). `job_priority(kind)` reads the table. The scan pseudo-kind becomes `SCAN_PRIORITY = 20`. `submit_correction` and `submit_operator` check the table entry's `submit` and keep their messages. Satisfies the primary claim and the submission guardrail.
+- `src/stock_ontology/worker.py` — `Worker.__init__` builds `self._executors` keyed by kind and raises `ValueError` naming any kind that the table and the map do not share. `_run` is one lookup, with an `Unknown job kind` fallback for a row an older worker queued. The inline `registry.apply.preview` executor moves to `_run_apply_preview`. `_run_ontology_correction` takes `(db, job)` like the other executors. The `_run_correction` chain keeps only the three entity kinds. `intake` records an undeclared spooled kind through `insert_refused` as failed with `invalid` and `Unknown job kind: <kind>`. The scan job uses `SCAN_PRIORITY`. Executor bodies, `open_store`, `run_once` and `_execute` are unchanged.
+- `src/stock_ontology/db/jobs.py` — adds `JobStore.insert_refused(...)`, which inserts a job already in the `failed` state with an error code and message. No schema change. This is a scope expansion the human approved on 2026-11-26 (see Deviations).
+- `tests/test_worker.py:411-414` — the Invariants-changed item: it reads the retired kinds from `JOB_KINDS` instead of `RETIRED_CORRECTION_KINDS`, with the same assertion.
+- `README.md` — one constraint entry: add a job kind as one `JOB_KINDS` entry plus one `Worker._executors` executor, and retire a kind instead of deleting it. Guarded by the three witnesses.
+
+### Unit evidence
+
+- Protected witnesses: `uv run pytest tests/test_worker.py -v -k "undeclared_kind or disagree or declares_each_kind"` — RED on `7c333f8` (3 failed, recorded in Proof); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/jobkind-red.log`.
+- Construction-check RED that Proof required once the table exists: with `JOB_KINDS` in place and the `__init__` check disabled in a scratch copy of `worker.py`, `uv run pytest tests/test_worker.py -q -k disagree` gives 1 failed. Restoring the check gives 1 passed. Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/jobkind-construction-red.log`.
+
+### Green evidence
+
+- Decisive witnesses and gate: `uv run pytest -q` — 585 passed (582 before, plus the 3 witnesses); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/jobkind-green.log`.
+- `git diff 7c333f8 --stat -- tests/` — only `tests/test_worker.py`, at the Invariants-changed lines. The three protected witnesses are unchanged.
+- `uv run ruff check .` — all checks passed.
+
+### Intervention record
+
+- None: internal change with no user-facing outcome.
+
+### Deviations
+
+- Scope expansion, approved: `src/stock_ontology/db/jobs.py`. The protected intake witness needs an undeclared kind recorded as a failed job, but `JobStore.fail` only closes a claimed job, and the architecture test keeps SQL in the storage layer. The human approved adding one `JobStore` method for this on 2026-11-26, before the file was changed.
+- Note for Audit: a refused job is a normal failed row, so `ProcessingService.retry` can reopen it. It then fails at claim with the same `Unknown job kind` error through the `_run` fallback.
 
 ## Audit
 
