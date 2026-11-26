@@ -1,6 +1,6 @@
 ---
 proposal_id: "retire-reader-relationship-jobs"
-state: BUILT
+state: ACCEPTED
 witness: independent
 candidate: "fac6bfe @ branch retire-reader-relationship-jobs"
 ---
@@ -170,9 +170,39 @@ Candidate: `fac6bfe` (branch `retire-reader-relationship-jobs`)
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+Candidate: `fac6bfe` (branch `retire-reader-relationship-jobs`). Audited from the tree at ledger commit `d8b3749`. `git diff --quiet fac6bfe HEAD -- src tests README.md` confirms its code, tests and README are identical to `fac6bfe`.
+
+Independence: fresh context. The auditor saw only the ledger path, the candidate identity, the repository and the audit brief, and took no part in Frame, Proof or Build.
+
+Primary-claim verdict: PROVED.
+- The protected witness is unchanged. An AST comparison of all 17 protected functions and helpers in `tests/test_web_notes.py`, decorators and parametrize lists included, between `d215310` and `fac6bfe` finds every one the same (`/private/tmp/claude-502/-Users-jasonbxu--claude-spares-spare-5wagqH/1f55141b-79fc-4311-8dae-7b370704d3ed/scratchpad/audit-protected.log`).
+- RED reproduced independently. On a `git archive d215310` copy, the witness selection gave 19 failed, 3 passed, all assertion failures (`.../scratchpad/audit-red.log`).
+- On the candidate, `uv run pytest tests/test_web_notes.py -q -p no:cacheprovider -k "judge_a_relationship_correction_alike or judge_more_relationship or retired_flat or older_revision or leftover_legacy"` gives 22 passed (`.../scratchpad/audit-witness.log`).
+- `rg -n "note\.relationship" src` finds no matches (`.../scratchpad/audit-rg.log`). `NoteRelationshipRequest` sets `extra="forbid"` and has no `reverse` field.
+- Read only, not run: `note_reader.js` builds `changes = {relation, from_id, to_id}`, adds `facets` only when non-empty on an add, and sends `edge_id` on edit and delete.
+- Limit: no test runs `note_reader.js`. The flat-payload refusal is tested on the edit and add URLs, not delete.
+
+Guardrail verdicts:
+- A leftover `note.relationship*` job fails as `Unknown job kind`, the graph is unchanged, and the worker continues: PROVED. The test was RED at `d215310` and is GREEN at `fac6bfe`. Limit: the jobs are inserted at literal priority 0, and a job queued between the human's server check and the deploy is not covered.
+- A stale `expected_hash` is refused with 409 `service_error.stale_source_note` and nothing is queued: PROVED. The check now lives in `_reviewed_correction`, after the review, which is the adapter's order. Limit: the RED was a shape-transition RED for edit and add, and the delete case is a regression guard.
+- `submit_correction` refuses `note.relationship*` as `invalid`: PROVED as a regression guard only. It never had a RED, because the behavior already held.
+
+Scope and duty verdict: scope HELD, duties HELD.
+- `git diff --stat e113c2e fac6bfe` touches only the files Frame includes. `ontology_edit.js`, the templates, `deploy.sh` and `review_note_correction`'s rules are unchanged.
+- `README.md:239` is rewritten as Frame's Invariants changed states, with a Why and a Guarded by that name existing, passing tests. `README.md:231` is unchanged.
+- Two test edits go beyond the literal obligations. The disclosed `reverse` to `swap` conversion in `tests/test_pipeline.py`, and the dropped retired-priority assertion in `tests/test_worker.py::test_corrections_are_claimed_ahead_of_earlier_extraction`, are both judged necessary consequences of Frame's deletions, made in files Frame includes. Limit: a stricter reading of "remove" would call them small deviations.
+
+Test homes: `tests/test_web_notes.py` owns the note-reader routes and the witnesses. `tests/test_pipeline.py` owns the apply path. `tests/test_ontology_mutations.py` owns the job-kind mutation table. `tests/test_worker.py` owns the job-kind registry and claim order.
+
+Full gates: PASS. `uv run pytest -q -p no:cacheprovider` gives 629 passed (`.../scratchpad/audit-gate.log`). `uv run ruff check src tests` is clean (`.../scratchpad/audit-ruff.log`). The source check finds no matches. Limit: all gates are offline with fake LLMs, and nothing ran in a browser.
+
+Residual risks:
+- The browser payload from `note_reader.js` has no automated owner. A manual check of edit, add with and without facets, swap-then-save, and delete is still unverified.
+- A `note.relationship*` job queued on the server after the 2026-11-27 check and before the deploy fails as `Unknown job kind`, and its edit must be redone. The human accepted this.
+- A browser tab left open across the deploy with the old JS cached gets a 422 until it is reloaded.
+
+Recommendation: ACCEPT
+Packet: no rework. The human-owned steps are a manual browser check of the reader's relationship editor, the merge to `main`, and the single deploy from `595cc53`. Re-confirm that no `note.relationship*` job is queued right before deploying.
 
 ## Revisions
 
