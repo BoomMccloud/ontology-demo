@@ -1135,19 +1135,41 @@ _EDIT_URL, _ADD_URL, _DELETE_URL = (
 )
 
 
+# The processed revision the note reader renders and sends back as `expected_hash`.
+_SOURCE_HASH = hashlib.sha256(_FIXTURE_SOURCE.encode()).hexdigest()
+
+
 def _edit(edge_id: str, relation: str, from_id: str, to_id: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    """The note reader always sends relation and both endpoints; the Ontology page sends the same fields."""
+    """The note reader sends the same `changes` the Ontology page sends, plus the revision it rendered."""
     fields = {"relation": relation, "from_id": from_id, "to_id": to_id}
-    return _EDIT_URL, {"edge_id": edge_id, **fields}, {"kind": "relationship", "edge_id": edge_id, "changes": fields}
+    return (
+        _EDIT_URL, {"edge_id": edge_id, "changes": fields, "expected_hash": _SOURCE_HASH},
+        {"kind": "relationship", "edge_id": edge_id, "changes": fields},
+    )
 
 
 def _add(from_id: str, relation: str, to_id: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
     fields = {"from_id": from_id, "relation": relation, "to_id": to_id}
-    return _ADD_URL, fields, {"kind": "relationship_add", "record": from_id, "changes": fields}
+    return (
+        _ADD_URL, {"changes": fields, "expected_hash": _SOURCE_HASH},
+        {"kind": "relationship_add", "record": from_id, "changes": fields},
+    )
 
 
 def _delete(edge_id: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    return _DELETE_URL, {"edge_id": edge_id}, {"kind": "relationship_delete", "edge_id": edge_id, "changes": {}}
+    return (
+        _DELETE_URL, {"edge_id": edge_id, "expected_hash": _SOURCE_HASH},
+        {"kind": "relationship_delete", "edge_id": edge_id, "changes": {}},
+    )
+
+
+def _queued_job_ids(settings: Settings, client: TestClient, llm: Any) -> list[str]:
+    """Every job the queue holds once the worker has taken in any spooled submission."""
+    from stock_ontology.worker import Worker
+
+    Worker(settings, llm_factory=lambda _settings: llm).run_once(scan=False)
+    with OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True) as db:
+        return sorted(job.job_id for job in db.jobs.list())
 
 
 @pytest.mark.parametrize(
@@ -1201,47 +1223,91 @@ def test_note_reader_and_ontology_page_judge_a_relationship_correction_alike(
     assert reader == ontology
 
 
-def test_queued_legacy_relationship_jobs_are_judged_by_the_same_review(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("url", "payload"),
+    [
+        pytest.param(_EDIT_URL, {"edge_id": "original", "relation": "BUY", "from_id": "c", "to_id": "d"}, id="flat-edit"),
+        pytest.param(_EDIT_URL, {"edge_id": "original", "relation": "COMPETE", "reverse": True}, id="reverse-edit"),
+        pytest.param(_ADD_URL, {"from_id": "a", "relation": "BUY", "to_id": "c"}, id="flat-add"),
+    ],
+)
+def test_note_reader_refuses_the_retired_flat_relationship_payload(
+    tmp_path: Path, url: str, payload: dict[str, Any],
+) -> None:
+    settings, client, llm = _correction_workspace(tmp_path / "graph")
+    before = _note_graph(settings)
+    jobs_before = _queued_job_ids(settings, client, llm)
+
+    response = client.post(url, json={"file": "note.md", "expected_hash": _SOURCE_HASH, **payload})
+
+    assert response.status_code == 422, response.text
+    assert _queued_job_ids(settings, client, llm) == jobs_before
+    assert _note_graph(settings) == before
+
+
+@pytest.mark.parametrize("correction", [
+    pytest.param(_edit("original", "BUY", "c", "d"), id="edit"),
+    pytest.param(_add("a", "BUY", "c"), id="add"),
+    pytest.param(_delete("original"), id="delete"),
+])
+def test_note_reader_refuses_a_relationship_correction_for_an_older_revision(
+    tmp_path: Path, correction: tuple[str, dict[str, Any], dict[str, Any]],
+) -> None:
+    url, payload, _ = correction
+    settings, client, llm = _correction_workspace(tmp_path / "graph")
+    before = _note_graph(settings)
+    jobs_before = _queued_job_ids(settings, client, llm)
+
+    # The note on disk is unchanged; the reader rendered a revision the note no longer has.
+    response = client.post(url, json={"file": "note.md", **payload, "expected_hash": "0" * 64})
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == translate("service_error.stale_source_note", lang="en")
+    assert _queued_job_ids(settings, client, llm) == jobs_before
+    assert _note_graph(settings) == before
+
+
+def test_leftover_legacy_relationship_jobs_fail_as_unknown_kind(tmp_path: Path) -> None:
     from datetime import UTC, datetime
 
     from stock_ontology.services import ProcessingService, ServiceError
-    from stock_ontology.services.processing import job_priority
+    from stock_ontology.services.corrections import review_note_correction
 
     settings, client, llm = _correction_workspace(tmp_path / "graph")
-    source_hash = hashlib.sha256(_FIXTURE_SOURCE.encode()).hexdigest()
-
-    def queue_legacy(job_id: str, kind: str, params: dict[str, Any]) -> str:
-        """A job of a retired kind that was queued before deploy."""
-        now = datetime.now(UTC)
-        with OntologyDB(settings.db_path, embedding_dim=DIM) as db:
+    legacy = {
+        "job_legacy_edit": ("note.relationship",
+                            {"edge_id": "original", "relation": "BUY", "from_id": "c", "to_id": "d"}),
+        "job_legacy_add": ("note.relationship.add", {"from_id": "a", "relation": "BUY", "to_id": "c"}),
+        "job_legacy_delete": ("note.relationship.delete", {"edge_id": "original"}),
+    }
+    now = datetime.now(UTC)
+    with OntologyDB(settings.db_path, embedding_dim=DIM) as db:
+        # Jobs of a kind this release no longer has, queued by the previous release ahead of everything else.
+        for job_id, (kind, params) in legacy.items():
             assert db.jobs.insert(
-                job_id=job_id, kind=kind, target="note.md", revision=source_hash, priority=job_priority(kind),
-                payload={"file": "note.md", "expected_hash": source_hash, **params},
+                job_id=job_id, kind=kind, target="note.md", revision=_SOURCE_HASH, priority=0,
+                payload={"file": "note.md", "expected_hash": _SOURCE_HASH, **params},
                 created_at=now.isoformat(), now=now,
             )
-        return job_id
+    path = (settings.data_dir / "note.md").resolve()
+    with OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True) as db:
+        review = review_note_correction(db, path, settings.data_dir, kind="relationship", edge_id="pending",
+                                        changes={"relation": "BUY", "from_id": "a", "to_id": "c"})
+    current = ProcessingService(settings).submit_correction("note.ontology.correction", "note.md", review)
 
-    duplicate = queue_legacy("job_legacy_duplicate", "note.relationship.add",
-                             {"from_id": "a", "relation": "BUY", "to_id": "b"})
-    # Before this change the legacy executor upserted the duplicate silently; the review rejects it.
-    assert _run_job(client, settings, llm, duplicate)[0] == 409
-    assert _note_graph(settings)["edges"] == [("a", "BUY", "b", _EXTRACTED)]
+    assert _run_job(client, settings, llm, current.job_id) == (200, "")
+    for job_id, (kind, _) in legacy.items():
+        job = client.get(f"/api/jobs/{job_id}").json()
+        assert (job["state"], job["error_code"], job["error"]) == ("failed", "invalid", f"Unknown job kind: {kind}"), job
+    # Only the current correction changed the graph.
+    assert _note_graph(settings) == {
+        "edges": sorted([("a", "BUY", "b", _EXTRACTED), ("a", "BUY", "c", _EXTRACTED)]), "pending": [], "peer": _PEER,
+    }
 
-    pending = queue_legacy("job_legacy_pending", "note.relationship",
-                           {"edge_id": "pending", "relation": "BUY", "from_id": "a", "to_id": "c"})
-    assert _run_job(client, settings, llm, pending) == (200, "")
-    deleted = queue_legacy("job_legacy_delete", "note.relationship.delete", {"edge_id": "original"})
-    assert _run_job(client, settings, llm, deleted) == (200, "")
-    assert _note_graph(settings) == {"edges": [("a", "BUY", "c", _EXTRACTED)], "pending": [], "peer": _PEER}
-
-    # New jobs of the retired kinds can no longer be submitted.
-    for kind, params in (
-        ("note.relationship", {"edge_id": "original", "relation": "BUY", "from_id": "c", "to_id": "d"}),
-        ("note.relationship.add", {"from_id": "a", "relation": "BUY", "to_id": "c"}),
-        ("note.relationship.delete", {"edge_id": "original"}),
-    ):
+    # New jobs of the retired kinds cannot be submitted.
+    for kind, params in legacy.values():
         with pytest.raises(ServiceError) as refused:
-            ProcessingService(settings).submit_correction(kind, "note.md", {**params, "expected_hash": source_hash})
+            ProcessingService(settings).submit_correction(kind, "note.md", {**params, "expected_hash": _SOURCE_HASH})
         assert refused.value.code == "invalid", kind
 
 
@@ -1296,7 +1362,8 @@ def test_ontology_preview_judges_an_unregistered_relation_before_its_fields(tmp_
 
 def _add_with_facets(facets: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, Any]]:
     url, payload, edit = _add("a", "BUY", "c")
-    return url, {**payload, "facets": facets}, {**edit, "changes": {**edit["changes"], "facets": facets}}
+    changes = {**edit["changes"], "facets": facets}
+    return url, {**payload, "changes": changes}, {**edit, "changes": changes}
 
 
 @pytest.mark.parametrize(
