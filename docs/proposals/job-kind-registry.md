@@ -1,6 +1,6 @@
 ---
 proposal_id: "job-kind-registry"
-state: BUILT
+state: REVISING
 witness: independent
 candidate: "cd571b7 @ worktree pipeline-correction-api-47e1d2, branch claude/job-kind-registry"
 ---
@@ -155,9 +155,43 @@ Candidate: `cd571b7 @ worktree pipeline-correction-api-47e1d2, branch claude/job
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+Candidate: `cd571b7 @ worktree pipeline-correction-api-47e1d2, branch claude/job-kind-registry` (working tree at HEAD `b473a35`; `git diff cd571b7 b473a35 --stat` shows only `docs/proposals/job-kind-registry.md`, so the source and tests are the ones audited)
+
+Independence: fresh-context. This auditing context saw only the task brief (ledger path, candidate identity, repo), the proposal-audit skill, the ledger, and the candidate repository. It did not build or frame the candidate.
+
+Primary-claim verdict: PROVED. Evidence: `JOB_KINDS` in `src/stock_ontology/services/processing.py` is the one table of priority and submitter, and `job_priority` reads it. `Worker._run` is one `self._executors.get(job.kind)` lookup, and `Worker.__init__` raises `ValueError` naming any kind in the symmetric difference between the executors and `JOB_KINDS`. `Worker.intake` records an undeclared spooled kind through `insert_refused` as failed `invalid` with `Unknown job kind: <kind>`. All three protected witnesses in `tests/test_worker.py` pass on the candidate (`uv run pytest tests/test_worker.py tests/test_architecture.py -v -k "..."`: 8 passed, log `jobkind-audit-witness.log`). I re-observed RED on protected revision `7c333f8` from a `git archive` copy: 3 failed with the assertions Proof recorded (log `jobkind-audit-red.log`). I mutated the candidate in scratch copies. Disabling the `__init__` check fails the construction witness (1 failed, log `jobkind-audit-construction-red.log`). Letting intake insert undeclared kinds fails the intake witness, because the job is claimed at priority 20 (log `jobkind-audit-intake-mut.log`). `git diff 7c333f8 cd571b7 -- tests/` touches only `test_corrections_are_claimed_ahead_of_earlier_extraction` at lines 411-414, so the witnesses are unedited. Limit: the "one lookup" dispatch shape is judged by reading the code, not by a witness. The `retry` op on a refused job is not covered (see Residual risks). The scan priority constant is untested.
+
+Guardrail verdicts:
+- Already-queued jobs under any declared kind, retired `note.relationship*` included, keep their priority and outcome: PROVED. Evidence: the `queue_legacy` test in `tests/test_web_notes.py` passes (`-k legacy`: 1 passed). Retired kinds are in both `JOB_KINDS` and `_executors`, routed to `_run_ontology_correction` as before. A queued row's priority is stored in the row, so existing rows are unaffected. The edited line-411 test asserts retired kinds share correction priority. Limit: only the legacy relationship path is exercised end to end. Other kinds rely on the existing suite.
+- Correction and operator submission keep their error codes and messages: PROVED. Evidence: assertion 1 of `test_kind_table_declares_each_kind_once_with_its_priority_and_submitter` checks `("invalid", "Unknown correction: <kind>")` for the retired kind and the unknown one, and `("invalid", "Unknown operator job: note.relink")`. It passes. Limit: none beyond those three inputs.
+- Existing worker, web and CLI tests stay green, except the listed invariant: PROVED. Evidence: `uv run pytest -q` gives 585 passed (582 baseline plus 3 witnesses, log `jobkind-audit-full.log`). The only pre-existing test edit is the one listed under Frame's Invariants changed. Limit: offline suite only.
+
+Scope and duty verdict: scope HELD; duties VIOLATED. Evidence:
+- Changed files are `processing.py`, `worker.py`, `db/jobs.py`, the listed `tests/test_worker.py` lines and `README.md`.
+- `db/jobs.py` (`JobStore.insert_refused`) is outside Frame's Include. Build's Deviations records that the human approved it on 2026-11-26 before the change. It is the minimum needed under the storage-layer rule, because `JobStore.fail` only closes a claimed job.
+- The worker changes stay within Frame's named methods. `_run_ontology_correction` changed signature to `(db, job)` and now resolves its own path and pipeline, which the map keying needs. The executor logic is otherwise unchanged.
+- The constraint-capture duty is HELD. `README.md` has a new entry with `**Why:**` and `**Guarded by:**`, and the three tests it names exist.
+- One supporting obligation is VIOLATED. Frame says "`submit_correction`, `submit_operator` and `request_processing` check the table", and Proof's supporting test plan repeats "`request_processing` checks the table for `process`". `ProcessingService.request_processing` (`processing.py:148-158`) still submits `PROCESS_KIND` without consulting `JOB_KINDS`, and `PROCESS_KIND = "process"` survives as a second declaration of that name beside the table entry.
+
+Limit: I cannot independently verify the human approval of `db/jobs.py` beyond the ledger record. In practice the unmet obligation is backstopped by the intake refusal and the construction check: if `process` left the table, the worker would refuse to start. It is still an obligation Frame stated and Build did not meet.
+
+Test homes: `tests/test_worker.py`, its permanent owner per Frame. It holds the three Proof-authored witnesses (from `7c333f8`) and the one Invariants-changed edit at lines 411-414, next to the existing worker priority tests.
+
+Full gates: PASS.
+- `uv run pytest -q`: 585 passed (log `jobkind-audit-full.log`).
+- `uv run ruff check .`: all checks passed (log `jobkind-audit-ruff.log`).
+- `tests/test_architecture.py`: 4 passed, including `test_imports_follow_layers` and `test_only_storage_touches_sqlite`.
+
+All logs are under `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/`. Limit: offline suite with fake LLMs. No live database with queued jobs was exercised.
+
+Residual risks:
+- A refused job is a normal failed row inserted at priority 0. `ProcessingService.retry` reopens it, and it is then claimed ahead of all other work before failing again as `Unknown job kind`. This is harmless but noisy. No test covers it.
+- `job_priority(kind)` now raises `KeyError` for an undeclared kind, where it used to return 20. Current callers pass only declared kinds, but `job_priority` is a public `services` export.
+- `_run_correction`'s final `else` now runs `delete_note_entity` for any kind that reaches it. Only the map can send kinds there, and it sends only the three entity kinds, but a future mis-keyed entry would delete instead of failing.
+- A worker from before this change that is still running against a database could claim a refused row only if a retry reopens it. Deploy order is human-owned.
+
+Recommendation: REVISE
+Packet: Make `ProcessingService.request_processing` in `src/stock_ontology/services/processing.py` consult `JOB_KINDS`, for example by refusing with `invalid` unless `PROCESS_KIND` is declared with `submit == "process"`, as Frame's supporting obligation requires. Alternatively, the human amends Frame to drop that obligation, because intake and the construction check already cover it. For re-audit: show the changed line, or the ledger amendment in Revisions. Show `uv run pytest -q` green with `git diff 7c333f8 -- tests/` still limited to lines 411-414 of `tests/test_worker.py`, and `uv run ruff check .` clean.
 
 ## Revisions
 
