@@ -789,6 +789,24 @@ def test_consensus_attempt_whose_lease_expired_during_synthesis_cannot_publish(t
     assert (status["state"], status["attempts"]) == ("succeeded", 2)
 
 
+def test_registry_edit_refuses_a_ticker_another_record_stores_with_an_exchange_prefix(tmp_path: Path) -> None:
+    from stock_ontology.registry import OntologyRegistry
+    from stock_ontology.services import ServiceError
+    from stock_ontology.services.registry import RegistryService
+
+    settings = _workspace(tmp_path)
+    official = create_minimal_registry().official_definitions()
+    official["companies"].append({"name": "Arista Networks", "ticker": "NYSE: ANET", "sector": "Networking", "aliases": []})
+    registry = OntologyRegistry.model_validate(official)
+    save_registry(registry, settings.registry_path)
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+
+    with _read(settings) as db, pytest.raises(ServiceError) as refused:
+        RegistryService(settings).review_record_edit(db, "companies", "NVIDIA", {"ticker": "anet"})
+    assert (refused.value.code, refused.value.key) == ("conflict", "service_error.identifier_taken")
+
+
 @pytest.mark.parametrize(("graph_matches", "outcome"), [(0, "registry_only"), (2, "ambiguous")])
 def test_browser_registry_edit_rollout_preserves_unmatched_graph(
     tmp_path: Path, graph_matches: int, outcome: str,

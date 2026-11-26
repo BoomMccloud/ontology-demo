@@ -131,7 +131,7 @@ class RegistryService:
             raise ServiceError("invalid", "Enter a valid ticker.", key="service_error.invalid_ticker")
 
         def labels(item: dict[str, Any]) -> set[str]:
-            return identity_labels(item["name"], item.get("ticker"), *item["aliases"])
+            return identity_labels(item["name"], normalize_ticker(item.get("ticker")), *item["aliases"])
 
         introduced = labels(after) - labels(before)
         if labels_taken(introduced, (labels(item.model_dump()) for idx, item in enumerate(records) if idx != index)):

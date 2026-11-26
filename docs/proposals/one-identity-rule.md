@@ -21,7 +21,7 @@ A name, alias or ticker that collides with another record is judged the same way
 
 ### Why now
 
-Priority: high. Found in the 2026-11-26 /simplify pass. The two rules can already disagree on the same record, and it touches stored graph identity.
+Priority: medium (lowered from high on 2026-11-26). Found in the 2026-11-26 /simplify pass. The two rules can disagree on the same record, but most disagreements fail safe: rollout marks the record `ambiguous` and leaves the graph unchanged. The one hole that could publish a colliding registry, the editor comparing a new ticker against another record's stored ticker without `normalize_ticker`, was closed separately on 2026-11-26. Editor and rollout also compare against different sets (registry records versus graph nodes), so a graph-only collision stays `ambiguous` at rollout by design.
 
 ### Known constraints
 
