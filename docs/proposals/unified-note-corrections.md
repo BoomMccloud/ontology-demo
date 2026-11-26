@@ -1,6 +1,6 @@
 ---
 proposal_id: "unified-note-corrections"
-state: BUILT
+state: ACCEPTED
 witness: independent
 candidate: "fcae484 @ worktree claude/pipeline-correction-api-47e1d2"
 ---
@@ -153,9 +153,40 @@ Candidate: `fcae484 @ worktree claude/pipeline-correction-api-47e1d2`
 
 ## Audit
 
-<!-- Replaced only by proposal-audit, and only after its outgoing verdict has been
-appended to Revisions. Record primary/guardrail and scope/duty verdicts,
-deterministic gate references, residual risks, and ACCEPT/REVISE/REJECT. -->
+Candidate: `fcae484 @ worktree claude/pipeline-correction-api-47e1d2` (HEAD `72d686a` differs only in `docs/proposals/unified-note-corrections.md`; `git diff --quiet fcae484 72d686a -- src tests README.md` exits 0)
+
+Independence: fresh-context. The auditing context had seen only the audit skill, the ledger, the repository and the commands listed here. It saw no Build transcript.
+
+Primary-claim verdict: PROVED. Evidence: the protected witness `tests/test_pipeline.py::test_note_reader_and_ontology_page_apply_the_same_relationship_rules` (9 rows over `_SAME_RULES_ROWS`) is byte-identical to Proof's protected revision (`git diff --quiet 84f92b2 fcae484 -- tests/test_pipeline.py` exits 0). I re-observed it RED myself on a `git archive f547b8d` tree, run with `PYTHONPATH` pointed at that tree's `src` (confirmed by `stock_ontology.__file__`). Result: 7 failed, 2 passed. All seven failures are the witness's own `AssertionError` on a verdict or message mismatch (unregistered relation, forbidden endpoint types, duplicate add, unlisted facet key, missing endpoint, identical endpoints, change into a duplicate). Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/unified-audit-red-f547b8d.log`. On the candidate, `uv run pytest tests/test_pipeline.py -v -k test_note_reader_and_ontology_page_apply_the_same_relationship_rules` gives 9 passed. Log: `.../scratchpad/unified-audit-witness.log`. The diff confirms both callers now delegate to `OntologyRegistry.check_note_edge`: `IngestionPipeline._canonical_note_edge` calls it, and `services/corrections._review_edge` calls it and converts `EdgeRuleError` to `ServiceError` with the same code, message and key. Both build the duplicate set from `db.list_note_edges(doc_id)`, excluding the edited edge. Limit: the proof covers the nine witnessed inputs, at the pipeline and services layer only. It does not cover HTTP routes or worker executors, and it does not cover pending-edge-only notes. The two `valid` rows were never RED, so they are guards only.
+
+Guardrail verdicts:
+- Existing note-reader and Ontology-page correction tests stay green, except the listed Invariants-changed assertion: PROVED. Evidence: `git diff 84f92b2 fcae484 --stat -- tests/` touches only `tests/test_web_notes.py`, and only inside `test_note_reader_adds_and_deletes_relationships`, as Frame's Invariants changed allows. `uv run pytest -q` gives 562 passed. Limit: the guarantee is only as strong as those existing tests. No new RED was claimed.
+- The Ontology page still shows its localized error for each rejection: PROVED. Evidence: the witness's `exc.key` assertion passes on every `ServiceError` row. `EdgeRuleError` carries the same keys `_review_edge` used before, and those keys exist in `src/stock_ontology/locales/*.json` (for example `service_error.relationship_exists` and `service_error.choose_two_endpoints`). Limit: this guard was green before the change. It checks that a key is present, not how it renders.
+- Entity relink on the note reader still rewrites only the selected note's edges and keeps pending edges pending: PROVED. Evidence: the relink call site (`pipeline.py:953`) is unchanged and still passes `keep_pending=pending`, which skips `_canonical_note_edge`. The existing relink tests named in Proof pass in the full suite. Limit: the evidence is existing tests only. Relink now also runs `check_facets` on a non-pending edge's stored facets, which the old reader validator did not. No test covers legacy facets that fail that check.
+
+Scope and duty verdict: scope HELD; duties HELD. Evidence: `git show --stat fcae484` changes only `README.md`, `src/stock_ontology/registry.py`, `src/stock_ontology/pipeline.py`, `src/stock_ontology/services/corrections.py`, `src/stock_ontology/services/registry.py` and `tests/test_web_notes.py`, all inside Allowed scope. `worker.py`, `note_reader.js`, `ontology_edit.js`, the HTTP APIs, the job kinds, delete, and entity add/delete are untouched. The supporting obligations are met:
+- The shared validator is in `registry.py` and carries `code`, `key` and message.
+- `_review_edge` converts its error to `ServiceError`, and `_canonical_note_edge` lets it surface.
+- `edit_identity` in `services/registry.py` is used by both `review_record_edit` and the person correction, and its owner tests pass unedited.
+
+The build follows the reuse Frame named, moving `_review_edge`'s rules into `registry.py`. It adds nothing beyond that. The one Invariants-changed item was made as listed. Constraint capture: `README.md` gained one entry with `**Why:**` and `**Guarded by:**`, and the named test exists at `tests/test_pipeline.py:2556`. Limit: scope was judged from the diff. I did not judge the new code's style.
+
+Test homes: `tests/test_web_notes.py` (`test_note_reader_adds_and_deletes_relationships`, lines 846-852) is the existing permanent owner of the note reader's HTTP add and delete behavior. The amendment is the Frame-authorized duplicate-rejection assertion. Separately, the protected witness in `tests/test_pipeline.py` was authored by Proof and is unchanged.
+
+Full gates: PASS. Results:
+- `uv run pytest -q` gives 562 passed (log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/unified-audit-full.log`). This run includes `tests/test_architecture.py`.
+- `uv run ruff check .` reports all checks passed (log: `.../scratchpad/unified-audit-ruff.log`).
+
+Limit: offline suite only. No live LLM, no deployed server, no browser check of either page.
+
+Residual risks:
+- A duplicate rejected on the note reader fails its job with code `invalid`, while the Ontology page uses `conflict`, because `Worker._run` maps every `ValueError` to `invalid` and `worker.py` was out of scope. The message is the same on both surfaces, and the claim does not cover job codes. Build disclosed this.
+- Entity relink now applies `check_facets` to existing non-pending edges. A stored edge whose facets no longer pass the current registry would now block a relink that used to succeed. No test covers this.
+- Relink passes no existing triples, so it still merges into a duplicate instead of rejecting it. That preserves the old behavior, but it is outside the shared duplicate rule.
+- Before this change, `add_note_relationship` silently overwrote a caller-supplied `basis` facet. Now it rejects any `basis` key as a non-editable field. That matches the Ontology page, but it is a reader behavior change that no test names.
+
+Recommendation: ACCEPT
+Packet: none required. Merging and deploying stay human-owned. If the reviewer wants the second residual risk covered, the smallest follow-up is a test in `tests/test_pipeline.py` that relinks an entity whose edge holds stale facets, decided by a human before any code change.
 
 ## Revisions
 
