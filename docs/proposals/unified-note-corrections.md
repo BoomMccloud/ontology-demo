@@ -1,8 +1,8 @@
 ---
 proposal_id: "unified-note-corrections"
-state: PROVED
+state: BUILT
 witness: independent
-candidate: "f547b8d @ worktree claude/pipeline-correction-api-47e1d2"
+candidate: "fcae484 @ worktree claude/pipeline-correction-api-47e1d2"
 ---
 
 # Proposal: One review path for note corrections
@@ -119,8 +119,37 @@ The witness needed no amendment for the rerun Frame. The 2026-11-26 decision say
 
 ## Build
 
-<!-- Replaced only by proposal-build. Reference changed paths, protected witnesses,
-exact GREEN command(s), concise result, candidate identity, and deviations. -->
+Candidate: `fcae484 @ worktree claude/pipeline-correction-api-47e1d2`
+
+### Files changed
+
+- `src/stock_ontology/registry.py` — adds `EdgeRuleError(ValueError)` (with `code`, `key` and `message`) and `OntologyRegistry.check_note_edge(relation, *, from_node, to_node, base_facets, facet_updates, existing)`, the one rule set: the relation must resolve, facet updates must be registry-listed keys other than `basis`, both endpoints must exist and differ, the endpoints must be allowed, `check_facets` must pass, and the result must not duplicate one of the note's other triples. It carries the Ontology page's messages and i18n keys. Satisfies the primary claim.
+- `src/stock_ontology/services/corrections.py` — `_review_edge` keeps its `edit_text` input checks, calls `check_note_edge` and converts `EdgeRuleError` to `ServiceError` with the same code, message and key. The person correction uses `edit_identity`. Satisfies the primary claim and the localized-key guardrail.
+- `src/stock_ontology/pipeline.py` — `_canonical_note_edge` calls `check_note_edge`. `add_note_relationship` passes the user's facets as updates and the note's triples. `correct_note_relationship` passes the note's triples without the edited edge. Entity relink passes no triples, so it still merges into an existing edge as before, and it still keeps pending edges pending. Adds `_note_triples`. Satisfies the primary claim and the relink guardrail.
+- `src/stock_ontology/services/registry.py` — adds `edit_identity` (keep the previous name, `unique_labels`, `check_metadata`, the alias length limit), used by `review_record_edit` and the person correction. Satisfies the identity supporting obligation.
+- `tests/test_web_notes.py:846-851` — the Invariants-changed item: the second identical note-reader add now expects a 4xx carrying "This note already records that relationship.", and still exactly one edge.
+- `README.md` — one constraint entry: check every note relationship add or change with `OntologyRegistry.check_note_edge` and edit identity with `edit_identity`, guarded by the witness.
+
+### Unit evidence
+
+- Protected witness: `uv run pytest tests/test_pipeline.py -v -k test_note_reader_and_ontology_page_apply_the_same_relationship_rules` — RED on `f547b8d` (7 failed, 2 passed; recorded in Proof); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/unified-red-f547b8d.log`.
+- No new unit tests. The identity helper's owners are the existing record-edit and person-correction tests named in Proof, and they pass unedited.
+
+### Green evidence
+
+- Decisive witness and gate: `uv run pytest -q` — 562 passed (all nine witness rows included); log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/unified-build-green.log`.
+- `git diff 84f92b2 --stat -- tests/` — only `tests/test_web_notes.py` (the Invariants-changed assertion); the protected `tests/test_pipeline.py` is unchanged.
+- `uv run ruff check .` — all checks passed.
+
+### Intervention record
+
+- None: the user-visible change is one rejection message on the note reader, with nothing to measure.
+
+### Deviations
+
+- None. Notes for Audit:
+  - The first Build attempt stopped on `tests/test_web_notes.py:846-849`. The human chose the duplicate rule on 2026-11-26, Frame was rerun to list that assertion under Invariants changed, and Proof was re-observed RED on `f547b8d` before this candidate.
+  - A note-reader duplicate fails its job with error code `invalid`, not `conflict`, because `Worker._run` maps every `ValueError` to `invalid` and `worker.py` is excluded from scope. The message is the same on both surfaces.
 
 ## Audit
 
