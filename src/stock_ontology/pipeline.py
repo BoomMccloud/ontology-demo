@@ -956,56 +956,13 @@ class IngestionPipeline:
 
         self._correct_note(path, expected_hash, edit)
 
-    def add_note_relationship(
-        self, path: Path, from_id: str, relation: str, to_id: str, expected_hash: str | None,
-        *, facets: dict[str, Any] | None = None,
-    ) -> None:
-        """Add a source-attributed relationship to the current extraction."""
-        def edit(doc_id: str) -> set[str]:
-            edge, entity_ids = self._canonical_note_edge(
-                Edge(id=f"edge_{uuid.uuid4().hex}", from_id=from_id, to_id=to_id, relation=relation,
-                     source_doc_id=doc_id),
-                facet_updates=facets, existing=self._note_triples(doc_id),
-            )
-            self.db.upsert_edge(edge)
-            self.db.add_note_entities(doc_id, entity_ids)
-            return self.db.get_doc_affected_company_ids(doc_id)
-
-        self._correct_note(path, expected_hash, edit)
-
-    def delete_note_relationship(self, path: Path, edge_id: str, expected_hash: str | None) -> None:
-        """Delete the selected edge after verifying its ownership and source."""
-        def edit(doc_id: str) -> set[str]:
-            _, pending = self._find_note_edge(doc_id, edge_id)
-            affected = self.db.get_doc_affected_company_ids(doc_id)
-            self._delete_note_edge(edge_id, pending)
-            return affected
-
-        self._correct_note(path, expected_hash, edit)
-
-    def correct_note_relationship(
-        self, path: Path, edge_id: str, relation: str, reverse: bool, expected_hash: str | None,
-        *, from_id: str | None = None, to_id: str | None = None,
-    ) -> None:
-        """Change a relationship belonging to the selected extraction."""
-        def edit(doc_id: str) -> set[str]:
-            affected = self.db.get_doc_affected_company_ids(doc_id)
-            row, pending = self._find_note_edge(doc_id, edge_id)
-            start = row["from_id"] if from_id is None else from_id
-            end = row["to_id"] if to_id is None else to_id
-            if reverse:
-                start, end = end, start
-            self.db.add_note_entities(doc_id, self._replace_note_edge(
-                row, relation, start, end, pending=pending, existing=self._note_triples(doc_id, excluding=edge_id),
-            ))
-            return affected | self.db.get_doc_affected_company_ids(doc_id)
-
-        self._correct_note(path, expected_hash, edit)
-
     def apply_note_correction(self, path: Path, reviewed: dict[str, Any]) -> None:
         """Apply a correction exactly as `services.corrections.review_note_correction` reviewed it.
-        It queues consensus for the affected companies but does not refresh them, so a caller can
-        run it inside its own transaction and refresh after that commits."""
+        An edge whose relation or endpoints change, or a pending edge, is replaced by one with a new
+        ID (keeping `created_at`), so a form opened before the correction no longer matches; a
+        facet-only edit keeps the ID, and an empty `after` deletes the edge. It queues
+        consensus for the affected companies but does not refresh them, so a caller can run it
+        inside its own transaction and refresh after that commits."""
         def edit(doc_id: str) -> set[str]:
             affected = self.db.get_doc_affected_company_ids(doc_id)
             if person := reviewed["person"]:
@@ -1017,10 +974,18 @@ class IngestionPipeline:
                 affected.update(person.get("rumor_company_ids", ()))
             for update in reviewed["edges"]:
                 before, values = update["before"], update["after"]
-                if before:
+                same_edge = before and values and not before.get("pending") and all(
+                    before[key] == values[key] for key in ("from_id", "to_id", "relation")
+                )
+                if same_edge:
                     self.db.update_edge(before["edge_id"], **values)
-                else:
-                    self.db.upsert_edge(Edge(id=f"edge_{uuid.uuid4().hex}", source_doc_id=doc_id, **values))
+                    continue
+                if before:
+                    self._delete_note_edge(before["edge_id"], bool(before.get("pending")))
+                if not values:
+                    continue
+                kept = {"created_at": before["created_at"]} if before.get("created_at") else {}
+                self.db.upsert_edge(Edge(id=f"edge_{uuid.uuid4().hex}", source_doc_id=doc_id, **kept, **values))
                 added = {values["from_id"], values["to_id"]} - {before.get("from_id"), before.get("to_id")}
                 self.db.add_note_entities(doc_id, tuple(
                     node.id for node in self.db.get_nodes(sorted(added)) if node.node_type == "entity"
@@ -1029,38 +994,23 @@ class IngestionPipeline:
 
         self._correct_note(path, reviewed["expected_hash"], edit, doc_id=reviewed["doc_id"], refresh=False)
 
-    def _find_note_edge(self, doc_id: str, edge_id: str) -> tuple[dict[str, Any], bool]:
-        for pending in (False, True):
-            for row in self.db.list_note_edges(doc_id, pending=pending):
-                if row["edge_id"] == edge_id:
-                    return row, pending
-        raise ValueError("That relationship is not in this note's extraction.")  # noqa: TRY003
-
     def _delete_note_edge(self, edge_id: str, pending: bool) -> None:
         delete = self.db.delete_pending_edges if pending else self.db.delete_edges
         delete([edge_id])
 
-    def _note_triples(self, doc_id: str, excluding: str = "") -> list[tuple[str, str, str]]:
-        return [(row["from_id"], row["to_id"], row["relation"])
-                for row in self.db.list_note_edges(doc_id) if row["edge_id"] != excluding]
-
-    def _canonical_note_edge(
-        self, edge: Edge, *, facet_updates: dict[str, Any] | None = None,
-        existing: list[tuple[str, str, str]] | tuple[()] = (),
-    ) -> tuple[Edge, tuple[str, ...]]:
-        """Check `edge` against the same registry rules as the Ontology page's corrections."""
+    def _canonical_note_edge(self, edge: Edge) -> tuple[Edge, tuple[str, ...]]:
+        """Check a relinked edge by the same registry rules as a reviewed correction."""
         from_node, to_node = self.db.get_node(edge.from_id), self.db.get_node(edge.to_id)
-        after = self.registry.check_note_edge(
+        checked = self.registry.check_note_edge(
             edge.relation, from_node=from_node, to_node=to_node, base_facets=edge.facets,
-            facet_updates=facet_updates, existing=existing,
         )
-        return edge.model_copy(update=after), tuple(
+        return edge.model_copy(update=checked), tuple(
             node.id for node in (from_node, to_node) if node is not None and node.node_type == "entity"
         )
 
     def _replace_note_edge(
         self, row: dict[str, Any], relation: str, from_id: str, to_id: str, *,
-        pending: bool, keep_pending: bool = False, existing: list[tuple[str, str, str]] | tuple[()] = (),
+        pending: bool, keep_pending: bool = False,
     ) -> tuple[str, ...]:
         prefix = "pedge" if keep_pending else "edge"
         # Replacing the ID invalidates relationship forms opened before the correction.
@@ -1068,7 +1018,7 @@ class IngestionPipeline:
                     facets=row["facets"], source_doc_id=row["source_doc_id"], created_at=row["created_at"])
         entity_ids = ()
         if not keep_pending:
-            edge, entity_ids = self._canonical_note_edge(edge, existing=existing)
+            edge, entity_ids = self._canonical_note_edge(edge)
         self._delete_note_edge(row["edge_id"], pending)
         if keep_pending:
             self.db.insert_pending_edge(edge)

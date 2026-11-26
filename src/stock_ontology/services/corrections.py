@@ -8,9 +8,16 @@ from typing import Any
 
 from stock_ontology.config import note_revision
 from stock_ontology.db import OntologyDB
-from stock_ontology.registry import EdgeRuleError, normalize_name_key
+from stock_ontology.registry import EdgeRuleError, FacetSchemaError, normalize_name_key
 from stock_ontology.services.errors import ServiceError
-from stock_ontology.services.registry import changed_fields, edit_aliases, edit_identity, edit_text
+from stock_ontology.services.registry import (
+    changed_fields,
+    edit_aliases,
+    edit_text,
+    identity_aliases,
+    identity_labels,
+    labels_taken,
+)
 from stock_ontology.vocab import ACCURACY, is_synthesized_edge
 
 _PERSON_FIELDS = {"name", "aliases", "role", "organization", ACCURACY.group}
@@ -79,12 +86,23 @@ def _review_edge(
         return db.registry.check_note_edge(
             after["relation"] or "", from_node=db.get_node(after["from_id"] or ""),
             to_node=db.get_node(after["to_id"] or ""), base_facets=after["facets"],
-            facet_updates=changes.get("facets", {}),
-            existing=[(row["from_id"], row["to_id"], row["relation"])
-                      for row in all_edges if row["edge_id"] != before.get("edge_id")],
+            facet_updates=changes.get("facets"),
+            existing=[(row["from_id"], row["to_id"], row["relation"]) for row in all_edges
+                      if not row.get("pending") and row["edge_id"] != before.get("edge_id")],
         )
     except EdgeRuleError as exc:
         raise ServiceError(exc.code, exc.message, key=exc.key) from exc
+    except FacetSchemaError as exc:
+        raise ServiceError("invalid", str(exc)) from exc
+
+
+def _note_edges(db: OntologyDB, doc_id: str) -> list[dict[str, Any]]:
+    """The note's edges, then its pending (unmapped) edges marked `pending`, each sorted by ID."""
+    return [
+        {**row, "pending": True} if pending else row
+        for pending in (False, True)
+        for row in sorted(db.list_note_edges(doc_id, pending=pending), key=lambda item: item["edge_id"])
+    ]
 
 
 def review_note_correction(
@@ -99,7 +117,7 @@ def review_note_correction(
     if not note or not note["entities_recorded"] or note["content_hash"] != digest:
         raise ServiceError("conflict", "Review the latest processed version of this source note.", key="service_error.stale_source_note")
     doc_id = note["doc_id"]
-    all_edges = sorted(db.list_note_edges(doc_id), key=lambda item: item["edge_id"])
+    all_edges = _note_edges(db, doc_id)
     edges: list[dict[str, Any]] = []
     person = None
     diff = []
@@ -121,14 +139,15 @@ def review_note_correction(
                 after[field] = _edit_accuracy(value)
             else:
                 after[field] = edit_aliases(value) if field == "aliases" else edit_text(value, field)
-        after["aliases"] = edit_identity(db.registry, after, previous_name=node.name, summary=node.summary,
-                                         keep_previous_name=keep_previous_name)
-        proposed_labels = set(map(normalize_name_key, [after["name"], *after["aliases"]]))
-        prior_labels = set(map(normalize_name_key, [node.name, *node.aliases]))
-        if any(
-            other.id != node.id and (proposed_labels - prior_labels) & set(map(normalize_name_key, [other.name, *other.aliases]))
-            for other in db.list_nodes(node_type="entity", limit=-1)
-        ):
+        after["aliases"] = identity_aliases(
+            db.registry, node.name, after["name"], after["aliases"],
+            summary=node.summary, keep_previous_name=keep_previous_name,
+        )
+        introduced = identity_labels(after["name"], *after["aliases"]) - identity_labels(node.name, *node.aliases)
+        if labels_taken(introduced, (
+            identity_labels(other.name, *other.aliases)
+            for other in db.list_nodes(node_type="entity", limit=-1) if other.id != node.id
+        )):
             raise ServiceError("conflict", "A proposed name or alternate name identifies another entity.", key="service_error.name_taken")
         facets = {**node.facets, **{field: after[field] for field in ("role", "organization", ACCURACY.group) if field in changes}}
         if facets.get(ACCURACY.group) is None:
@@ -144,7 +163,7 @@ def review_note_correction(
         if any(change["field"] in {"role", "organization"} for change in diff):
             old_company = _organization(db, old_org) if isinstance(old_org, str) else None
             for row in all_edges:
-                if row["relation"] != "WORKS_AT" or row["from_id"] != record or row["to_id"] != old_company:
+                if row.get("pending") or row["relation"] != "WORKS_AT" or row["from_id"] != record or row["to_id"] != old_company:
                     continue
                 edge_changes = {}
                 if before["organization"] != after["organization"]:
@@ -168,16 +187,25 @@ def review_note_correction(
         if kind == "relationship" and before is None:
             raise ServiceError("not_found", "That relationship is not in the selected note's extraction.", key="service_error.relationship_missing")
         if kind == "relationship_add":
-            if edge_id or record not in (changes.get("from_id"), changes.get("to_id")):
+            if edge_id or (record and record not in (changes.get("from_id"), changes.get("to_id"))):
                 raise ServiceError("invalid", "The new relationship must connect to the current record.", key="service_error.relationship_off_record")
-            source_evidence = relationship_source_evidence(db, record).get(doc_id)
-            if not source_evidence:
-                raise ServiceError("conflict", "Choose a processed source note connected to the current record.", key="service_error.choose_source_note")
+            # From a record's page, the note must already connect to that record. The note reader's
+            # own note is the source, so it names no record.
+            if record:
+                source_evidence = relationship_source_evidence(db, record).get(doc_id)
+                if not source_evidence:
+                    raise ServiceError("conflict", "Choose a processed source note connected to the current record.", key="service_error.choose_source_note")
             before = {}
         assert before is not None
         after = _review_edge(db, before, changes, all_edges=all_edges)
         edges.append({"before": before, "after": after})
         diff = changed_fields(before, after)
+    elif kind == "relationship_delete":
+        before = next((row for row in all_edges if row["edge_id"] == edge_id), None)
+        if before is None:
+            raise ServiceError("not_found", "That relationship is not in the selected note's extraction.", key="service_error.relationship_missing")
+        edges.append({"before": before, "after": {}})
+        diff = [{"field": field, "before": before[field], "after": None} for field in ("from_id", "relation", "to_id")]
     else:
         raise ServiceError("invalid", "Choose a person or relationship correction.", key="service_error.choose_correction")
 
@@ -190,3 +218,40 @@ def review_note_correction(
         "request": {"kind": kind, "record": record, "edge_id": edge_id, "changes": changes,
                     "keep_previous_name": keep_previous_name},
     }
+
+
+# Note-reader relationship requests, by the job kind they were once queued as. New ones are reviewed
+# at submit; jobs of these kinds queued before that change are reviewed by the worker.
+READER_RELATIONSHIP_KINDS = {
+    "note.relationship": "relationship",
+    "note.relationship.add": "relationship_add",
+    "note.relationship.delete": "relationship_delete",
+}
+
+
+def review_reader_correction(
+    db: OntologyDB, path: Path, data_dir: Path, job_kind: str, params: dict[str, Any],
+) -> dict[str, Any]:
+    """Review a note-reader relationship request with the same rules as an Ontology page correction.
+
+    The reader sends `relation`, `from_id` and `to_id` (or `reverse` to swap the current endpoints),
+    `facets` for an add, and the note revision it rendered as `expected_hash`."""
+    kind = READER_RELATIONSHIP_KINDS[job_kind]
+    edge_id = str(params.get("edge_id") or "")
+    changes: dict[str, Any] = {}
+    if kind != "relationship_delete":
+        changes = {key: params[key] for key in ("from_id", "relation", "to_id") if params.get(key) is not None}
+        if kind == "relationship_add" and params.get("facets"):
+            changes["facets"] = params["facets"]
+        if kind == "relationship" and params.get("reverse"):
+            note = db.get_note_state(path.relative_to(data_dir.resolve()).as_posix())
+            row = next((row for row in _note_edges(db, note["doc_id"]) if row["edge_id"] == edge_id), None) if note else None
+            if row is not None:
+                changes["from_id"], changes["to_id"] = (
+                    changes.get("to_id", row["to_id"]), changes.get("from_id", row["from_id"]),
+                )
+    reviewed = review_note_correction(db, path, data_dir, kind=kind, changes=changes, edge_id=edge_id)
+    expected = params.get("expected_hash")
+    if expected and expected != reviewed["expected_hash"]:
+        raise ServiceError("conflict", "Review the latest processed version of this source note.", key="service_error.stale_source_note")
+    return reviewed

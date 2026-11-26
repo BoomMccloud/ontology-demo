@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -45,19 +46,30 @@ def unique_labels(labels: list[str], *, excluding: str = "") -> list[str]:
     return result
 
 
-def edit_identity(
-    registry: OntologyRegistry, after: dict[str, Any], *, previous_name: str, summary: str,
-    keep_previous_name: bool,
+def identity_aliases(
+    registry: OntologyRegistry, previous_name: str, name: str, aliases: list[str], *,
+    summary: str, keep_previous_name: bool,
 ) -> list[str]:
-    """Return the edited record's alternate names, keeping the previous name when asked, and check
-    the name and every alternate name against the registry's limits. Shared by registry records
-    and people."""
-    aliases = [*after["aliases"], previous_name] if keep_previous_name and after["name"] != previous_name else after["aliases"]
-    aliases = unique_labels(aliases, excluding=after["name"])
-    registry.check_metadata(after["name"], summary)
+    """The one rule for a renamed or re-aliased record or node: check the name and summary against
+    the registry's limits, keep the previous name as an alias when asked, drop duplicates and the
+    name itself, and refuse an alias over the name length limit."""
+    registry.check_metadata(name, summary)
+    if keep_previous_name and name != previous_name:
+        aliases = [*aliases, previous_name]
+    aliases = unique_labels(aliases, excluding=name)
     if any(len(alias) > registry.metadata_max_length["name"] for alias in aliases):
         raise ServiceError("invalid", "An alternate name exceeds the name length limit.", key="service_error.alternate_name_too_long")
     return aliases
+
+
+def identity_labels(*labels: str | None) -> set[str]:
+    """Normalized names, aliases and tickers that identify one record or node."""
+    return set(map(normalize_name_key, (label or "" for label in labels))) - {""}
+
+
+def labels_taken(introduced: set[str], others: Iterable[set[str]]) -> bool:
+    """Whether a newly introduced label already identifies another record or node."""
+    return any(introduced & labels for labels in others)
 
 
 def changed_fields(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
@@ -109,18 +121,20 @@ class RegistryService:
             else:
                 text = edit_text(value, field, required=field not in {"ticker", "description"})
                 after[field] = (normalize_ticker(text) or None) if field == "ticker" else text
-        after["aliases"] = edit_identity(current, after, previous_name=before["name"],
-                                         summary=after.get("description", ""), keep_previous_name=keep_previous_name)
+        after["aliases"] = identity_aliases(
+            current, before["name"], after["name"], after["aliases"],
+            summary=after.get("description", ""), keep_previous_name=keep_previous_name,
+        )
         if kind == "themes" and "stage" in changes and after["stage"] not in current._vocabulary("theme", "stage")["members"]:
             raise ServiceError("invalid", "Choose a stage from the published registry.", key="service_error.choose_stage")
         if "ticker" in changes and changes["ticker"].strip() and not after["ticker"]:
             raise ServiceError("invalid", "Enter a valid ticker.", key="service_error.invalid_ticker")
 
         def labels(item: dict[str, Any]) -> set[str]:
-            return set(map(normalize_name_key, [item["name"], item.get("ticker") or "", *item["aliases"]])) - {""}
+            return identity_labels(item["name"], item.get("ticker"), *item["aliases"])
 
         introduced = labels(after) - labels(before)
-        if any(introduced & labels(item.model_dump()) for idx, item in enumerate(records) if idx != index):
+        if labels_taken(introduced, (labels(item.model_dump()) for idx, item in enumerate(records) if idx != index)):
             raise ServiceError("conflict", "A name, alternate name, or ticker already identifies another record.", key="service_error.identifier_taken")
         diff = changed_fields(before, after)
         if not diff:

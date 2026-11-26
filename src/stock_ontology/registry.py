@@ -33,8 +33,8 @@ class FacetSchemaError(ValueError):
 
 
 class EdgeRuleError(ValueError):
-    """A relationship correction the registry rejects. `code` is `invalid` or `conflict`; `key`
-    names the locale string the web layer shows. The note reader and the Ontology page share it."""
+    """A relationship correction the registry rejects. `code` is `invalid` or `conflict`; `key` names
+    the locale string the web layer shows."""
 
     def __init__(self, code: str, message: str, key: str) -> None:
         super().__init__(message)
@@ -742,20 +742,20 @@ class OntologyRegistry(BaseModel):
 
     def check_note_edge(
         self, relation: str, *, from_node: Any, to_node: Any, base_facets: dict[str, Any] | None,
-        facet_updates: dict[str, Any] | None = None, existing: Iterable[tuple[str, str, str]] = (),
+        facet_updates: Any = None, existing: Iterable[tuple[str, str, str]] = (),
     ) -> dict[str, Any]:
-        """The one rule set for a note's relationship add or change, from either correction surface.
+        """The one rule set for a relationship a correction adds or changes.
 
         `from_node` and `to_node` are the endpoint nodes (`None` when missing). `base_facets` are the
-        edge's current facets (`None` for a new edge). `facet_updates` may set or clear (`None`)
+        edge's current facets (`None` for a new edge). `facet_updates` may set, or clear with `None`,
         registry-listed facets other than `basis`. `existing` holds the note's other
         `(from_id, to_id, relation)` triples. Returns the canonical `from_id`, `to_id`, `relation`
-        and `facets`, or raises `EdgeRuleError`."""
+        and `facets`, or raises `EdgeRuleError` (or `FacetSchemaError` for a facet value)."""
         match = self.resolve_relation(relation or "")
         if match is None:
             raise EdgeRuleError("invalid", "Choose a relationship type from the applied registry.",
                                 "service_error.choose_relationship_type")
-        updates = facet_updates or {}
+        updates = {} if facet_updates is None else facet_updates
         if not isinstance(updates, dict) or updates.keys() - (self.edge_facet_keys(match.canonical) - {"basis"}):
             raise EdgeRuleError("invalid", "Choose editable relationship fields from the applied registry.",
                                 "service_error.choose_relationship_fields_registry")

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from stock_ontology.i18n import translate
 from stock_ontology.services import NoteSaveError, NotesService, ServiceError
+from stock_ontology.services.corrections import review_reader_correction
 from stock_ontology.web.notes.views import build_catalog_context
 from stock_ontology.web.shared import build_rail_context
 from stock_ontology.web.shell import WebShell, http_error
@@ -161,16 +162,36 @@ def build_router(shell: WebShell) -> APIRouter:
     def delete_note_entity(request: Request, payload: NoteEntityRequest) -> JSONResponse:
         return _correction(request, "note.entity.delete", payload)
 
+    def _reviewed_correction(request: Request, kind: str, payload: BaseModel) -> JSONResponse:
+        """Review a relationship correction now, by the Ontology page's rules, and queue what was reviewed."""
+        shell.require_note_actions(request)
+        file = getattr(payload, "file")
+        lang = shell.lang(request)
+        try:
+            path = notes.resolve(file).resolve()
+        except ServiceError as exc:
+            if exc.code == "not_found":
+                raise HTTPException(404, translate("api.raw_note_not_found", lang=lang, file=file)) from exc
+            raise http_error(exc, lang) from exc
+        try:
+            with shell.open_db(lang) as db:
+                reviewed = review_reader_correction(db, path, settings.data_dir, kind, payload.model_dump(exclude={"file"}))
+        except ServiceError as exc:
+            raise http_error(exc, lang) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return _submitted(request, file, lambda: processing.submit_correction("note.ontology.correction", file, reviewed))
+
     @router.post("/api/notes/relationship", status_code=202)
     def correct_note_relationship(request: Request, payload: NoteRelationshipRequest) -> JSONResponse:
-        return _correction(request, "note.relationship", payload)
+        return _reviewed_correction(request, "note.relationship", payload)
 
     @router.post("/api/notes/relationship/add", status_code=202)
     def add_note_relationship(request: Request, payload: NoteRelationshipAddRequest) -> JSONResponse:
-        return _correction(request, "note.relationship.add", payload)
+        return _reviewed_correction(request, "note.relationship.add", payload)
 
     @router.post("/api/notes/relationship/delete", status_code=202)
     def delete_note_relationship(request: Request, payload: NoteRelationshipDeleteRequest) -> JSONResponse:
-        return _correction(request, "note.relationship.delete", payload)
+        return _reviewed_correction(request, "note.relationship.delete", payload)
 
     return router

@@ -33,10 +33,11 @@ MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = 60
 
 CORRECTION_KINDS = frozenset({
-    "note.relink", "note.entity.add", "note.entity.delete",
-    "note.relationship", "note.relationship.add", "note.relationship.delete",
-    "note.ontology.correction",
+    "note.relink", "note.entity.add", "note.entity.delete", "note.ontology.correction",
 })
+# Note-reader relationship corrections are now reviewed at submit and queued as
+# `note.ontology.correction`. Jobs of these kinds queued before that still run, first.
+RETIRED_CORRECTION_KINDS = frozenset({"note.relationship", "note.relationship.add", "note.relationship.delete"})
 OPERATOR_KINDS = frozenset({"ingest", "reembed", "repair", "registry.publish", "registry.apply",
                            "registry.apply.preview"})
 PROCESS_KIND = "process"
@@ -44,7 +45,7 @@ PROCESS_KIND = "process"
 
 def job_priority(kind: str) -> int:
     """Lower runs first: reader corrections, then operator commands, then note extraction."""
-    if kind in CORRECTION_KINDS:
+    if kind in CORRECTION_KINDS or kind in RETIRED_CORRECTION_KINDS:
         return 0
     if kind in OPERATOR_KINDS:
         return 10

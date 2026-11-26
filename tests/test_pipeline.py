@@ -24,6 +24,7 @@ from stock_ontology.models import (
     Node,
 )
 from stock_ontology.pipeline import IngestionPipeline, ReembedReport, reembed_all_nodes
+from stock_ontology.services.errors import ServiceError
 
 DIM = 32
 REPO_DATA_DIR = Path(__file__).resolve().parent / "fixtures" / "sample_data"
@@ -2043,6 +2044,16 @@ def test_selected_note_rejects_source_change_while_writing(tmp_path: Path, monke
         assert db.get_note_state("note.md") is None
 
 
+def _reader_correction(
+    pipeline: IngestionPipeline, path: Path, kind: str, params: dict[str, Any],
+) -> None:
+    """Apply a note-reader relationship correction the way the reader's route and the worker do."""
+    from stock_ontology.services.corrections import review_reader_correction
+
+    reviewed = review_reader_correction(pipeline.db, path.resolve(), path.parent.resolve(), kind, params)
+    pipeline.apply_note_correction(path.resolve(), reviewed)
+
+
 @pytest.mark.parametrize("action", ["relink", "reverse"])
 def test_note_correction_updates_only_current_note_edges(tmp_path: Path, action: str) -> None:
     from stock_ontology.models import Edge
@@ -2071,9 +2082,12 @@ def test_note_correction_updates_only_current_note_edges(tmp_path: Path, action:
             assert (remaining["from_id"], remaining["to_id"]) == ("company_b", "company_c")
             assert {node.id for node in db.list_note_entities("note")} == {"company_b", "company_c"}
         else:
-            pipeline.correct_note_relationship(path, "focus_edge", "OWNS", True, content_hash)
-            with pytest.raises(ValueError, match="not in this note's extraction"):
-                pipeline.correct_note_relationship(path, "focus_edge", "OWNS", True, content_hash)
+            reverse = {"edge_id": "focus_edge", "relation": "OWNS", "reverse": True, "expected_hash": content_hash}
+            _reader_correction(pipeline, path, "note.relationship", reverse)
+            # The corrected edge has a new ID, so the same form cannot reverse it again.
+            with pytest.raises(ServiceError) as missing:
+                _reader_correction(pipeline, path, "note.relationship", reverse)
+            assert missing.value.key == "service_error.relationship_missing"
             assert {(edge["from_id"], edge["to_id"]) for edge in db.list_note_edges("note")} == {
                 ("company_b", "company_a"), ("company_a", "company_c"),
             }
@@ -2100,16 +2114,18 @@ def test_delete_note_relationship_removes_only_its_pending_edge(tmp_path: Path) 
             ))
 
         pipeline = IngestionPipeline(db, FakePipelineLLM(), tmp_path)
-        with pytest.raises(ValueError, match="not in this note's extraction"):
-            pipeline.delete_note_relationship(path, "peer-pending", content_hash)
-        pipeline.delete_note_relationship(path, "pending", content_hash)
+        with pytest.raises(ServiceError) as missing:
+            _reader_correction(pipeline, path, "note.relationship.delete",
+                               {"edge_id": "peer-pending", "expected_hash": content_hash})
+        assert missing.value.key == "service_error.relationship_missing"
+        _reader_correction(pipeline, path, "note.relationship.delete", {"edge_id": "pending", "expected_hash": content_hash})
 
         assert db.list_note_edges("note", pending=True) == []
         assert [edge["edge_id"] for edge in db.list_note_edges("peer", pending=True)] == ["peer-pending"]
 
 
 def test_add_note_relationship_accepts_required_fields_from_shipped_registry(tmp_path: Path) -> None:
-    from stock_ontology.registry import FacetSchemaError, load_registry
+    from stock_ontology.registry import load_registry
 
     registry_path = Path(__file__).resolve().parents[1] / "ontology_registry.json"
     registry = load_registry(registry_path)
@@ -2128,15 +2144,14 @@ def test_add_note_relationship_accepts_required_fields_from_shipped_registry(tmp
         db.upsert_ingestion_log("note.md", "note", content_hash, entity_ids=())
         pipeline = IngestionPipeline(db, FakePipelineLLM(), tmp_path)
 
-        with pytest.raises(FacetSchemaError, match="sentiment"):
-            pipeline.add_note_relationship(path, "company", "EXPOSED_TO", "theme", content_hash)
-        with pytest.raises(FacetSchemaError, match="sentiment"):
-            pipeline.add_note_relationship(path, "company", "EXPOSED_TO", "theme", content_hash,
-                                           facets={"sentiment": "invalid"})
+        add = {"from_id": "company", "relation": "EXPOSED_TO", "to_id": "theme", "expected_hash": content_hash}
+        for facets in (None, {"sentiment": "invalid"}):
+            with pytest.raises(ServiceError, match="sentiment") as refused:
+                _reader_correction(pipeline, path, "note.relationship.add", {**add, "facets": facets})
+            assert refused.value.code == "invalid"
         assert db.list_note_edges("note") == []
 
-        pipeline.add_note_relationship(path, "company", "EXPOSED_TO", "theme", content_hash,
-                                       facets={"sentiment": "positive"})
+        _reader_correction(pipeline, path, "note.relationship.add", {**add, "facets": {"sentiment": "positive"}})
         edge, = db.list_note_edges("note")
         assert (edge["relation"], edge["facets"]["sentiment"]) == ("EXPOSED_TO", "positive")
 
@@ -2522,7 +2537,10 @@ def test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_conse
         assert person is not None
         assert (person.facets.get("organization"), person.facets.get("accuracy")) == ("Gamma Tools", "low")
         works_at, = [row for row in db.list_note_edges(doc_id) if row["relation"] == "WORKS_AT"]
-        assert (works_at["edge_id"], works_at["to_id"]) == (reviewed["edges"][0]["before"]["edge_id"], ids["Gamma Tools"])
+        # A new endpoint replaces the edge: a new ID, so a form opened before the correction no longer matches.
+        before = reviewed["edges"][0]["before"]
+        assert works_at["edge_id"] != before["edge_id"] and works_at["to_id"] == ids["Gamma Tools"]
+        assert works_at["created_at"] == before["created_at"]
         assert ids["Gamma Tools"] in {node.id for node in db.list_note_entities(doc_id)}
         # Consensus is queued, not run: the note's companies before and after, and the companies of
         # Ron's rumor in another note (an accuracy change reweighs it), all wait for a refresh.
@@ -2530,81 +2548,3 @@ def test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_conse
         for company, target in targets.items():
             assert db.jobs.consensus_target(ids[company]) > target, company
             assert ids[company] in pending, company
-
-
-# --- One review path for note corrections (docs/proposals/unified-note-corrections.md)
-
-# Each row is one relationship edit, given once as the note reader submits it (`add_note_relationship`
-# or `correct_note_relationship`) and once as the Ontology page submits it (`review_note_correction`
-# then `apply_note_correction`). The seeded note records `focus` (A OWNS B) and `second` (A COMPETE C).
-_SAME_RULES_ROWS = {
-    "unregistered relation": ("add", {"from_id": "company_a", "relation": "FROBNICATES", "to_id": "company_c"}),
-    "registry forbids endpoint types": ("add", {"from_id": "company_a", "relation": "EXPOSED_TO", "to_id": "company_c"}),
-    "duplicate add": ("add", {"from_id": "company_a", "relation": "OWNS", "to_id": "company_b"}),
-    "unlisted facet key": ("add", {"from_id": "company_a", "relation": "OWNS", "to_id": "company_c",
-                                   "facets": {"bogus_key": "x"}}),
-    "missing endpoint": ("add", {"from_id": "company_a", "relation": "OWNS", "to_id": "company_missing"}),
-    "identical endpoints": ("add", {"from_id": "company_a", "relation": "OWNS", "to_id": "company_a"}),
-    "valid add through an inverse alias": ("add", {"from_id": "company_d", "relation": "SUBSIDIARY_OF",
-                                                   "to_id": "company_a"}),
-    "change into a duplicate": ("change", {"edge_id": "second", "relation": "OWNS", "to_id": "company_b"}),
-    "valid change": ("change", {"edge_id": "focus", "relation": "COMPETE"}),
-}
-
-
-@pytest.mark.parametrize("row", list(_SAME_RULES_ROWS))
-def test_note_reader_and_ontology_page_apply_the_same_relationship_rules(tmp_path: Path, row: str) -> None:
-    """The same relationship edit from either surface is accepted or rejected alike, with the same
-    message, and an accepted edit stores the same note edges."""
-    from stock_ontology.models import Edge
-    from stock_ontology.registry import load_registry
-    from stock_ontology.services.corrections import review_note_correction
-    from stock_ontology.services.errors import ServiceError
-
-    kind, edit = _SAME_RULES_ROWS[row]
-    registry = load_registry(SHIPPED_REGISTRY)
-
-    def run(surface: str) -> tuple[Any, ...]:
-        data_dir = tmp_path / surface
-        data_dir.mkdir()
-        path = data_dir / "note.md"
-        path.write_text("Source", encoding="utf-8")
-        content_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-        with OntologyDB(data_dir / "ontology.db", embedding_dim=DIM, registry=registry) as db:
-            for entity_id in ("company_a", "company_b", "company_c", "company_d"):
-                db.upsert_node(Node(id=entity_id, name=entity_id, node_type="entity", summary="",
-                                    facets={"entity_type": "company", "sector": "Industrials"}))
-            db.upsert_ingestion_log("note.md", "note", content_hash,
-                                    entity_ids=("company_a", "company_b", "company_c"))
-            db.upsert_edge(Edge(id="focus", from_id="company_a", to_id="company_b", relation="OWNS",
-                                facets={"basis": "extracted"}, source_doc_id="note"))
-            db.upsert_edge(Edge(id="second", from_id="company_a", to_id="company_c", relation="COMPETE",
-                                facets={"basis": "extracted"}, source_doc_id="note"))
-            pipeline = IngestionPipeline(db, FakePipelineLLM(), data_dir, registry=registry)
-            try:
-                if surface == "reader" and kind == "add":
-                    pipeline.add_note_relationship(path, edit["from_id"], edit["relation"], edit["to_id"],
-                                                   content_hash, facets=edit.get("facets"))
-                elif surface == "reader":
-                    pipeline.correct_note_relationship(path, edit["edge_id"], edit["relation"], False, content_hash,
-                                                       from_id=edit.get("from_id"), to_id=edit.get("to_id"))
-                else:
-                    changes = {key: value for key, value in edit.items() if key != "edge_id"}
-                    reviewed = review_note_correction(
-                        db, path, data_dir, kind="relationship_add" if kind == "add" else "relationship",
-                        record="company_a", edge_id=edit.get("edge_id", ""), changes=changes,
-                    )
-                    pipeline.apply_note_correction(path, reviewed)
-            except ServiceError as exc:
-                assert exc.key, f"{row}: the Ontology page needs a locale key to show this rejection"
-                return ("rejected", exc.message)
-            except ValueError as exc:
-                return ("rejected", str(exc))
-            return ("accepted", sorted(
-                (edge["from_id"], edge["to_id"], edge["relation"], sorted(edge["facets"].items()))
-                for edge in db.list_note_edges("note")
-            ))
-
-    reader, ontology = run("reader"), run("ontology")
-    assert reader[0] == ontology[0], f"{row}: note reader {reader}, Ontology page {ontology}"
-    assert reader == ontology, f"{row}: note reader {reader}, Ontology page {ontology}"

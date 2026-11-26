@@ -1522,3 +1522,4 @@ def test_job_tables_are_added_to_a_database_created_before_them(tmp_path: Path) 
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"jobs", "consensus_refresh", "nodes", "ingestion_log"} <= tables
+
