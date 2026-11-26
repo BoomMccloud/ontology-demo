@@ -1,8 +1,8 @@
 ---
 proposal_id: "retire-reader-relationship-jobs"
-state: FRAMED
+state: PROVED
 witness: independent
-candidate: "cef04a5 @ main"
+candidate: "d215310 @ branch retire-reader-relationship-jobs"
 ---
 
 # Proposal: Retire the legacy note-reader relationship jobs
@@ -93,9 +93,41 @@ Candidate: `cef04a5 @ main` (clean checkout)
 
 ## Proof
 
-<!-- Replaced only by proposal-prove, or by the orchestrator with the builder-route
-deferred-witness status. Reference native witness path, exact command, concise RED
-result, and candidate identity. -->
+Candidate: `e113c2e` (branch `retire-reader-relationship-jobs`), plus the test-only witness changes committed as `d215310`. RED was observed on that tree. No file under `src/` changed.
+
+**Protected witness**
+- Primary claim: the reader posts `{file, edge_id, changes, expected_hash}` to its existing URL and is judged and applied exactly as the Ontology page edit is. Owner: `tests/test_web_notes.py` / `test_note_reader_and_ontology_page_judge_a_relationship_correction_alike` (11 cases), via the builders `_edit`, `_add`, `_delete` and the new `_SOURCE_HASH`; plus `test_note_reader_and_ontology_page_judge_more_relationship_corrections_alike` via `_add_with_facets`.
+  - Defect and boundary: the reader routes accept only the flat `relation`/`from_id`/`to_id`/`reverse` models and send them through the `note.relationship*` adapter. Boundary: browser request to FastAPI route, then review, then a `note.ontology.correction` job run by the real worker on a temporary database.
+  - Assertion: the reader's `(phase, status, detail, graph)` equals the Ontology page's for every case. Proves the new shape reaches the same review and worker apply path with the same outcome. Limit: does not run `note_reader.js`, so it does not prove the browser builds this payload.
+- Primary claim, retired shape: `tests/test_web_notes.py` / `test_note_reader_refuses_the_retired_flat_relationship_payload` (cases `flat-edit`, `reverse-edit`, `flat-add`).
+  - Defect and boundary: the routes still accept the flat fields and `reverse`. Boundary: HTTP route to the job queue.
+  - Assertion: 422, the job queue unchanged after worker intake (`_queued_job_ids`), and the note graph unchanged. Proves nothing accepts the old flat payload or `reverse`. Limit: covers the edit and add URLs; the delete shape does not change.
+- Guardrail 1, leftover legacy job: `tests/test_web_notes.py` / `test_leftover_legacy_relationship_jobs_fail_as_unknown_kind`. It replaces `test_queued_legacy_relationship_jobs_are_judged_by_the_same_review`.
+  - Defect and boundary: the worker still has executors for the three kinds and applies them. Boundary: queued job row to worker claim to job status API and graph.
+  - Assertion: three `note.relationship*` jobs queued at priority 0 ahead of a valid `note.ontology.correction`. The valid job ends 200. Each legacy job ends `failed` with `error_code == "invalid"` and `error == "Unknown job kind: <kind>"`, and the graph shows only the valid correction. Proves a leftover job fails clearly, changes nothing, and does not stop the worker. Limit: the jobs are inserted with a literal priority, so it does not prove how the previous release prioritized them.
+- Guardrail 2, stale `expected_hash`: `tests/test_web_notes.py` / `test_note_reader_refuses_a_relationship_correction_for_an_older_revision` (cases `edit`, `add`, `delete`).
+  - Defect and boundary: the `expected_hash` check lives in the adapter that this change deletes, so it must survive the move into the route. Boundary: HTTP route to the job queue.
+  - Assertion: with the note unchanged and `expected_hash` set to `"0"*64`, the response is 409 with the `service_error.stale_source_note` message, and the queue and graph are unchanged. Limit: the behavior already holds today in the old shape. `edit` and `add` are RED only because the new shape gets 422, and `delete` passes today, so it is a regression guard, not proof.
+- Guardrail 3, `submit_correction` refuses `note.relationship*` as `invalid`: this already holds at `e113c2e`, because `JOB_KINDS` marks the kinds `retired`. The closing loop of `test_leftover_legacy_relationship_jobs_fail_as_unknown_kind` asserts it as a regression guard for when the entries leave `JOB_KINDS`. It is not counted as proof.
+- Protected paths: in `tests/test_web_notes.py`, the functions `test_note_reader_and_ontology_page_judge_a_relationship_correction_alike`, `test_note_reader_and_ontology_page_judge_more_relationship_corrections_alike`, `test_note_reader_refuses_the_retired_flat_relationship_payload`, `test_note_reader_refuses_a_relationship_correction_for_an_older_revision` and `test_leftover_legacy_relationship_jobs_fail_as_unknown_kind`, and the helpers `_SOURCE_HASH`, `_edit`, `_add`, `_delete`, `_add_with_facets`, `_queued_job_ids`, `_reader_judgement`, `_ontology_judgement`, `_judged`, `_run_job`, `_note_graph` and `_correction_workspace`. The rest of the file is open to Build for the supporting updates Frame lists.
+- Protected revision: `d215310` (`git diff --stat e113c2e d215310` gives `tests/test_web_notes.py`, 104 insertions and 37 deletions).
+
+**Red evidence**
+- `uv run pytest tests/test_web_notes.py -q -k "judge_a_relationship_correction_alike or judge_more_relationship or retired_flat or older_revision or leftover_legacy" -p no:cacheprovider` → `19 failed, 3 passed`. The orchestrator reproduced it on the same tree. Log: `/private/tmp/claude-502/-Users-jasonbxu--claude-spares-spare-5wagqH/1f55141b-79fc-4311-8dae-7b370704d3ed/scratchpad/prove-red.log`.
+  - `judge_a_relationship_correction_alike`: 9 of 11 fail, because the reader gets 422 `Field required` for the new payload while the Ontology page gets the expected result. The two delete cases pass, since that shape is unchanged.
+  - `judge_more_relationship_corrections_alike`: 4 of 4 fail with the same 422.
+  - `refuses_the_retired_flat_relationship_payload`: 3 of 3 fail with `assert 202 == 422`.
+  - `refuses_a_relationship_correction_for_an_older_revision`: `edit` and `add` fail with 422 instead of 409. `delete` passes.
+  - `leftover_legacy_relationship_jobs_fail_as_unknown_kind`: fails with 409 instead of 200, because the legacy `note.relationship.add` job ran and added `a BUY c`, and the valid correction then collided with it.
+  - Every failure is an assertion failure caused by the missing behavior. There are no import or setup errors.
+- The primary claim and Guardrail 1 have no proof until this command is observed RED, and it was. Guardrail 2 has only a shape-transition RED. Guardrail 3 has no RED because it already holds.
+
+**Supporting test plan**
+- Source check `rg -n "note\.relationship" src` returns nothing → Build: run it as a gate. Catches leftover kind names.
+- Worker startup check that `_executors` and `JOB_KINDS` agree → Build: `tests/test_worker.py`, dropping the retired rows from `_DECLARED_KINDS`. `test_every_declared_job_kind_has_a_good_and_a_bad_case` must pass with the shorter table. Catches drift between the two lists.
+- `tests/test_pipeline.py::_reader_correction` points at `review_note_correction`, and the `reverse` case is removed → Build: `tests/test_pipeline.py`. Catches imports of the deleted adapter.
+- The six `_legacy` cases are removed → Build: `tests/test_ontology_mutations.py`. Catches dependence on the deleted adapter.
+- `note_reader.js` builds `changes` → no automated owner. Audit records the browser payload as manually unverified.
 
 ## Build
 
