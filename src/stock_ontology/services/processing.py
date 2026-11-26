@@ -245,22 +245,26 @@ class ProcessingService:
 
     def read_spool(self, pattern: str = "*.json", *, quarantine: bool = False) -> list[Submission]:
         """Parsed submissions. Submissions are published by atomic rename, so one that does not
-        parse is corrupt, not half-written: skip it, and with `quarantine` (the worker's intake)
-        rename it to `.bad` so it stops matching `has_submissions`."""
+        parse, or cannot be read, is corrupt, not half-written: skip it, and with `quarantine` (the
+        worker's intake) rename it to `.bad` so it stops matching `has_submissions`. One removed
+        while being read is gone, not corrupt."""
         if not self.spool.is_dir():
             return []
         found: list[Submission] = []
         for path in sorted(self.spool.glob(pattern)):
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
-            except OSError:
+            except FileNotFoundError:
                 continue
-            except ValueError:
+            except (OSError, ValueError):
                 record = None
             if not isinstance(record, dict):
                 if quarantine:
                     logger.warning("Moving unreadable spool submission %s aside as .bad", path.name)
-                    path.replace(path.with_suffix(".bad"))
+                    try:
+                        path.replace(path.with_suffix(".bad"))
+                    except OSError:
+                        logger.exception("Could not move spool submission %s aside", path.name)
                 continue
             found.append(Submission(
                 path=path, op=record.get("op", ""), job_id=record.get("job_id", ""),

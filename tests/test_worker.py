@@ -1114,6 +1114,8 @@ def test_corrupt_spool_submission_is_moved_aside_so_the_idle_loop_stays_idle(
     service.spool.mkdir(parents=True)
     (service.spool / "00000000000000000001-enqueue-job_bad.json").write_text("{not json", encoding="utf-8")
     (service.spool / "00000000000000000002-enqueue-job_list.json").write_text("[1]", encoding="utf-8")
+    # Reading it raises OSError (IsADirectoryError), like a file the worker may not read.
+    (service.spool / "00000000000000000003-enqueue-job_unreadable.json").mkdir()
     assert service.has_submissions()
     assert service.read_spool() == [], "a reader skips corrupt submissions"
     assert service.has_submissions(), "only the worker's intake moves them aside"
@@ -1132,4 +1134,5 @@ def test_corrupt_spool_submission_is_moved_aside_so_the_idle_loop_stays_idle(
     assert not service.has_submissions()
     assert sorted(p.name for p in service.spool.iterdir()) == [
         "00000000000000000001-enqueue-job_bad.bad", "00000000000000000002-enqueue-job_list.bad",
+        "00000000000000000003-enqueue-job_unreadable.bad",
     ]
