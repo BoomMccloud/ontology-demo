@@ -1,6 +1,6 @@
 ---
 proposal_id: "node-typeahead"
-state: BUILT
+state: ACCEPTED
 witness: builder
 candidate: "df077e3 @ worktree/shared-editor-script-8b7869"
 ---
@@ -126,7 +126,31 @@ Candidate: `df077e3 @ worktree/shared-editor-script-8b7869` (branch claude/share
 
 ## Audit
 
-<!-- Cleared for the R1 re-audit; the outgoing REVISE verdict is under Revisions. -->
+Candidate: `df077e3 @ worktree/shared-editor-script-8b7869` (HEAD `b1e780d` changes only this ledger; `git diff --quiet df077e3 HEAD -- src tests README.md` confirmed)
+
+Independence: fresh-context. The auditor had seen only the orchestrator's brief, the audit skill, this ledger, and the diffs and tests it read. It did not build the candidate or see the R1 audit's working.
+
+R1 check: answered. `tests/test_web_ontology.py::test_search_route_is_bounded_and_add_buttons_need_an_addable_node` was appended and no product code changed.
+
+Primary-claim verdict: PROVED. Evidence: `test_editors_find_nodes_by_search_instead_of_loading_the_graph`, `tests/test_db.py::test_search_nodes_by_name_matches_names_and_aliases_within_types`, and the narrowed `test_note_reader_and_ontology_record_share_one_relationship_editor` all fail on a detached `2ce9522` worktree (4 failed, the R1 test included) and pass on the candidate. `_note_extraction` and `build_registry_edit_context` call `get_nodes` on the shown ids only. Limit: no test runs browser JavaScript. `editor.js` was judged by reading, plus Build's manual browser check.
+
+Guardrail verdicts:
+- Existing correction action tests stay green unchanged: PROVED. Evidence: `git diff 2ce9522 df077e3 -- tests` removes only the listed node-set assertion. `tests/test_web_notes.py` is untouched. The suite passes. Limit: payloads are guarded only as far as those tests assert.
+- "Add entity" and "Add relationship" appear exactly when something can be added: PROVED. Evidence: the R1 test covers present, entity-absent, and both-absent cases. Mutations `>=`, `> 0`, and `bool(relations)` each made it fail. Limit: the relationship flag counts any two nodes, which matches the pre-change rule.
+- Search route read-only and bounded: PROVED. Evidence: 25 prefix matches return exactly 20. Route limits of 21 and 1000 each fail the test. The route uses the read-only `shell.open_db` handle and only SELECTs. Limit: the bound is enforced at the route, not in `search_nodes_by_name`.
+
+Scope and duty verdict: scope HELD; duties HELD. Evidence: R1 touched only the test file. Changed files are those in Frame's Include list plus the locale keys and README that Build discloses. Excluded paths are untouched. The README "Web UI Constraints" entry has Why and Guarded by, and both named tests exist. Limit: "relations offered by type even when no target-type node exists" is disclosed but untested.
+
+Test homes: `tests/test_db.py` holds the storage search method test. `tests/test_web_ontology.py` holds the view and route witnesses, beside the shared-editor tests that Frame named as owner.
+
+Full gates: PASS. `uv run pytest -q`: 557 passed. `uv run ruff check src tests`: clean. Limit: no browser or JS gate.
+
+Residual risks:
+- No automated witness covers the JS typeahead (debounce, stale responses, anchor-fixed target, review-diff label for a searched endpoint). Add-mode exclusion and the review-diff label were not exercised even manually.
+- Alias matching uses LIKE over raw `aliases_json`, so a query with JSON punctuation could match across alias boundaries. This is unlikely.
+
+Recommendation: ACCEPT
+Packet: none. Merge and deploy stay human-owned, together with the stacked `shared-editor-script` change.
 
 ## Revisions
 
@@ -137,4 +161,4 @@ move Frame, Proof, Build or Audit history into it. Empty until the first REVISE.
 ### R1 — 2026-11-26 — add-button and search-bound guardrails unproved
 - Verdict: REVISE. Two guardrails had no negative witness: "Add entity" and "Add relationship" were asserted present but never absent, and no test showed the route caps results at 20. Primary claim PROVED, scope and duties HELD, gates PASS (556 passed, ruff clean) on `3fc4fb2`.
 - Changed: `tests/test_web_ontology.py::test_search_route_is_bounded_and_add_buttons_need_an_addable_node` seeds 25 matches and asserts 20 come back. It also asserts "Add entity" is absent when the note holds every entity, and "Add relationship" is absent with one node. RED was shown by mutating the route limit and each flag. No product code changed.
-- Re-audit: pending; candidate `df077e3 @ worktree/shared-editor-script-8b7869`
+- Re-audit: ACCEPT. Both guardrails PROVED by the new test and mutations, 557 passed; candidate `df077e3 @ worktree/shared-editor-script-8b7869`
