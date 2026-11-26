@@ -1,8 +1,8 @@
 ---
 proposal_id: "node-typeahead"
-state: FRAMED
+state: BUILT
 witness: builder
-candidate: "a6d6b58 @ worktree/shared-editor-script-8b7869"
+candidate: "3fc4fb2 @ worktree/shared-editor-script-8b7869"
 ---
 
 # Proposal: Typeahead instead of the whole graph in edit pages
@@ -92,8 +92,36 @@ Builder route: the decisive witness is deferred to Build. The builder authors th
 
 ## Build
 
-<!-- Replaced only by proposal-build. Reference changed paths, protected witnesses,
-exact GREEN command(s), concise result, candidate identity, and deviations. -->
+Candidate: `3fc4fb2 @ worktree/shared-editor-script-8b7869` (branch claude/shared-editor-script-8b7869; code in `2b51b29`, README entry in `3fc4fb2`)
+
+### Changed paths
+- `src/stock_ontology/db/storage.py` — `OntologyDB.search_nodes_by_name(query, *, types=(), limit=20)`: case-insensitive name-or-alias substring, LIKE wildcards escaped, `node_type` / `entity:<subtype>` filters, names starting with the query first, then by name.
+- `src/stock_ontology/web/app.py` — `GET /api/nodes/search?q=&type=...` returns up to 20 `editor_node` entries from the read-only DB handle.
+- `src/stock_ontology/web/shared.py` — `editor_node(node, lang)` (id, "name (type)" label, endpoint type) shared by the route and `relationship_editor_model`; the model gains a `search` placeholder.
+- `src/stock_ontology/web/notes/views.py` — `_note_extraction` no longer calls `list_all_nodes` or unbounded `list_nodes`; it passes the note's entities and edge endpoints (`get_nodes`) to the model and sets `can_add_entity` / `can_add_relationship` from `get_stats` counts. `NoteExtraction.choices` is gone.
+- `src/stock_ontology/web/ontology/views.py` — the record's model holds the anchor and listed edge endpoints (`get_nodes`) instead of `list_all_nodes`.
+- `src/stock_ontology/web/static/editor.js` — `nodeChoices` became `nodePicker`: a search box before the existing `<select>`, debounced 200 ms, stale responses dropped, first match selected and `change` dispatched, template options such as `__new__` kept. `relationshipEditor` filters relations by the chosen node's type; with an anchor, a non-anchor source fixes the target to the anchor.
+- `src/stock_ontology/web/static/note_reader.js` — the entity select uses `nodePicker` (adding excludes the note's entities); editors focus the search box. `static/ontology_edit.js` — the review diff labels a searched node from its option text.
+- `src/stock_ontology/web/templates/partials/note_reader.html` — no per-entity `<option>` loop; `data-note-entity-ids` and `data-search-label` added; add buttons use the new flags.
+- `src/stock_ontology/locales/{en,fr,es,ja,ko,zh}.json` — `note_reader.search_node`.
+- `README.md` "Web UI Constraints" — new entry for the rule, with Why and Guarded by.
+- Tests: `tests/test_db.py::test_search_nodes_by_name_matches_names_and_aliases_within_types`, `tests/test_web_ontology.py::test_editors_find_nodes_by_search_instead_of_loading_the_graph` (new); `tests/test_web_ontology.py::test_note_reader_and_ontology_record_share_one_relationship_editor` (node-set assertion narrowed, as listed under Frame's Invariants changed).
+
+### Protected witnesses
+- None independently authored (builder route). Existing note-reader and Ontology action tests were not edited.
+
+### Evidence
+- RED: the new and changed tests copied onto a detached `2ce9522` worktree, `uv run pytest -q tests/test_db.py tests/test_web_ontology.py -k "search_nodes_by_name or search_instead or share_one"` — 3 failed.
+- GREEN on `2b51b29`: `uv run pytest -q` — 556 passed; `uv run ruff check src tests` — clean. `3fc4fb2` changes only `README.md`.
+- Manual browser check (built-in browser, scratch fixture app with a worker thread, minimal registry, three entities, one note, one edge):
+  - Note reader relationship add: the model held only the note's two nodes. Typing "rob" found the person. Relations were offered by type. Typing "t" in the target found TSMC, and the source was excluded from its own target search. Submitting posted `/api/notes/relationship/add` and reloaded with the new row.
+  - Note reader entity relink: typing "n" listed matches after the kept "create entity" option, and choosing it showed the new-entity fields.
+  - Ontology people record: the add form defaulted the source to the anchor, and a target search found TSMC. A non-anchor source (NVIDIA) offered no relation and disabled the target search. An edge edit went through preview and confirm and reloaded with the change.
+  - Not exercised in the browser: add-mode exclusion of the note's entities (the fixture note already held every entity), and the review diff label for a searched endpoint (checked by reading the code only).
+
+### Deviations
+- `src/stock_ontology/locales/*.json` (one new key in each of six catalogs) and `README.md` are outside Frame's Include list. The search box needs a translated label, and the README entry is the constraint-capture duty for the rule this change sets.
+- Relations are now offered by endpoint type even when no node of the target type exists yet. Before, the full node list let the editor hide them. The target search then finds nothing.
 
 ## Audit
 
