@@ -47,6 +47,7 @@ from stock_ontology.services import (
     ServiceError,
     job_priority,
 )
+from stock_ontology.services.processing import JOB_KINDS, SCAN_PRIORITY
 from stock_ontology.services.notes import has_changes
 from stock_ontology.services.corrections import (
     READER_RELATIONSHIP_KINDS,
@@ -251,6 +252,20 @@ class Worker:
         self._llm: Any = None
         self._queue_db: OntologyDB | None = None
         self._sessions = 0
+        correction = self._run_correction
+        self._executors: dict[str, Callable[[OntologyDB, Job], dict[str, Any] | None]] = {
+            "process": self._run_process,
+            **dict.fromkeys(("note.relink", "note.entity.add", "note.entity.delete"), correction),
+            **dict.fromkeys(("note.ontology.correction", *READER_RELATIONSHIP_KINDS), self._run_ontology_correction),
+            "ingest": self._run_ingest,
+            "reembed": self._run_reembed,
+            "repair": self._run_rollout,
+            "registry.apply": self._run_rollout,
+            "registry.apply.preview": self._run_apply_preview,
+            "registry.publish": self._run_publish,
+        }
+        if mismatched := sorted(set(self._executors) ^ set(JOB_KINDS)):
+            raise ValueError(f"Job kinds and worker executors disagree: {', '.join(mismatched)}")  # noqa: TRY003
 
     # --- connections and the queue
 
@@ -306,12 +321,15 @@ class Worker:
         moved = 0
         for submission in self.processing.read_spool(quarantine=True):
             if submission.op == "enqueue":
-                db.jobs.insert(
-                    job_id=submission.job_id, kind=submission.kind, target=submission.target,
-                    revision=submission.revision, priority=job_priority(submission.kind),
-                    payload=submission.payload or {}, created_at=submission.created_at or self.clock().isoformat(),
-                    now=self.clock(),
-                )
+                job = {
+                    "job_id": submission.job_id, "kind": submission.kind, "target": submission.target,
+                    "revision": submission.revision, "payload": submission.payload or {},
+                    "created_at": submission.created_at or self.clock().isoformat(), "now": self.clock(),
+                }
+                if submission.kind in JOB_KINDS:
+                    db.jobs.insert(**job, priority=job_priority(submission.kind))
+                else:
+                    db.jobs.insert_refused(**job, code="invalid", error=f"Unknown job kind: {submission.kind}")
             elif submission.op == "retry":
                 db.jobs.reopen(submission.job_id, self.clock())
             submission.path.unlink(missing_ok=True)
@@ -377,7 +395,7 @@ class Worker:
             now = self.clock()
             db.jobs.insert(
                 job_id=f"job_scan_{now.strftime('%Y%m%dT%H%M%S%f')}", kind="ingest", target="", revision="",
-                priority=job_priority("scan"), payload={"scan": True}, created_at=now.isoformat(), now=now,
+                priority=SCAN_PRIORITY, payload={"scan": True}, created_at=now.isoformat(), now=now,
             )
             return True
 
@@ -438,26 +456,18 @@ class Worker:
 
     def _run(self, db: OntologyDB, job: Job) -> dict[str, Any] | None:
         """Run one attempt. Returns the result to record, or None when the executor finished the job."""
-        if job.kind == "process":
-            return self._run_process(db, job)
-        if job.kind.startswith("note."):
-            return self._run_correction(db, job)
-        if job.kind == "ingest":
-            return self._run_ingest(db, job)
-        if job.kind == "reembed":
-            return self._run_reembed(db, job)
-        if job.kind in ("repair", "registry.apply"):
-            return self._run_rollout(db, job)
-        if job.kind == "registry.apply.preview":
-            target = load_registry(self.settings.registry_path)
-            plan = plan_rollout(self.settings, target, adoption=True, browser_record=True)
-            return {
-                "confirmation": job.payload["confirmation"], "diff": (plan.record_diff or [])[:100],
-                "version": target.version, "_plan": plan.job_payload(self.settings, adoption=True),
-            }
-        if job.kind == "registry.publish":
-            return self._run_publish(db, job)
-        raise ServiceError("invalid", f"Unknown job kind: {job.kind}")
+        executor = self._executors.get(job.kind)
+        if executor is None:
+            raise ServiceError("invalid", f"Unknown job kind: {job.kind}")
+        return executor(db, job)
+
+    def _run_apply_preview(self, db: OntologyDB, job: Job) -> dict[str, Any]:
+        target = load_registry(self.settings.registry_path)
+        plan = plan_rollout(self.settings, target, adoption=True, browser_record=True)
+        return {
+            "confirmation": job.payload["confirmation"], "diff": (plan.record_diff or [])[:100],
+            "version": target.version, "_plan": plan.job_payload(self.settings, adoption=True),
+        }
 
     # --- graph jobs
 
@@ -538,8 +548,6 @@ class Worker:
         params = job.payload
         path = NotesService(self.settings, self.processing).resolve(job.target).resolve()
         pipeline = self._pipeline(db, job)
-        if job.kind == "note.ontology.correction" or job.kind in READER_RELATIONSHIP_KINDS:
-            return self._run_ontology_correction(db, job, pipeline, path)
         if job.stage == "write":
             expected = params.get("expected_hash")
             if job.kind == "note.relink":
@@ -556,9 +564,9 @@ class Worker:
         updated = self._finish_consensus(db, pipeline, job)
         return {"file": job.target, "consensus_updated_for": updated}
 
-    def _run_ontology_correction(
-        self, db: OntologyDB, job: Job, pipeline: IngestionPipeline, path: Path,
-    ) -> dict[str, Any]:
+    def _run_ontology_correction(self, db: OntologyDB, job: Job) -> dict[str, Any]:
+        path = NotesService(self.settings, self.processing).resolve(job.target).resolve()
+        pipeline = self._pipeline(db, job)
         reviewed = job.payload
         if job.stage == "write":
             with db.transaction(immediate=True):

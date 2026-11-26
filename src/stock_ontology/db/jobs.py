@@ -153,6 +153,21 @@ class JobStore:
             )
             return cur.rowcount == 1
 
+    def insert_refused(
+        self, *, job_id: str, kind: str, target: str, revision: str, payload: dict[str, Any],
+        created_at: str, code: str, error: str, now: datetime,
+    ) -> bool:
+        """Record a submission the worker will not run as already failed, so its status explains why."""
+        with self._transaction():
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO jobs (job_id, kind, target, revision, priority, state, next_attempt_at, "
+                "payload_json, error_code, error, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 0, 'failed', ?, ?, ?, ?, ?, ?)",
+                (job_id, kind, target, revision, now.isoformat(), json.dumps(payload), code, error,
+                 created_at, now.isoformat()),
+            )
+            return cur.rowcount == 1
+
     def reopen(self, job_id: str, now: datetime) -> bool:
         """An explicit retry: a failed job is queued again with a fresh attempt budget."""
         with self._transaction():

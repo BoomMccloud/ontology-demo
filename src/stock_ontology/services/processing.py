@@ -32,24 +32,43 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = 60
 
-CORRECTION_KINDS = frozenset({
-    "note.relink", "note.entity.add", "note.entity.delete", "note.ontology.correction",
-})
-# Note-reader relationship corrections are now reviewed at submit and queued as
-# `note.ontology.correction`. Jobs of these kinds queued before that still run, first.
-RETIRED_CORRECTION_KINDS = frozenset({"note.relationship", "note.relationship.add", "note.relationship.delete"})
-OPERATOR_KINDS = frozenset({"ingest", "reembed", "repair", "registry.publish", "registry.apply",
-                           "registry.apply.preview"})
+@dataclass(frozen=True)
+class JobKind:
+    """How one job kind is queued: its claim `priority` (lower runs first) and who may `submit` it:
+    `correction` (the note reader and Ontology page), `operator` (CLI and registry actions),
+    `process` (note extraction), or `retired` (no longer submitted; already-queued jobs still run)."""
+
+    priority: int
+    submit: str
+
+
 PROCESS_KIND = "process"
+# The one table of job kinds. The worker keys its executors by it and refuses to start when they
+# disagree; a submission or spooled job of a kind not listed here is refused as `invalid`.
+JOB_KINDS: dict[str, JobKind] = {
+    **{kind: JobKind(0, "correction") for kind in (
+        "note.relink", "note.entity.add", "note.entity.delete", "note.ontology.correction",
+    )},
+    # Note-reader relationship corrections are now reviewed at submit and queued as
+    # `note.ontology.correction`. Jobs of these kinds queued before that still run, first.
+    **{kind: JobKind(0, "retired") for kind in ("note.relationship", "note.relationship.add", "note.relationship.delete")},
+    **{kind: JobKind(10, "operator") for kind in (
+        "ingest", "reembed", "repair", "registry.publish", "registry.apply", "registry.apply.preview",
+    )},
+    PROCESS_KIND: JobKind(20, "process"),
+}
+# A notes scan is an `ingest` job queued by the worker itself, after note extraction.
+SCAN_PRIORITY = 20
 
 
 def job_priority(kind: str) -> int:
     """Lower runs first: reader corrections, then operator commands, then note extraction."""
-    if kind in CORRECTION_KINDS or kind in RETIRED_CORRECTION_KINDS:
-        return 0
-    if kind in OPERATOR_KINDS:
-        return 10
-    return 20
+    return JOB_KINDS[kind].priority
+
+
+def _declared(kind: str, submit: str) -> bool:
+    entry = JOB_KINDS.get(kind)
+    return entry is not None and entry.submit == submit
 
 
 def spool_dir(db_path: Path | str) -> Path:
@@ -128,6 +147,8 @@ class ProcessingService:
 
     def request_processing(self, file: str) -> JobRef:
         """Queue extraction and consensus for the note's current revision, reopening it if it failed."""
+        if not _declared(PROCESS_KIND, "process"):
+            raise ServiceError("invalid", f"Unknown job kind: {PROCESS_KIND}")
         revision = self._note_revision(file)
         job_id = process_job_id(file, revision)
         existing = self._find(job_id)
@@ -140,7 +161,7 @@ class ProcessingService:
 
     def submit_correction(self, kind: str, file: str, params: dict[str, Any]) -> JobRef:
         """Queue a note-reader correction; the worker checks the note revision at commit."""
-        if kind not in CORRECTION_KINDS:
+        if not _declared(kind, "correction"):
             raise ServiceError("invalid", f"Unknown correction: {kind}")
         self._note_revision(file)
         return self._submit(
@@ -148,7 +169,7 @@ class ProcessingService:
         )
 
     def submit_operator(self, kind: str, params: dict[str, Any]) -> JobRef:
-        if kind not in OPERATOR_KINDS:
+        if not _declared(kind, "operator"):
             raise ServiceError("invalid", f"Unknown operator job: {kind}")
         return self._submit(f"job_{uuid.uuid4().hex}", kind, "", "", params)
 
