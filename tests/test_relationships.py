@@ -415,7 +415,7 @@ def test_read_side_consolidation_and_natural_ux_labels(tmp_path: Path) -> None:
     first_tbody = tbodies[0]
     assert first_tbody.count("Vertiv") == 1
     assert first_tbody.count("NVIDIA") == 1
-    assert "Exposed Companies" in r_theme.text
+    assert "Mentioned in Notes" in r_theme.text
     assert "positive" in first_tbody.lower()
     assert "BENEFITS_FROM" not in first_tbody
 

@@ -27,13 +27,19 @@ search bar.
   `resolve_result_href`, and `format_source_citation` (with the note title
   extraction it needs).
 - `src/stock_ontology/web/research/`: `/`, `/companies`, `/themes`,
-  `/entity/{id}`, `/theme/{id}`. `views.py` turns graph results into template
+  `/entity/{id}`, `/theme/{id}`, `/thesis/{id}`, and `POST /api/claims`. `views.py` turns graph results into template
   contexts. The entity page context holds only frozen presentation models
   (`EntityHeader`, `ConsensusSummary`, `EventRow`, `ViewRow`, `ThemeLinkRow`,
   `RelatedEntityRow`, and so on) and prepared label/value pairs, so its
   templates never read `facets`. The theme page context does the same with
   `ThemeHeader`, `ThemeCompanyRow` (with its `ExposureNote`s and
-  `ThemeEvidenceItem`s), `EventRow` and `ViewRow`.
+  `ThemeEvidenceItem`s), `EventRow` and `ViewRow`. The theme page also lists
+  the theme's theses (`ThesisLinkRow`) and titles its stated-exposure list
+  "Mentioned in Notes"; a row no thesis covers is marked a suggested candidate
+  (`ThemeCompanyRow.suggested`). The thesis page (`build_thesis_context`,
+  `thesis.html`) holds `ThesisHeader`, `ThesisMembershipRow`s with their
+  `CatalystRow`, and the membership form's `CompanyOption`s. The company page
+  lists its memberships as `CompanyThesisRow`s.
 - `src/stock_ontology/web/search/`: `/search`. `build_search_results` shapes the
   shared search ([search.md](search.md)) into the search page's best-match card
   and sections; `build_search_filter_options` builds the filter choices and
@@ -67,7 +73,7 @@ search bar.
 
 ## Routes
 
-Pages: `/`, `/companies`, `/themes`, `/entity/{id}`, `/theme/{id}`, `/search`,
+Pages: `/`, `/companies`, `/themes`, `/entity/{id}`, `/theme/{id}`, `/thesis/{id}`, `/search`,
 `/catalog`, `/notes/new`, `/ontology`. `/ask` redirects to `/` with the Clippy
 dock open and the page context carried. The Clippy dock is on every page.
 
@@ -86,6 +92,14 @@ polls it until the job succeeds, fails, or is waiting to retry. `serve` enables
 these routes (`note_actions=True`). Corrections update the selected note's
 links in the shared graph. These writes use the local demo's
 shared account and require an access control layer before non-local hosting.
+
+The theme and thesis pages add, edit, and remove theses and thesis
+memberships. `claims.js` posts JSON `{kind, params}` to `POST /api/claims`,
+which submits it through `ProcessingService.submit_claim` and returns 202
+`{"job_id", "state"}` (422 for a refused write, 503 without note actions), then
+polls `/api/jobs/{job_id}`. The forms render only when note actions are enabled.
+A suggested candidate on the theme page links to each thesis page with the
+company preselected (`/thesis/{id}?company=<id>`).
 
 `/ontology` can review source-backed person or relationship edits when note
 actions are enabled. Its correction endpoints bind the selected processed

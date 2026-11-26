@@ -454,7 +454,7 @@ def test_theme_page_templates_only_see_presentation_models(tmp_path: Path) -> No
     assert page.status_code == 200
     text = page.text
     assert '<span class="badge badge-accelerating">STAGE: accelerating</span>' in text
-    first = text.split('aria-label="Exposed Companies"', 1)[1].split("</section>", 1)[0]
+    first = text.split('aria-label="Mentioned in Notes"', 1)[1].split("</section>", 1)[0]
     assert '<a href="/entity/ent_tsmc"><strong>TSMC</strong></a>' in first
     assert '<span class="mono">(TSM)</span>' in first
     assert '<span class="badge badge-positive">positive</span>' in first

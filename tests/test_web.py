@@ -109,7 +109,7 @@ def test_web_home_entity_theme_search_and_clippy_chat(tmp_path: Path) -> None:
     # 4. Theme page: companies tied to the theme only.
     r_theme = client.get("/theme/thm_power")
     assert r_theme.status_code == 200
-    assert "Exposed Companies" in r_theme.text
+    assert "Mentioned in Notes" in r_theme.text
     assert "2nd-Order" not in r_theme.text
     assert "NVIDIA" in r_theme.text
     assert "TSMC" not in r_theme.text  # a supplier of an affected company, not listed

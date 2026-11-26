@@ -136,6 +136,53 @@ def init_schema(conn: sqlite3.Connection, embedding_dim: int) -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_node_lookup_key_type ON node_lookup(key, node_type);
             CREATE INDEX IF NOT EXISTS idx_node_lookup_node ON node_lookup(node_id);
+
+            -- The claim graph: the team's theses and thesis memberships. These rows sit outside
+            -- the ontology. They point into it by node ID, and no ontology table refers to them.
+            -- Only claim jobs write them. A referenced node can't be deleted while a claim points
+            -- at it; `merge_node_into` repoints claims to the survivor first.
+            CREATE TABLE IF NOT EXISTS claim_theses (
+                id TEXT PRIMARY KEY,
+                theme_id TEXT NOT NULL REFERENCES nodes(id),
+                statement TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_claim_theses_theme ON claim_theses(theme_id);
+
+            CREATE TABLE IF NOT EXISTS claim_memberships (
+                id TEXT PRIMARY KEY,
+                thesis_id TEXT NOT NULL REFERENCES claim_theses(id) ON DELETE CASCADE,
+                company_id TEXT NOT NULL REFERENCES nodes(id),
+                status TEXT NOT NULL CHECK(status IN ('in', 'candidate')),
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (thesis_id, company_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_claim_memberships_company ON claim_memberships(company_id);
+
+            CREATE TABLE IF NOT EXISTS claim_catalysts (
+                id TEXT PRIMARY KEY,
+                membership_id TEXT NOT NULL REFERENCES claim_memberships(id) ON DELETE CASCADE,
+                event TEXT NOT NULL,
+                by_date TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_claim_catalysts_membership ON claim_catalysts(membership_id);
+
+            -- One or more per catalyst. `direction` is what the catalyst would do to the
+            -- membership: move a candidate in (`entry`) or take a member out (`exit`).
+            CREATE TABLE IF NOT EXISTS claim_predictions (
+                id TEXT PRIMARY KEY,
+                catalyst_id TEXT NOT NULL REFERENCES claim_catalysts(id) ON DELETE CASCADE,
+                direction TEXT NOT NULL CHECK(direction IN ('entry', 'exit')),
+                expected_effect TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_claim_predictions_catalyst ON claim_predictions(catalyst_id);
             """
         )
         _add_missing_columns(conn)

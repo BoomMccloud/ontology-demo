@@ -20,6 +20,7 @@ from typing import Any
 
 import sqlite_vec
 
+from stock_ontology.db.claims import ClaimStore
 from stock_ontology.db.jobs import JobStore
 from stock_ontology.db.schema import (
     init_schema,
@@ -154,6 +155,11 @@ class OntologyDB:
     def jobs(self) -> JobStore:
         """Job and consensus-refresh rows on this connection (written only by the worker)."""
         return JobStore(self.conn, self.transaction)
+
+    @property
+    def claims(self) -> ClaimStore:
+        """Claim graph rows on this connection (written only by the worker's claim jobs)."""
+        return ClaimStore(self.conn, self.transaction)
 
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[None]:
@@ -552,12 +558,13 @@ class OntologyDB:
             )
 
     def merge_node_into(self, loser_id: str, survivor_id: str) -> int:
-        """Repoint the loser's edges to the survivor, then delete the loser and its vector.
+        """Repoint the loser's edges and claims to the survivor, then delete the loser and its vector.
 
         Self-loops on the survivor created by the repoint are dropped; returns how many. Copying the loser's
         names and facets onto the survivor is the caller's job (`upsert_node`).
         """
         with self.transaction():
+            self.claims.repoint_node(loser_id, survivor_id)
             self.conn.execute(
                 "INSERT OR IGNORE INTO note_entities (doc_id, entity_id) "
                 "SELECT doc_id, ? FROM note_entities WHERE entity_id = ?",

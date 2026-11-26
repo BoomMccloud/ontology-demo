@@ -52,6 +52,35 @@
   {% endif %}
 {% endmacro %}
 
+<div data-claim-forms data-busy-label="{{ t('thesis.saving') }}" data-queued-label="{{ t('thesis.queued') }}" data-failed-label="{{ t('thesis.failed') }}">
+<section id="sec-theses" class="section-block" aria-label="{{ t('theme.theses') }}">
+  <h2>{{ t('theme.theses') }} ({{ theses | length }})</h2>
+  {% if theses %}
+    <ul class="portal-list">
+      {% for thesis in theses %}
+        <li>
+          <a href="/thesis/{{ thesis.id }}"><strong>{{ thesis.statement }}</strong></a>
+          <span class="source-cite">{{ t('theme.thesis_counts', members=thesis.member_count, candidates=thesis.candidate_count) }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>{{ t('theme.theses_empty') }}</p>
+  {% endif %}
+  {% if claim_actions %}
+    <details class="u-mt-10px">
+      <summary class="u-cursor-pointer">{{ t('thesis.add') }}</summary>
+      <form class="note-form u-mt-10px" data-claim-kind="claim.thesis.add" data-claim-open-thesis>
+        <input type="hidden" name="theme_id" value="{{ theme.id }}">
+        <label for="new-thesis-statement">{{ t('thesis.statement') }}</label>
+        <textarea id="new-thesis-statement" name="statement" rows="2" required></textarea>
+        <button type="submit" class="retro-btn">{{ t('thesis.add') }}</button>
+      </form>
+    </details>
+  {% endif %}
+</section>
+</div>
+
 {% if exposed_companies %}
 <section class="section-block" aria-label="{{ t('theme.exposed_companies') }}">
   <h2>{{ t('theme.exposed_companies') }} ({{ exposed_companies | length }})</h2>
@@ -61,6 +90,7 @@
         <th>{{ t('theme.col_company') }}</th>
         <th>{{ t('theme.col_exposure') }}</th>
         <th>{{ t('theme.col_evidence') }}</th>
+        <th>{{ t('theme.col_thesis') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -92,6 +122,27 @@
             {% endif %}
           </td>
           <td>{{ evidence_cell(row) }}</td>
+          <td>
+            {% if row.suggested %}
+              <span class="badge badge-warn">{{ t('theme.suggested_candidate') }}</span>
+              {% if claim_actions %}
+                {% if theses %}
+                  <details class="u-mt-10px">
+                    <summary class="u-cursor-pointer">{{ t('theme.add_to_thesis') }}</summary>
+                    <ul class="u-m-6px-0-0 u-pl-18px">
+                      {% for thesis in theses %}
+                        <li><a href="/thesis/{{ thesis.id }}?company={{ row.company.id | urlencode }}#add-company">{{ thesis.statement }}</a></li>
+                      {% endfor %}
+                    </ul>
+                  </details>
+                {% else %}
+                  <div class="entry-meta">{{ t('theme.add_thesis_first') }}</div>
+                {% endif %}
+              {% endif %}
+            {% else %}
+              {{ t('theme.in_a_thesis') }}
+            {% endif %}
+          </td>
         </tr>
       {% endfor %}
     </tbody>
@@ -134,4 +185,8 @@
 <p class="portal-more-link">
   <a href="/ask?context={{ page_context | urlencode }}" data-clippy-context="{{ page_context }}">{{ t('ask.link_from_theme', name=theme.name) }}</a>
 </p>
+{% endblock %}
+
+{% block scripts %}
+{% if claim_actions %}<script src="/static/claims.js"></script>{% endif %}
 {% endblock %}

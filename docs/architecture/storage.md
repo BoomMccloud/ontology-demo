@@ -9,6 +9,8 @@ Persistence for the ontology in one SQLite file (`ontology.db`) with the
   `stock_ontology.db`, never from the submodules.
 - `src/stock_ontology/db/schema.py` is the schema layer.
 - `src/stock_ontology/db/storage.py` is the storage layer.
+- `src/stock_ontology/db/jobs.py` and `src/stock_ontology/db/claims.py` hold the
+  job and claim row stores that `OntologyDB` exposes as `jobs` and `claims`.
 
 ## Schema layer (`db/schema.py`)
 
@@ -26,7 +28,15 @@ Pure definitions. Nothing here opens a connection.
   whose relation the registry does not map, or whose endpoints it does not allow: from_id, to_id, the raw relation,
   facets, source_doc_id, created_at; rows cascade when an endpoint node is
   deleted; `merge_node_into` repoints them to the survivor and drops self-loops). It then adds columns that shipped
-  later, listed in `_ADDED_COLUMNS`. `ingestion_log.entities_recorded`
+  later, listed in `_ADDED_COLUMNS`. It also creates the claim tables, which
+  sit outside the ontology: `claim_theses` (a thesis statement anchored to a
+  theme node), `claim_memberships` (one per company and thesis: status `in` or
+  `candidate` and a reason), `claim_catalysts` (the event a membership waits
+  for and its by-date), and `claim_predictions` (one or more per catalyst:
+  `entry` or `exit` and the expected effect). Claim rows point at `nodes` by ID
+  and no ontology table refers to them. Only the worker's claim jobs write
+  them; ingestion and repair never read them, except that `merge_node_into`
+  repoints them. A node a claim points at can't be deleted. `ingestion_log.entities_recorded`
   distinguishes a complete but empty membership from an older unknown one. It
   is idempotent, so old databases upgrade on open.
 - `row_to_node`, `row_to_edge`, `node_to_dict` map between SQLite rows and the
@@ -51,6 +61,17 @@ table, a new facet merge rule. A column added to an existing table goes in
   seconds for the write lock (`busy_timeout`). A write transaction on a
   connection opened before the applied registry changed raises
   `RegistryChangedError` (a `FacetSchemaError`); reopen and retry.
+- Claims: `OntologyDB.claims` is a `ClaimStore` (`db/claims.py`) on the same
+  connection. Writes (`add_thesis`, `edit_thesis`, `remove_thesis`,
+  `add_membership`, `edit_membership`, `remove_membership`) run only in the
+  worker's claim jobs. A candidate membership and its entry catalyst and
+  prediction commit in one transaction. Removing a thesis or membership
+  cascades to its catalysts and predictions. Reads (`get_thesis`,
+  `list_theses`, `get_membership`, `list_memberships`, `company_memberships`,
+  `covered_company_ids`) work on read-only and older databases.
+  `merge_node_into` calls `repoint_node`, which moves theses and memberships to
+  the survivor; when the survivor already has a membership in the same thesis,
+  it keeps its own and takes the loser's catalysts.
 - Jobs: `OntologyDB.jobs` is a `JobStore` (`db/jobs.py`) on the same
   connection, so job state commits with the graph writes it describes.
   `claim(now, lease_seconds)` takes the most urgent due job or reclaims one
@@ -82,8 +103,8 @@ table, a new facet merge rule. A column added to an existing table goes in
   `delete_document_artifacts` (also clears that note's pending edges),
   `relink_document`, `replace_node_embeddings`,
   `rebuild_node_lookup`, the `ingestion_log` methods, and `set_metadata`.
-- Repair writes: `update_edge` (also normalizes the relation), `merge_node_into` (returns the self-loops it
-  dropped), `delete_edges`, `delete_pending_edges`, plus the
+- Repair writes: `update_edge` (also normalizes the relation), `merge_node_into` (also repoints claims; returns the
+  self-loops it dropped), `delete_edges`, `delete_pending_edges`, plus the
   `list_artifact_doc_ids` (pending edges included) and `count_document_artifacts` lookups.
 - Lookups: `get_node`, `get_nodes`, `find_by_name_or_alias`,
   `find_nodes_mentioned_in`, `list_nodes`, `list_all_nodes`,
@@ -121,4 +142,5 @@ enforces that.
 
 ## Tests
 
-`tests/test_db.py`, plus `tests/test_relationships.py` for the graph queries.
+`tests/test_db.py`, plus `tests/test_relationships.py` for the graph queries and
+`tests/test_claims.py` for claim writes end to end.

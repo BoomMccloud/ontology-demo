@@ -695,6 +695,65 @@ def _previewed_linked_record(ws: Workspace, status: dict[str, Any]) -> None:
     assert nvidia is not None and nvidia.facets["sector"] == "Semiconductors", "the preview wrote the live graph"
 
 
+# --- claim graph writes (proposal theme-catalysts-phase-1). Claim jobs write only `claim_*`
+# rows, so a good case leaves every `_graph` table unchanged and checks the claim rows instead.
+
+WATCHING = {
+    "status": "watching", "catalyst_event": "Hyperscaler qualification", "catalyst_by": "2027-06-30",
+    "expected_effect": "Unlocks volume orders.",
+}
+
+
+def _claim(kind: str, params: Callable[[Workspace], dict[str, Any]]) -> Callable[[Workspace], str]:
+    def submit(ws: Workspace) -> str:
+        return ws.jobs.submit_claim(kind, params(ws)).job_id
+
+    return submit
+
+
+def _seed_thesis(ws: Workspace) -> str:
+    ref = ws.jobs.submit_claim("claim.thesis.add", {"theme_id": ws.node_id("AI Infrastructure & Capex"), "statement": "T"})
+    return str(ws.run_ok(ref.job_id)["result"]["thesis_id"])
+
+
+def _seed_membership(ws: Workspace) -> str:
+    """A thesis on the base theme with NVIDIA watching; returns the membership ID."""
+    params = {"thesis_id": _seed_thesis(ws), "company_id": ws.node_id("NVIDIA"), **WATCHING}
+    ref = ws.jobs.submit_claim("claim.membership.add", params)
+    return str(ws.run_ok(ref.job_id)["result"]["membership_id"])
+
+
+def _seeded_thesis_with_member(ws: Workspace) -> str:
+    membership_id = _seed_membership(ws)
+    with ws.read() as db:
+        return str(db.claims.get_membership(membership_id)["thesis_id"])
+
+
+def _claim_rows(ws: Workspace) -> dict[str, list[tuple[Any, ...]]]:
+    with ws.read() as db:
+        return {
+            "theses": [tuple(r) for r in db.conn.execute("SELECT statement FROM claim_theses ORDER BY statement")],
+            "members": [tuple(r) for r in db.conn.execute(
+                "SELECT n.name, m.status, m.reason FROM claim_memberships m JOIN nodes n ON n.id = m.company_id")],
+            "catalysts": [tuple(r) for r in db.conn.execute(
+                "SELECT c.event, c.by_date, p.direction, p.expected_effect FROM claim_catalysts c "
+                "JOIN claim_predictions p ON p.catalyst_id = c.id")],
+        }
+
+
+def _claims_are(**expected: list[tuple[Any, ...]]) -> Callable[[Workspace, dict[str, Any]], None]:
+    def check(ws: Workspace, _status: dict[str, Any]) -> None:
+        assert _claim_rows(ws) == {"theses": [], "members": [], "catalysts": [], **expected}
+
+    return check
+
+
+WATCHED_NVIDIA = {
+    "members": [("NVIDIA", "candidate", "")],
+    "catalysts": [("Hyperscaler qualification", "2027-06-30", "entry", "Unlocks volume orders.")],
+}
+
+
 GOOD_CASES: list[Case] = [
     Case("process", "new-note", _process("new.md"), added=NEW_NOTE_ROWS),
     Case("ingest", "scan-finds-new-note", _ingest("new.md"), added=NEW_NOTE_ROWS),
@@ -782,6 +841,49 @@ GOOD_CASES: list[Case] = [
     ),
     Case(
         "registry.apply.preview", "browser-record-edit", _preview(browser_record=True), check=_previewed_linked_record
+    ),
+    Case(
+        "claim.thesis.add",
+        "on-a-theme",
+        _claim("claim.thesis.add", lambda ws: {"theme_id": ws.node_id("AI Infrastructure & Capex"), "statement": "T"}),
+        check=_claims_are(theses=[("T",)]),
+    ),
+    Case(
+        "claim.thesis.edit",
+        "statement",
+        _claim("claim.thesis.edit", lambda ws: {"thesis_id": _seed_thesis(ws), "statement": "Edited"}),
+        check=_claims_are(theses=[("Edited",)]),
+    ),
+    Case(
+        "claim.thesis.remove",
+        "with-its-memberships",
+        _claim("claim.thesis.remove", lambda ws: {"thesis_id": _seeded_thesis_with_member(ws)}),
+        check=_claims_are(),
+    ),
+    Case(
+        "claim.membership.add",
+        "watching-with-catalyst",
+        _claim("claim.membership.add", lambda ws: {
+            "thesis_id": _seed_thesis(ws), "company_id": ws.node_id("NVIDIA"), **WATCHING,
+        }),
+        check=_claims_are(theses=[("T",)], **WATCHED_NVIDIA),
+    ),
+    Case(
+        "claim.membership.edit",
+        "watching-to-in",
+        _claim("claim.membership.edit", lambda ws: {
+            "membership_id": _seed_membership(ws), "status": "in", "reason": "Ships in volume.",
+        }),
+        # Moving in keeps the catalyst it was watching for; Phase 2 resolves it.
+        check=_claims_are(
+            theses=[("T",)], members=[("NVIDIA", "in", "Ships in volume.")], catalysts=WATCHED_NVIDIA["catalysts"],
+        ),
+    ),
+    Case(
+        "claim.membership.remove",
+        "with-its-catalyst",
+        _claim("claim.membership.remove", lambda ws: {"membership_id": _seed_membership(ws)}),
+        check=_claims_are(theses=[("T",)]),
     ),
 ]
 
@@ -897,6 +999,51 @@ BAD_CASES: list[Case] = [
         _preview(browser_record=False),
         fails_with="conflict",
         because="Only an outstanding browser record edit",
+    ),
+    Case(
+        "claim.thesis.add",
+        "theme-is-a-company",
+        _claim("claim.thesis.add", lambda ws: {"theme_id": ws.node_id("NVIDIA"), "statement": "T"}),
+        fails_with="invalid",
+        because="No theme with id",
+    ),
+    Case(
+        "claim.thesis.edit",
+        "missing-thesis",
+        _claim("claim.thesis.edit", lambda ws: {"thesis_id": "ths_missing", "statement": "Edited"}),
+        fails_with="not_found",
+        because="Thesis not found",
+    ),
+    Case(
+        "claim.thesis.remove",
+        "missing-thesis",
+        _claim("claim.thesis.remove", lambda ws: {"thesis_id": "ths_missing"}),
+        fails_with="not_found",
+        because="Thesis not found",
+    ),
+    Case(
+        "claim.membership.add",
+        "company-already-in-thesis",
+        _claim("claim.membership.add", lambda ws: {
+            "thesis_id": _seeded_thesis_with_member(ws), "company_id": ws.node_id("NVIDIA"),
+            "status": "in", "reason": "Again.",
+        }),
+        fails_with="conflict",
+        because="already in the thesis",
+    ),
+    Case(
+        "claim.membership.edit",
+        "missing-membership",
+        _claim("claim.membership.edit", lambda ws: {"membership_id": "mem_missing", "reason": "x"}),
+        fails_with="not_found",
+        because="Membership not found",
+    ),
+    Case(
+        "claim.membership.remove",
+        "missing-membership",
+        _claim("claim.membership.remove", lambda ws: {"membership_id": "mem_missing"}),
+        fails_with="not_found",
+        because="Membership not found",
     ),
 ]
 

@@ -5,6 +5,7 @@
 from the submodules, so callers don't depend on the split.
 """
 
+from stock_ontology.db.claims import ClaimStore
 from stock_ontology.db.jobs import TERMINAL_STATES, Job, JobStore, LeaseLostError, read_jobs
 from stock_ontology.db.schema import (
     SIGNAL_CATEGORY_ALIASES,
@@ -18,6 +19,7 @@ from stock_ontology.db.storage import OntologyDB, RegistryChangedError
 
 __all__ = [
     "TERMINAL_STATES",
+    "ClaimStore",
     "Job",
     "JobStore",
     "LeaseLostError",
