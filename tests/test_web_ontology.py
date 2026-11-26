@@ -991,3 +991,42 @@ def test_editors_find_nodes_by_search_instead_of_loading_the_graph(tmp_path: Pat
     assert client.get("/api/nodes/search", params={"q": "taiwan s", "type": "theme", "lang": "en"}).json()["nodes"][0] == {
         "id": "theme", "label": "Taiwan supply chain (theme)", "type": "theme"}
     assert found("") == []
+
+
+def test_search_route_is_bounded_and_add_buttons_need_an_addable_node(tmp_path: Path) -> None:
+    def library(nodes: list[tuple[str, str]], note_entities: tuple[str, ...]) -> TestClient:
+        root = tmp_path / str(len(nodes))
+        root.mkdir()
+        settings = Settings(db_path=root / "graph.db", registry_path=root / "registry.json", data_dir=root,
+                            embedding_dim=DIM)
+        registry = create_minimal_registry()
+        save_registry(registry, settings.registry_path)
+        content = "Source.\n"
+        with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+            for node_id, name in nodes:
+                db.upsert_node(Node(id=node_id, name=name, summary="", node_type="entity",
+                                    facets={"entity_type": "company"}))
+            (root / "note.md").write_text(content, encoding="utf-8")
+            db.upsert_ingestion_log("note.md", "note.md", hashlib.sha256(content.encode()).hexdigest(),
+                                    entity_ids=note_entities)
+            db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+        return TestClient(create_app(settings, llm=FakeWebLLM(), note_actions=True))
+
+    def reader(client: TestClient) -> str:
+        page = client.get("/catalog", params={"file": "note.md", "lang": "en"})
+        assert page.status_code == 200 and 'data-note-status="extracted"' in page.text
+        return page.text
+
+    many = library([(f"co{index:02}", f"Acme {index:02}") for index in range(25)], ("co00",))
+    response = many.get("/api/nodes/search", params={"q": "acme"})
+    assert [node["id"] for node in response.json()["nodes"]] == [f"co{index:02}" for index in range(20)]
+    assert "data-note-entity-add" in reader(many) and "data-note-add" in reader(many)
+
+    # The note already holds every entity, so there is nothing to add; two nodes still allow a relationship.
+    full = library([("a", "Alpha"), ("b", "Beta")], ("a", "b"))
+    assert "data-note-entity-add" not in reader(full)
+    assert "data-note-add" in reader(full)
+
+    # One node in the graph: no relationship can be added.
+    single = library([("a", "Alpha")], ("a",))
+    assert "data-note-entity-add" not in reader(single) and "data-note-add" not in reader(single)
