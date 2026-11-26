@@ -1,8 +1,8 @@
 ---
 proposal_id: "unified-note-corrections"
-state: FRAMED
+state: PROVED
 witness: independent
-candidate: "230f734 @ worktree claude/pipeline-correction-api-47e1d2"
+candidate: "f547b8d @ worktree claude/pipeline-correction-api-47e1d2"
 ---
 
 # Proposal: One review path for note corrections
@@ -89,9 +89,33 @@ Candidate: `230f734 @ worktree claude/pipeline-correction-api-47e1d2` (includes 
 
 ## Proof
 
-<!-- Replaced only by proposal-prove, or by the orchestrator with the builder-route
-deferred-witness status. Reference native witness path, exact command, concise RED
-result, and candidate identity. -->
+Candidate: `f547b8d @ worktree claude/pipeline-correction-api-47e1d2`. Its `tests/` and `src/` are byte-identical to `84f92b2` (checked with `git diff --quiet 84f92b2 f547b8d -- tests/ src/`), and its `src/` is identical to `1151bef`.
+
+The witness needed no amendment for the rerun Frame. The 2026-11-26 decision says both surfaces reject a duplicate with "This note already records that relationship." The `duplicate add` and `change into a duplicate` rows already require the reader's outcome to equal the Ontology page's outcome, which is `("rejected", "This note already records that relationship.")`. The `tests/test_web_notes.py:846-849` assertion is Frame's Invariants-changed item for Build to update. Proof did not touch it.
+
+**Protected witness**
+- The same relationship add or change from the note reader and from the Ontology page gets the same verdict, the same rejection message and the same stored edges. Duplicates are rejected on both surfaces with "This note already records that relationship." Witness: `tests/test_pipeline.py` / `test_note_reader_and_ontology_page_apply_the_same_relationship_rules` (parametrized over `_SAME_RULES_ROWS`).
+  - Defect and boundary: `IngestionPipeline._canonical_note_edge` (plus the duplicate merge in `OntologyDB.upsert_edge`) and `services/corrections._review_edge` each run their own edge rules. They disagree on unregistered relations, forbidden endpoint types, duplicates, unlisted facet keys, and missing or identical endpoints. This crosses the pipeline/services boundary, through `add_note_relationship` / `correct_note_relationship` on one side and `review_note_correction` plus `apply_note_correction` on the other.
+  - Assertion: each row runs on two identically seeded DBs, using the shipped registry, companies A to D, and note edges `focus` (A OWNS B) and `second` (A COMPETE C). The test asserts that both surfaces return the same outcome. A rejection is `("rejected", message)`, where the message is `str(ValueError)` for the reader and `ServiceError.message` for the Ontology page. An acceptance is `("accepted", sorted (from_id, to_id, relation, facets) of the note's edges)`. For any `ServiceError` it also asserts that a locale `key` is present.
+    - Proves: the primary claim, including the duplicate decision, for these nine inputs.
+    - Limit: it does not cover HTTP routes, worker job executors, relationship delete, entity relink or person/identity edits. It checks only the note's non-pending edges, not note-entity membership. It does not check that the code shares one validator, only that the outcomes are equal.
+  - Rows, RED (seven):
+    - `unregistered relation`, `registry forbids endpoint types`, `missing endpoint` and `identical endpoints`: both surfaces reject, but with different messages.
+    - `duplicate add`, `unlisted facet key` and `change into a duplicate`: the reader accepts (it merges the duplicate or stores `bogus_key`), while the Ontology page rejects.
+  - Rows, GREEN guards only, not RED evidence: `valid add through an inverse alias` (D SUBSIDIARY_OF A stored as A OWNS D) and `valid change` (focus to COMPETE).
+- Guardrails:
+  - Localized key: covered by the `exc.key` assertion inside this witness. It is green today and is a guard only.
+  - Existing correction tests staying green, apart from the Invariants-changed assertion `tests/test_web_notes.py:846-849`, and entity relink keeping pending edges pending: owned by the existing tests (`test_note_correction_updates_only_current_note_edges`, `test_apply_note_correction_writes_reviewed_person_and_edges_and_queues_consensus`, `test_add_note_relationship_accepts_required_fields_from_shipped_registry`, `test_note_reader_adds_and_deletes_relationships` and the person-correction tests). No new RED is claimed for these.
+- Protected paths: `tests/test_pipeline.py` (the `_SAME_RULES_ROWS` table and `test_note_reader_and_ontology_page_apply_the_same_relationship_rules`).
+- Protected revision: `84f92b2`, unchanged through `f547b8d` (compare with `git diff 84f92b2 -- tests/test_pipeline.py`).
+
+**Red evidence**
+- `uv run pytest tests/test_pipeline.py -v -k test_note_reader_and_ontology_page_apply_the_same_relationship_rules` on `f547b8d` gave 7 failed, 2 passed. Every failure is the witness's own `AssertionError` on a verdict or message mismatch. Two of them come from duplicates: the reader accepts, while the Ontology page rejects with "This note already records that relationship." None is an import, setup or unrelated error. Log: `/private/tmp/claude-502/-Users-jasonbxu-Documents-GitHub-stock-ontology--claude-worktrees-pipeline-correction-api-47e1d2/40d1e94b-3844-4421-b662-f9bf33856003/scratchpad/unified-red-f547b8d.log` (first run on `84f92b2`: `.../scratchpad/unified-red.log`, same result).
+- The primary claim has no proof until this command is observed RED. It has now been observed RED on `f547b8d` for the seven rows listed.
+
+**Supporting test plan**
+- Shared relationship validator in `src/stock_ontology/registry.py`, carrying `code`, `key` and message. Build owner: `tests/test_pipeline.py` (this witness), plus existing Ontology-page correction tests for the `ServiceError` code and key conversion, and `tests/test_web_notes.py::test_note_reader_adds_and_deletes_relationships` for the reader's HTTP-visible duplicate rejection, updated only at lines 846-849 as Frame's Invariants changed allows. It catches a validator that drops the `conflict` code or the i18n key when `_review_edge` converts its error.
+- Identity helper in `src/stock_ontology/services/registry.py` (keep-previous-name, `unique_labels`, `check_metadata`, alias length limit). Build owner: the existing record-edit tests and person-correction tests (`test_registry_person_identity_correction_survives_matching_extraction`, `test_person_accuracy_correction_is_checked_stored_and_refreshes_all_their_rumors`). It catches drift between the person identity rules in `review_record_edit` and `review_note_correction`.
 
 ## Build
 
