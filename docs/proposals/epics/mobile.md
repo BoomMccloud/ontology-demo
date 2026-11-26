@@ -2,82 +2,144 @@
 
 ## Interactive prototype
 
-[Open the local HTML prototype](../../prototypes/ontolog.html) in a browser. It starts on the SRAM Latency thesis with research chat open. Company and thesis views use **Sources · + · Chat**, and the top Back control follows the route the analyst took. Choose **Start empty** to try the first-note journey. AI replies and ontology processing are simulated.
+[Open the local HTML prototype](../../prototypes/ontolog.html) in a browser. Choose **Start empty** to try the first-note journey. AI replies and ontology processing are simulated.
+
+The prototype follows this file and uses the Margin notes direction below. It covers Recent, capture with processing status, company and theme pages with disagreement and sources, the note reader, Search, and chat with **Save as note**. It is the starting point for design work, not a finished design.
 
 ## Outcome
 
-An analyst can start with a link or note and see the ontology engine surface companies and theses in the Watchlist. As new evidence arrives, they can check what changed, trace claims to their sources, and ask the AI to verify or refute the new information. They can review and save a claim from that discussion as a research note. Notes enter the same research workflow used by the web app.
+An analyst can capture a note on their phone, see it processed, open the companies and themes it touched, check the sources behind each View, and ask the research agent to verify or refute what they heard. They can save a cited answer from that conversation as a new note. Every note goes through the same processing as notes from the web app.
 
 ## Benefits
 
-Analysts can capture details while a meeting or channel check is fresh. They can then see which companies, theses, and factors deserve attention and check the underlying evidence from their phone.
+Analysts can capture details while a meeting or channel check is fresh, then check the underlying evidence from their phone without waiting to get back to a desk.
+
+## Approach
+
+The first release is a mobile web app with its own design, templates, and CSS. It shares nothing visual with the desktop app. It runs in the same FastAPI server as a separate web module under `/m`, with its own navigation and design tokens. It reads through the same services the desktop pages use, and it writes through the existing JSON routes: `POST /api/notes`, `POST /api/notes/process`, `GET /api/jobs/{job_id}`, and `POST /api/chat`. This mobile web app is the UX template. A native app comes later and follows the flows proven here.
 
 ## Design principles
 
-- Analysts capture raw notes, including bullets, meeting quotes, web clips, and voice. The ontology engine extracts entities, relationships, and state changes asynchronously.
-- The Watchlist is a radar for changes in tracked companies, theses, and factors. Recent notes and market developments surface through their effect on what the analyst is tracking.
-- Show semantic changes such as a revised margin target, a new supplier dependency, or evidence that strengthens or weakens a thesis.
-- Make contradictions actionable. Ground debate in the active change and its sources, then let the analyst commit a synthesis as a new note.
-- Use a restrained dark mode with Swiss typography, clean borders, compact badges, and enough whitespace to scan dense research on a phone.
+- Notes are the source of truth. The ontology is built from notes, so the app never edits a View or consensus directly. To record a judgment, the analyst saves a note.
+- Analysts capture raw notes, including bullets, meeting quotes, and pasted excerpts. The worker extracts entities, events, views, and relationships asynchronously.
+- Use the ontology's own terms in the UI: Company, Theme, Entity, Event, View, and consensus. The mobile and web apps describe the same records with the same names.
+- Show disagreement as it exists in the graph. When Views on the same company or theme have opposing stances, show both with their sources. The analyst resolves it by asking the agent and saving a note.
+- The visual design is mobile-only and chosen from scratch. See Visual design below.
+
+## Vocabulary
+
+The earlier draft used its own terms. They map to the ontology as follows.
+
+| Earlier draft | Ontology |
+| --- | --- |
+| Thesis | Theme |
+| Factor or entity | Entity that is not a company |
+| Belief or claim | View, with stance, status, and `as_of` |
+| Current beliefs | Consensus synthesis |
+| Semantic change | A new Event or View from a recently processed note |
+| Source | Note |
 
 ## Navigation
 
-Watchlist and Ontology are two ways into the same company and thesis detail views. The three-slot bottom bar changes with the screen.
+The bottom bar is the same on every screen: **Recent · + · Search**.
 
-| View | Left | Center | Right |
+- **Recent** is the home screen. It lists companies and themes touched by recently processed notes, newest first.
+- **+** opens capture. On a company or theme page, the note carries that page as a hint.
+- **Search** opens a mobile search screen backed by the same search service as the web app, so results match.
+
+Company and theme pages have a **Chat** button in the header. Chat opens as a sheet over the current page and uses that page as context. Minimizing it keeps the analyst's place, and reopening it resumes the conversation. Sources is a section on the detail page, not a bottom bar slot.
+
+The top **Back** control returns to the previous screen. After opening a company from Search and then one of its notes, Back returns to the company, then to Search.
+
+## Visual design
+
+The direction is **Margin notes**: the words from the source note lead every screen. It is a starting point for the designer, who can change any value here.
+
+- **Evidence first.** Rows show the sentence from the note itself, set in serif italic and indented behind a 2px rule, like a note in a margin. The cited note's title and age sit under the quote. Summaries and labels stay in the sans.
+- **Color means stance only.** The rule beside a quote is amber for a View that challenges another, green for support, and slate for a routine addition. Node type is a lowercase word next to the name (company, theme, entity), not a color.
+- **Rows, not cards.** Content is a single left-aligned column with hairline rules between rows and a heavier rule under each section heading.
+- **Light first, dark supported.** Both modes use the same tokens.
+
+| Token | Light | Dark | Use |
 | --- | --- | --- | --- |
-| Watchlist, Ontology, or Source Detail | **Watchlist** opens the home radar | **+** opens capture | **Ontology** opens global research and extracted relationships |
-| Company or Thesis Detail | **Sources** jumps to the evidence on the current detail screen | **+** captures a source for this company or thesis | **Chat** opens or resumes research chat over the detail screen |
+| Paper | `#EDF0F4` | `#10151F` | Page background |
+| Sheet | `#F7F8FA` | `#171E2B` | Capture and chat sheets |
+| Ink | `#14213D` | `#E4E9F1` | Text, primary button, section rules |
+| Ink 2 | `#5B6B85` | `#93A1B8` | Metadata, node type, citations |
+| Rule | `#C3CAD5` | `#2A3446` | Hairlines between rows |
+| Challenge | `#B45309` | `#F0A35A` | Challenging View, processing dot |
+| Support | `#047857` | `#4CC79A` | Supporting View |
+| Routine | `#94A3B8` | `#64748B` | Routine addition |
 
-The top **Back** control returns to the actual previous screen. For example, after opening a company from Ontology and then opening one of its sources, Back returns to the company, then to Ontology. Chat opens as a sheet over the current screen. Minimizing it preserves the analyst’s place in the detail view, and reopening it resumes the conversation.
+Type is Inter Tight for the interface and Source Serif 4 for anything quoted from a note. The scale is 28px for page titles, 19px for empty-state headings, 15px for body and quotes, 13px for metadata and section headings, and 12px for citations. A note's full text is 17px serif. The page gutter is 16px and the bottom bar is 64px.
 
-## Visual encoding
-
-| Node type | Accent | Background tint | Icon | Examples |
-| --- | --- | --- | --- | --- |
-| Company | Electric blue `#3B82F6` | Blue at 12% opacity | Building or briefcase | Groq, Tenstorrent, Cerebras |
-| Thesis | Violet `#A855F7` | Violet at 12% opacity | Target or lightbulb | Open-Weights Parity, SRAM Latency |
-| Factor or entity | Emerald `#10B981` | Emerald at 12% opacity | Network, person, or factor icon | TSMC CoWoS Allocation, key executives |
-
-State changes have their own markers. `⚡` and amber `#F59E0B` indicate a contradiction or tension. `↑` and green `#10B981` indicate validation or support. `•` and muted slate `#475569` indicate routine additions.
+Stance comes from the View's stance and sentiment as extraction records them. Detecting whether new evidence corroborates or challenges an existing claim belongs to Evidence Intake in [Claim Graph Refinements](refinements.md). Until then, a challenge marker means only that extraction recorded opposing Views.
 
 ## User journeys
 
 ### Cold start
 
-1. The analyst opens an empty Watchlist and taps **+** to paste a link, write a note, or attach a file.
-2. **Process source** queues ontology building. The analyst sees the source’s processing status and can keep using the app.
-3. When processing finishes, the companies and theses identified from the source appear in the Watchlist. The analyst can open an item to see what was extracted and follow it back to the original source.
+1. The analyst opens an empty Recent screen and taps **+** to write or paste a note.
+2. **Process** queues the note. The analyst sees its job status and can keep using the app.
+3. When processing finishes, the companies and themes from the note appear in Recent. The analyst opens one to see what was extracted and follows it back to the note.
 
 ### Daily use
 
-1. The analyst opens a company or thesis from the Watchlist or Ontology. The detail view shows current beliefs, recent semantic changes, and related research.
-2. **Sources** jumps to that item’s evidence. The analyst can open a source to read the original material, see its processing status, and inspect its links to the ontology.
-3. The analyst taps **+** to log new information for the current item. The ontology engine processes it asynchronously and updates the relevant companies and theses. The Watchlist surfaces items with recent changes.
+1. The analyst opens a company or theme from Recent or Search. The page shows the consensus, recent Events and Views, and the notes behind them.
+2. The Sources section lists that item's notes. The analyst opens a note to read it, see its processing status, and inspect what was extracted from it.
+3. The analyst taps **+** to log new information for the current item. The worker processes it and the item moves to the top of Recent.
 
 ### Deep research
 
-1. The analyst opens **Chat** from a company or thesis, or attaches a note with **+** and chooses **Research**. The conversation uses the company or thesis, its current claims, and relevant evidence. An attached note or selected source gives the conversation a specific focus. If a source has no company or thesis yet, **Research source** opens chat over Source Detail.
-2. The analyst asks the AI to verify or refute the information. The AI cites the research it uses and helps the analyst identify counterevidence or what would resolve an open question.
-3. The analyst drafts, edits, and saves a new claim or belief as a research note. The note keeps its source citations and goes through the same ontology processing workflow as other captured research.
+1. The analyst taps **Chat** on a company or theme page. The agent uses the page, its Views, and the notes behind them. From a note, chat focuses on that note.
+2. The analyst asks the agent to verify or refute the information. The agent cites the notes it uses and helps identify counterevidence or what would settle an open question.
+3. The analyst saves a reply as a note, editing it first if needed. The note keeps the agent's citations and goes through normal processing.
 
 ### Capture a supplier conversation on the go
 
-1. Leaving a supplier meeting, an analyst opens OntoLog and writes a short note. The supplier says customers are asking about later delivery dates, but there is no confirmed change to the planned data center rollout.
-2. The analyst saves the note, sees that it is queued for processing, and puts their phone away.
-3. Once processing is complete, they open the relevant company or thesis, tap **Chat**, and ask, “What else have we heard about the rollout timing?”
+1. Leaving a supplier meeting, an analyst opens OntoLog and dictates a short note with the phone's keyboard. The supplier says customers are asking about later delivery dates, but there is no confirmed change to the planned data center rollout.
+2. The analyst saves the note, sees that it is queued, and puts their phone away.
+3. Once processing is complete, they open the relevant company or theme, tap **Chat**, and ask, "What else have we heard about the rollout timing?"
 4. The agent summarizes the relevant research and cites the notes it used. The analyst opens an earlier note to check whether it described the same customers.
 
-## Additional screen details
+## Screen details
 
-- **Capture.** The slide-up sheet accepts notes, links, and file attachments. The capture brief also includes voice recording. The prototype offers a sample note for trying the flow.
-- **Watchlist.** The draft calls for a tracked-item count, live search, and filters for All, Shifts (Unreviewed), Companies, Theses, and Entities. An amber alert strip summarizes changes detected today. Cards show an item’s icon, name, type, latest semantic change, time since the change, and source citation, with stage, round, and linked thesis where relevant.
-- **Company or Thesis Detail.** Show semantic changes alongside the current beliefs they affect. For a contradiction, show the prior belief in red with a strikethrough, the new claim in green, and the original quote with its note ID and timestamp. For example, a margin target above 65% is challenged by a source claiming interposer costs could bring gross margin to about 52%.
-- **Ontology Explorer.** The draft includes entity directories, a physics-based **Graph Canvas** that clusters companies, theses, and factors by relationship weight, and **Extracted Edges** with subject, predicate, object, and confidence.
+- **Capture.** A slide-up sheet with a title and a text body. Voice uses the phone's dictation keyboard. For a link, the analyst pastes the relevant excerpt along with the URL. Capture from a company or theme page passes that page as a hint.
+- **Recent.** Each row shows the item's icon, name, type, its newest Event or View, time since that note was processed, and the note it came from. No per-user state is needed.
+- **Company or Theme.** Consensus first, then recent Events and Views with their markers, then Sources. When two Views disagree, show both, each with its quote, note, and date. For example, a View that gross margin will exceed 65% sits next to a newer View citing interposer costs that could bring it to about 52%.
+- **Note.** The note text, its processing status, and what was extracted from it, with Process available when the note is not processed.
+- **Chat.** The existing research agent in a sheet, with a **Save as note** action on each reply.
+
+## What is new versus what exists
+
+These already work on the server and the mobile screens reuse them: the note paste, Process, job status, and chat JSON routes, the search service, the research agent with citations, and the view models behind the company, theme, and note pages.
+
+These are new:
+
+- The `/m` web module: its own templates, CSS, design tokens, navigation, and the fixed bottom bar.
+- The Recent screen.
+- A page hint on captured notes. Today every pasted note is saved under `_general/`.
+- **Save as note** on a chat reply, keeping its citations.
+
+## Phases
+
+1. **Mobile web app.** Everything above.
+2. **Watchlist.** Replace Recent with a radar of items the analyst tracks, with unreviewed changes and today's alerts. This needs a tracked-item list, per-user review state, and Evidence Intake from [Claim Graph Refinements](refinements.md) to tell corroboration from challenge.
+3. **Native app.** Follows the flows proven in the mobile web app and adds the share sheet, in-app voice recording, and push notifications for finished processing.
+4. **Login.** Put access control in front of the deployed site. Until then, anyone with the URL can paste notes and queue jobs, as the web app allows today.
+
+## Out of scope for the first release
+
+- **Accept & Merge.** It would edit Views directly, which breaks the rule that the ontology comes from notes. Saving a chat reply as a note does the same job.
+- **Graph canvas and Extracted Edges.** They stay on the desktop `/ontology` page.
+- **Fetching linked URLs and transcribing recordings.** The analyst supplies the excerpt or dictates.
+- **Market developments as an input.** There is no source for them in the system yet.
+
+## Known limits
+
+Chat sessions live in server memory and are capped at 50. A server restart loses the conversation the analyst would resume from their phone. Chat needs persistence before resume can be relied on.
 
 ## Open product choices
 
-- Which parts of the three journeys should ship first? Capture, processing status, and cited follow-up are one possible first release. Watchlist change alerts, claim review, and graph exploration can be considered separately.
-- What does **Accept & Merge** do when the new claim conflicts with the baseline? Should it replace the prior belief, retain both claims while marking one current, or record the analyst's judgment separately?
-- Which inputs feed the Watchlist radar? The brief includes both new notes and market developments. How market developments enter the workflow is open.
-- For URLs and voice, should the initial capture flow retrieve the linked content and transcribe recordings, or let the analyst supply the excerpt or transcript?
+- How long a window should Recent cover, and should it group by company and theme or show one row per note?
+- Should **Save as note** save the reply as written, or open it in capture so the analyst always edits first?
