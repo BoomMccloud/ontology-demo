@@ -32,6 +32,17 @@ class FacetSchemaError(ValueError):
     vocabulary, `name` or `summary` is longer than declared, or an edge's relation is not mapped."""
 
 
+class EdgeRuleError(ValueError):
+    """A relationship correction the registry rejects. `code` is `invalid` or `conflict`; `key`
+    names the locale string the web layer shows. The note reader and the Ontology page share it."""
+
+    def __init__(self, code: str, message: str, key: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.key = key
+
+
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -707,6 +718,51 @@ class OntologyRegistry(BaseModel):
             flipped=flipped,
             endpoints_ok=endpoints_ok,
         )
+
+    def check_note_edge(
+        self, relation: str, *, from_node: Any, to_node: Any, base_facets: dict[str, Any] | None,
+        facet_updates: dict[str, Any] | None = None, existing: Iterable[tuple[str, str, str]] = (),
+    ) -> dict[str, Any]:
+        """The one rule set for a note's relationship add or change, from either correction surface.
+
+        `from_node` and `to_node` are the endpoint nodes (`None` when missing). `base_facets` are the
+        edge's current facets (`None` for a new edge). `facet_updates` may set or clear (`None`)
+        registry-listed facets other than `basis`. `existing` holds the note's other
+        `(from_id, to_id, relation)` triples. Returns the canonical `from_id`, `to_id`, `relation`
+        and `facets`, or raises `EdgeRuleError`."""
+        match = self.resolve_relation(relation or "")
+        if match is None:
+            raise EdgeRuleError("invalid", "Choose a relationship type from the applied registry.",
+                                "service_error.choose_relationship_type")
+        updates = facet_updates or {}
+        if not isinstance(updates, dict) or updates.keys() - (self.edge_facet_keys(match.canonical) - {"basis"}):
+            raise EdgeRuleError("invalid", "Choose editable relationship fields from the applied registry.",
+                                "service_error.choose_relationship_fields_registry")
+        facets = dict(base_facets or {"basis": "extracted"})
+        for field, value in updates.items():
+            if value is None:
+                facets.pop(field, None)
+            else:
+                facets[field] = value
+        if from_node is None or to_node is None or from_node.id == to_node.id:
+            raise EdgeRuleError("invalid", "Choose two different existing endpoints.",
+                                "service_error.choose_two_endpoints")
+        canonical = self.canonicalize_edge(
+            relation, from_id=from_node.id, from_type=from_node.node_type,
+            from_entity_type=from_node.facets.get("entity_type"), to_id=to_node.id, to_type=to_node.node_type,
+            to_entity_type=to_node.facets.get("entity_type"), facets=facets,
+        )
+        if not canonical.endpoints_ok:
+            raise EdgeRuleError("invalid", "The applied registry does not allow that relationship between these nodes.",
+                                "service_error.relationship_not_allowed")
+        after = {
+            "from_id": canonical.from_id, "to_id": canonical.to_id, "relation": canonical.relation,
+            "facets": self.check_facets(None, canonical.facets, relation=canonical.relation),
+        }
+        if (after["from_id"], after["to_id"], after["relation"]) in set(existing):
+            raise EdgeRuleError("conflict", "This note already records that relationship.",
+                                "service_error.relationship_exists")
+        return after
 
     def resolve_company(
         self,

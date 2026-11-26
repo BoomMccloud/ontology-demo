@@ -8,9 +8,9 @@ from typing import Any
 
 from stock_ontology.config import note_revision
 from stock_ontology.db import OntologyDB
-from stock_ontology.registry import normalize_name_key
+from stock_ontology.registry import EdgeRuleError, normalize_name_key
 from stock_ontology.services.errors import ServiceError
-from stock_ontology.services.registry import changed_fields, edit_aliases, edit_text, unique_labels
+from stock_ontology.services.registry import changed_fields, edit_aliases, edit_identity, edit_text
 from stock_ontology.vocab import ACCURACY, is_synthesized_edge
 
 _PERSON_FIELDS = {"name", "aliases", "role", "organization", ACCURACY.group}
@@ -75,40 +75,16 @@ def _review_edge(
     for key in ("from_id", "to_id", "relation"):
         if key in changes:
             after[key] = edit_text(changes[key], key)
-    relation = db.registry.resolve_relation(after["relation"] or "")
-    if relation is None:
-        raise ServiceError("invalid", "Choose a relationship type from the applied registry.", key="service_error.choose_relationship_type")
-    updates = changes.get("facets", {})
-    editable = db.registry.edge_facet_keys(relation.canonical) - {"basis"}
-    if not isinstance(updates, dict) or updates.keys() - editable:
-        raise ServiceError("invalid", "Choose editable relationship fields from the applied registry.", key="service_error.choose_relationship_fields_registry")
-    facets = dict(after["facets"] or {"basis": "extracted"})
-    for field, value in updates.items():
-        if value is None:
-            facets.pop(field, None)
-        else:
-            facets[field] = value
-    start = db.get_node(after["from_id"] or "")
-    end = db.get_node(after["to_id"] or "")
-    if start is None or end is None or start.id == end.id:
-        raise ServiceError("invalid", "Choose two different existing endpoints.", key="service_error.choose_two_endpoints")
-    canonical = db.registry.canonicalize_edge(
-        after["relation"], from_id=start.id, from_type=start.node_type, from_entity_type=start.facets.get("entity_type"),
-        to_id=end.id, to_type=end.node_type, to_entity_type=end.facets.get("entity_type"), facets=facets,
-    )
-    if not canonical.endpoints_ok:
-        raise ServiceError("invalid", "The applied registry does not allow that relationship between these nodes.", key="service_error.relationship_not_allowed")
-    after = {
-        "from_id": canonical.from_id, "to_id": canonical.to_id, "relation": canonical.relation,
-        "facets": db.registry.check_facets(None, canonical.facets, relation=canonical.relation),
-    }
-    if any(
-        row["edge_id"] != before.get("edge_id") and
-        (row["from_id"], row["to_id"], row["relation"]) == (after["from_id"], after["to_id"], after["relation"])
-        for row in all_edges
-    ):
-        raise ServiceError("conflict", "This note already records that relationship.", key="service_error.relationship_exists")
-    return after
+    try:
+        return db.registry.check_note_edge(
+            after["relation"] or "", from_node=db.get_node(after["from_id"] or ""),
+            to_node=db.get_node(after["to_id"] or ""), base_facets=after["facets"],
+            facet_updates=changes.get("facets", {}),
+            existing=[(row["from_id"], row["to_id"], row["relation"])
+                      for row in all_edges if row["edge_id"] != before.get("edge_id")],
+        )
+    except EdgeRuleError as exc:
+        raise ServiceError(exc.code, exc.message, key=exc.key) from exc
 
 
 def review_note_correction(
@@ -145,12 +121,8 @@ def review_note_correction(
                 after[field] = _edit_accuracy(value)
             else:
                 after[field] = edit_aliases(value) if field == "aliases" else edit_text(value, field)
-        if keep_previous_name and after["name"] != before["name"]:
-            after["aliases"] = [*after["aliases"], node.name]
-        after["aliases"] = unique_labels(after["aliases"], excluding=after["name"])
-        db.registry.check_metadata(after["name"], node.summary)
-        if any(len(alias) > db.registry.metadata_max_length["name"] for alias in after["aliases"]):
-            raise ServiceError("invalid", "An alternate name exceeds the name length limit.", key="service_error.alternate_name_too_long")
+        after["aliases"] = edit_identity(db.registry, after, previous_name=node.name, summary=node.summary,
+                                         keep_previous_name=keep_previous_name)
         proposed_labels = set(map(normalize_name_key, [after["name"], *after["aliases"]]))
         prior_labels = set(map(normalize_name_key, [node.name, *node.aliases]))
         if any(

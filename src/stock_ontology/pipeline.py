@@ -962,10 +962,11 @@ class IngestionPipeline:
     ) -> None:
         """Add a source-attributed relationship to the current extraction."""
         def edit(doc_id: str) -> set[str]:
-            edge, entity_ids = self._canonical_note_edge(Edge(
-                id=f"edge_{uuid.uuid4().hex}", from_id=from_id, to_id=to_id, relation=relation,
-                facets={**(facets or {}), "basis": "extracted"}, source_doc_id=doc_id,
-            ))
+            edge, entity_ids = self._canonical_note_edge(
+                Edge(id=f"edge_{uuid.uuid4().hex}", from_id=from_id, to_id=to_id, relation=relation,
+                     source_doc_id=doc_id),
+                facet_updates=facets, existing=self._note_triples(doc_id),
+            )
             self.db.upsert_edge(edge)
             self.db.add_note_entities(doc_id, entity_ids)
             return self.db.get_doc_affected_company_ids(doc_id)
@@ -994,7 +995,9 @@ class IngestionPipeline:
             end = row["to_id"] if to_id is None else to_id
             if reverse:
                 start, end = end, start
-            self.db.add_note_entities(doc_id, self._replace_note_edge(row, relation, start, end, pending=pending))
+            self.db.add_note_entities(doc_id, self._replace_note_edge(
+                row, relation, start, end, pending=pending, existing=self._note_triples(doc_id, excluding=edge_id),
+            ))
             return affected | self.db.get_doc_affected_company_ids(doc_id)
 
         self._correct_note(path, expected_hash, edit)
@@ -1037,29 +1040,27 @@ class IngestionPipeline:
         delete = self.db.delete_pending_edges if pending else self.db.delete_edges
         delete([edge_id])
 
-    def _canonical_note_edge(self, edge: Edge) -> tuple[Edge, tuple[str, ...]]:
-        if edge.from_id == edge.to_id:
-            raise ValueError("A relationship must connect two different nodes.")  # noqa: TRY003
-        endpoints = self.db.get_nodes([edge.from_id, edge.to_id])
-        if len(endpoints) != 2:
-            raise ValueError("Select existing ontology nodes for both endpoints.")  # noqa: TRY003
-        from_node, to_node = endpoints
-        _, from_type, from_entity_type = node_meta(from_node)
-        _, to_type, to_entity_type = node_meta(to_node)
-        canonical = self.registry.canonicalize_edge(
-            edge.relation, from_id=edge.from_id, from_type=from_type, from_entity_type=from_entity_type,
-            to_id=edge.to_id, to_type=to_type, to_entity_type=to_entity_type, facets=edge.facets,
+    def _note_triples(self, doc_id: str, excluding: str = "") -> list[tuple[str, str, str]]:
+        return [(row["from_id"], row["to_id"], row["relation"])
+                for row in self.db.list_note_edges(doc_id) if row["edge_id"] != excluding]
+
+    def _canonical_note_edge(
+        self, edge: Edge, *, facet_updates: dict[str, Any] | None = None,
+        existing: list[tuple[str, str, str]] | tuple[()] = (),
+    ) -> tuple[Edge, tuple[str, ...]]:
+        """Check `edge` against the same registry rules as the Ontology page's corrections."""
+        from_node, to_node = self.db.get_node(edge.from_id), self.db.get_node(edge.to_id)
+        after = self.registry.check_note_edge(
+            edge.relation, from_node=from_node, to_node=to_node, base_facets=edge.facets,
+            facet_updates=facet_updates, existing=existing,
         )
-        if not canonical.matched or not canonical.endpoints_ok:
-            raise ValueError("The registry does not allow that relationship between these nodes.")  # noqa: TRY003
-        return edge.model_copy(update={
-            "from_id": canonical.from_id, "to_id": canonical.to_id,
-            "relation": canonical.relation, "facets": canonical.facets,
-        }), tuple(node.id for node in endpoints if node.node_type == "entity")
+        return edge.model_copy(update=after), tuple(
+            node.id for node in (from_node, to_node) if node is not None and node.node_type == "entity"
+        )
 
     def _replace_note_edge(
         self, row: dict[str, Any], relation: str, from_id: str, to_id: str, *,
-        pending: bool, keep_pending: bool = False,
+        pending: bool, keep_pending: bool = False, existing: list[tuple[str, str, str]] | tuple[()] = (),
     ) -> tuple[str, ...]:
         prefix = "pedge" if keep_pending else "edge"
         # Replacing the ID invalidates relationship forms opened before the correction.
@@ -1067,7 +1068,7 @@ class IngestionPipeline:
                     facets=row["facets"], source_doc_id=row["source_doc_id"], created_at=row["created_at"])
         entity_ids = ()
         if not keep_pending:
-            edge, entity_ids = self._canonical_note_edge(edge)
+            edge, entity_ids = self._canonical_note_edge(edge, existing=existing)
         self._delete_note_edge(row["edge_id"], pending)
         if keep_pending:
             self.db.insert_pending_edge(edge)
