@@ -1,6 +1,6 @@
 ---
 proposal_id: "registry-declared-graph-rules"
-state: FRAMED
+state: ABANDONED
 witness: independent
 candidate: "12e6a49 @ worktree pipeline-correction-api-47e1d2"
 ---
