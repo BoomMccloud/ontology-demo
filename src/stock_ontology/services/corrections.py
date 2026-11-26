@@ -91,9 +91,13 @@ def _review_edge(
         if key in changes:
             after[key] = edit_text(changes[key], key)
     relation = db.registry.resolve_relation(after["relation"] or "")
+    if relation is None:
+        # Judged first, before the facet fields that depend on the relation.
+        message, key = _EDGE_REJECTIONS["relation"]
+        raise ServiceError("invalid", message, key=key)
     updates = changes.get("facets", {})
-    editable = db.registry.edge_facet_keys(relation.canonical) - {"basis"} if relation else set()
-    if relation and (not isinstance(updates, dict) or updates.keys() - editable):
+    editable = db.registry.edge_facet_keys(relation.canonical) - {"basis"}
+    if not isinstance(updates, dict) or updates.keys() - editable:
         raise ServiceError("invalid", "Choose editable relationship fields from the applied registry.", key="service_error.choose_relationship_fields_registry")
     facets = dict(after["facets"] or {"basis": "extracted"})
     for field, value in updates.items():

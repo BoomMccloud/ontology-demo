@@ -1280,3 +1280,15 @@ def test_note_reader_reverse_reviews_like_the_swapped_endpoints(tmp_path: Path) 
         swapped = review({"from_id": "b", "to_id": "a"})
     assert reversed_["edges"] == swapped["edges"]
     assert reversed_["request"]["changes"] == swapped["request"]["changes"]
+
+
+def test_ontology_preview_judges_an_unregistered_relation_before_its_fields(tmp_path: Path) -> None:
+    settings, client, _ = _correction_workspace(tmp_path / "graph")
+    for facets in ("not-a-dict", {"stake": "10%"}):
+        preview = client.post("/api/ontology/corrections/preview", json={
+            "kind": "relationship", "file": "note.md", "edge_id": "original",
+            "changes": {"relation": "NONEXISTENT_RELATION", "facets": facets},
+        })
+        assert preview.status_code == 422, preview.text
+        assert preview.json()["detail"] == translate("service_error.choose_relationship_type", lang="en")
+    assert _note_graph(settings)["edges"] == [("a", "BUY", "b", _EXTRACTED)]
