@@ -20,6 +20,7 @@ from stock_ontology.vocab import ENTITY_TYPE
 from stock_ontology.web.shared import (
     GENERAL_FOLDERS,
     extract_title_and_excerpt,
+    relationship_editor_model,
     strip_markdown_markers,
 )
 
@@ -405,23 +406,9 @@ class NoteRelationship:
 
 
 @dataclass(frozen=True)
-class NoteEndpoint:
-    id: str
-    label: str
-
-
-@dataclass(frozen=True)
 class NoteEntityType:
     key: str
     fields: tuple[tuple[str, str], ...]
-
-
-@dataclass(frozen=True)
-class NoteRelationshipField:
-    key: str
-    label: str
-    options: tuple[tuple[str, str], ...]
-    is_list: bool
 
 
 @dataclass(frozen=True)
@@ -436,36 +423,8 @@ class NoteExtraction:
     choices: tuple[NoteEntity, ...] = ()
     entity_types: tuple[NoteEntityType, ...] = ()
     relations: tuple[str, ...] = ()
-    endpoint_choices: tuple[NoteEndpoint, ...] = ()
-    required_relationship_fields: tuple[tuple[str, tuple[NoteRelationshipField, ...]], ...] = ()
-
-
-def _relationship_fields(
-    db: GraphStore, relations: tuple[str, ...], lang: str,
-) -> tuple[tuple[str, tuple[NoteRelationshipField, ...]], ...]:
-    if not relations:
-        return ()
-    registry = db.registry
-    common = registry.required_facets(None) - {"basis"}
-    by_relation = registry.relation_required_facets()
-    vocabularies = registry.facet_vocabularies.get("edge", {})
-    required = []
-    for relation in relations:
-        keys = sorted(common.union(by_relation.get(relation, ())))
-        if not keys:
-            continue
-        list_fields = registry.facet_keys_of_kind(None, "list", relation=relation)
-        fields = tuple(
-            NoteRelationshipField(
-                key, translate_facet_label(key, lang=lang),
-                tuple((value, translate_enum(key, value, lang=lang))
-                      for value in vocabularies.get(key, {}).get("members", {})),
-                key in list_fields,
-            )
-            for key in keys
-        )
-        required.append((relation, fields))
-    return tuple(required)
+    # The `static/editor.js` relationship editor model, or None when relationships cannot be corrected.
+    relationship_model: dict[str, Any] | None = None
 
 
 def _note_extraction(
@@ -510,18 +469,9 @@ def _note_extraction(
             ))
             for kind in ENTITY_TYPE.members
         )
-    endpoint_choices = []
-    if relations:
-        for node in available_nodes:
-            entity_type = node.facets.get("entity_type") if node.node_type == "entity" else None
-            kind = (
-                translate_enum("entity_type", entity_type, lang=lang) if entity_type
-                else translate_enum("node_type", node.node_type, lang=lang)
-            )
-            endpoint_choices.append(NoteEndpoint(node.id, f"{node.name} ({kind})"))
     return NoteExtraction(
         "extracted", actions_enabled, job_state, content_hash, entities, relationships, choices, entity_types,
-        relations, tuple(endpoint_choices), _relationship_fields(db, relations, lang),
+        relations, relationship_editor_model(db.registry, available_nodes, lang) if relations else None,
     )
 
 

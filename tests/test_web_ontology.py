@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import math
 import re
 from pathlib import Path
@@ -21,10 +22,11 @@ from web_support import (
     unit_vec,
 )
 
+import stock_ontology.web
 from stock_ontology.audit import run_ontology_audit
 from stock_ontology.config import Settings
 from stock_ontology.db import OntologyDB
-from stock_ontology.i18n import translate
+from stock_ontology.i18n import translate, translate_enum, translate_facet_label
 from stock_ontology.models import Edge, Node
 from stock_ontology.registry import create_minimal_registry, load_registry, save_registry
 from stock_ontology.web import create_app
@@ -877,3 +879,55 @@ def test_person_details_form_edits_accuracy(tmp_path: Path) -> None:
     assert unrated.json()["diff"][0]["after"] is None
     bad = client.post("/api/ontology/corrections/preview", json={**edit, "changes": {"accuracy": "excellent"}})
     assert bad.status_code in {400, 422}, bad.text
+
+
+def test_note_reader_and_ontology_record_share_one_relationship_editor(tmp_path: Path) -> None:
+    settings = Settings(db_path=tmp_path / "graph.db", registry_path=tmp_path / "registry.json",
+                        data_dir=tmp_path, embedding_dim=DIM)
+    registry = create_minimal_registry()
+    save_registry(registry, settings.registry_path)
+    content = "Anchor employment source.\n"
+    with OntologyDB(settings.db_path, embedding_dim=DIM, registry=registry) as db:
+        for node_id, name, entity_type in (("person", "Robin Lee", "person"), ("company", "NVIDIA", "company")):
+            db.upsert_node(Node(id=node_id, name=name, summary="", node_type="entity", facets={"entity_type": entity_type}))
+        (tmp_path / "related.md").write_text(content, encoding="utf-8")
+        db.upsert_ingestion_log("related.md", "related.md", hashlib.sha256(content.encode()).hexdigest(),
+                                entity_ids=("person",))
+        db.record_registry_adoption(registry, from_revision=None, plan="fixture")
+    client = TestClient(create_app(settings, llm=FakeWebLLM(), note_actions=True))
+
+    pages = {
+        "note_reader.js": client.get("/catalog", params={"file": "related.md", "lang": "fr"}),
+        "ontology_edit.js": client.get(
+            "/ontology", params={"tab": "registry", "kind": "people", "record": "person", "lang": "fr"}),
+    }
+    models = []
+    for page_script, page in pages.items():
+        assert page.status_code == 200, page.text
+        embedded = re.search(r'<script type="application/json" id="relationship-editor-model">(.*?)</script>',
+                             page.text, re.S)
+        assert embedded is not None, page_script
+        models.append(json.loads(embedded[1]))
+        scripts = re.findall(r'<script\b[^>]*\bsrc="[^"]*/static/([\w.]+)"', page.text)
+        assert "editor.js" in scripts and scripts.index("editor.js") < scripts.index(page_script)
+
+    assert models[0] == models[1]
+    model = models[0]
+    assert {node["id"]: node["type"] for node in model["nodes"]} == {"person": "entity:person", "company": "entity:company"}
+    works_at = next(item for item in model["relations"] if item["name"] == "WORKS_AT")
+    assert works_at["label"] == translate_enum("relation", "WORKS_AT", lang="fr")
+    assert [field["name"] for field in works_at["fields"]] == ["sentiment"]
+    sentiment = works_at["fields"][0]
+    assert sentiment["label"] == translate_facet_label("sentiment", lang="fr")
+    assert sentiment["options"] == [
+        [value, translate_enum("sentiment", value, lang="fr")]
+        for value in next(field.options for field in registry.field_specs(None) if field.name == "sentiment")
+    ]
+
+
+def test_page_scripts_post_and_poll_jobs_through_the_shared_editor_script() -> None:
+    static = Path(stock_ontology.web.__file__).parent / "static"
+    for name in ("note_reader.js", "ontology_edit.js"):
+        script = (static / name).read_text(encoding="utf-8")
+        assert "window.StockEditor" in script, name
+        assert "/api/jobs/" not in script and '"POST"' not in script, name

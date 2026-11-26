@@ -239,6 +239,9 @@ Run `./deploy.sh` after pushing `main`. See [docs/deploy.md](docs/deploy.md).
 - Build every `/search` enum option in `build_search_filter_options` from `vocab.py` and relations from the loaded registry; never add values observed in the DB or a hand-kept list. Subtype and status options are `<node_type>:<value>` so a theme stage and a view type with the same name stay apart.
   **Why:** hand-kept lists merged with observed values offered stances such as `outperform` that the ontology does not define, and `consensus` matched both a consensus view and a consensus-stage theme (proposal `search-ontology`, 2026-11-22).
   **Guarded by:** `tests/test_search_ontology_options.py`.
+- Submit browser edits, wait for their jobs, and build relationship editor choices only through `src/stock_ontology/web/static/editor.js` (`StockEditor`) and the one server model `web/shared.py::relationship_editor_model`; never add a job poller, JSON POST helper, or list-facet parser to a page script. Web code reads facet specs only through `OntologyRegistry.field_specs`, never `_facet_specs` or `_vocabulary`.
+  **Why:** the note reader and Ontology page each had their own copy, and they drifted: one poller gave up after 300 tries while the other waited forever, and one split list facets on commas only (proposal `shared-editor-script`, 2026-11-25).
+  **Guarded by:** `tests/test_web_ontology.py::test_page_scripts_post_and_poll_jobs_through_the_shared_editor_script` and `tests/test_web_ontology.py::test_note_reader_and_ontology_record_share_one_relationship_editor`.
 
 ## Tests (Offline)
 

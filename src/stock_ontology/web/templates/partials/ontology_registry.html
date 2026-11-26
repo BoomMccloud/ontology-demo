@@ -8,7 +8,6 @@
         'publish': t('ontology_edit.publish'), 'apply': t('ontology_edit.apply'),
         'correction': t('note_reader.save'), 'cancel': t('ontology_edit.cancel'),
         'working': t('note_reader.working'), 'error': t('ontology_edit.error'),
-        'select_node': t('note_reader.select_node'), 'select_relation': t('note_reader.select_relationship'),
         'linked': t('ontology_edit.linked'), 'ambiguous': t('ontology_edit.ambiguous'),
         'registry_only': t('ontology_edit.registry_only'), 'version_only': t('ontology_edit.version_only'),
         'name':t('ontology.canonical_name'), 'aliases':t('ontology.alternate_names'),
@@ -18,7 +17,7 @@
         'facets':t('ontology.schema_fields')
       } | tojson | forceescape }}"></div>
       {% if registry_note_actions %}
-        <script type="application/json" id="ontology-relationship-editor">{{ relationship_editor_config | tojson }}</script>
+        <script type="application/json" id="relationship-editor-model">{{ relationship_model | tojson }}</script>
       {% endif %}
     {% endif %}
     <section class="facet-card">

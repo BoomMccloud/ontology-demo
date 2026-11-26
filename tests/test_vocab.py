@@ -620,3 +620,15 @@ def test_money_facet_displays_currency_and_qualifier() -> None:
 
     assert format_facet_value({"amount": 1000, "currency": "USD"}) == "USD 1,000"
     assert format_facet_value({"amount": 3100, "currency": "TWD", "qualifier": "at_least"}) == "\u2265 TWD 3,100"
+
+
+def test_field_specs_lists_declared_facets_with_their_vocabulary() -> None:
+    from stock_ontology.registry import create_minimal_registry
+
+    registry = create_minimal_registry()
+    edge = {field.name: field for field in registry.field_specs(None, relation="WORKS_AT")}
+    assert set(edge) == registry.edge_facet_keys("WORKS_AT")
+    assert edge["sentiment"].kind == "enum" and not edge["sentiment"].required
+    assert set(edge["sentiment"].options) == set(vocab.SENTIMENT.members)
+    company = {field.name: field for field in registry.field_specs("entity", "company")}
+    assert company["entity_type"].required and "company" in company["entity_type"].options

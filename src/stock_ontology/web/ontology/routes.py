@@ -210,7 +210,7 @@ def build_router(shell: WebShell) -> APIRouter:
                         ctx.update(build_registry_edit_context(
                             db, ctx, applied=applied, published=reg, data_dir=settings.data_dir,
                             operator_allowed=_operator_allowed(request, shell.registry_origin, confirm=False),
-                            corrections_allowed=shell.note_actions,
+                            corrections_allowed=shell.note_actions, lang=lang,
                         ))
                 elif active == "schema":
                     ctx = build_schema_context(db, reg, node_key=node, relation_key=relation, lang=lang)
