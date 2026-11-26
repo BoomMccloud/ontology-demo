@@ -485,8 +485,10 @@ def test_note_reader_extraction_workflow(tmp_path: Path) -> None:
     after_create, = relationships()
     assert after_create["to_id"] == new_id
 
+    # The reader's swap button flips the endpoints in the form, so the request names them swapped.
     response = act("/api/notes/relationship", {
-        "file": "focus.md", "edge_id": after_create["edge_id"], "relation": "OWNS", "reverse": True,
+        "file": "focus.md", "edge_id": after_create["edge_id"],
+        "changes": {"relation": "OWNS", "from_id": after_create["to_id"], "to_id": after_create["from_id"]},
     })
     assert response.status_code == 200, response.text
     corrected, = relationships()
@@ -496,7 +498,7 @@ def test_note_reader_extraction_workflow(tmp_path: Path) -> None:
 
     for edge_id, relation in ((corrected["edge_id"], "NONEXISTENT_RELATION"), (peer_edges[0]["edge_id"], "COMPETE")):
         invalid = act("/api/notes/relationship", {
-            "file": "focus.md", "edge_id": edge_id, "relation": relation,
+            "file": "focus.md", "edge_id": edge_id, "changes": {"relation": relation},
         })
         assert 400 <= invalid.status_code < 500, invalid.text
     assert relationships() == [corrected]
@@ -511,7 +513,7 @@ def test_note_reader_extraction_workflow(tmp_path: Path) -> None:
     assert "Extraction fails here." in reader
     assert not shows_entity(reader, new_id, "Arbor Systems")
     stale = act("/api/notes/relationship", {
-        "file": "focus.md", "edge_id": corrected["edge_id"], "relation": "BUY",
+        "file": "focus.md", "edge_id": corrected["edge_id"], "changes": {"relation": "BUY"},
     })
     assert 400 <= stale.status_code < 500, stale.text
     assert process().status_code >= 400
@@ -774,12 +776,14 @@ def test_note_reader_can_correct_both_relationship_endpoints(tmp_path: Path) -> 
     settings = Settings(db_path=db_path, data_dir=data_dir, registry_path=registry_path, embedding_dim=DIM)
     llm = FakeWebLLM()
     client = TestClient(_create_library_app(settings, llm=llm))
-    payload = {"file": "note.md", "edge_id": "original", "relation": "BUY"}
+    def edit(**endpoints: str) -> dict[str, Any]:
+        return {"file": "note.md", "edge_id": "original", "changes": {"relation": "BUY", **endpoints}}
+
     for endpoints in ({"from_id": "missing"}, {"from_id": "fact"}, {"from_id": "b"}):
-        response = _note_action(client, settings, llm, "/api/notes/relationship", {**payload, **endpoints})
+        response = _note_action(client, settings, llm, "/api/notes/relationship", edit(**endpoints))
         assert response.status_code == 422, response.text
 
-    response = _note_action(client, settings, llm, "/api/notes/relationship", {**payload, "from_id": "c", "to_id": "d"})
+    response = _note_action(client, settings, llm, "/api/notes/relationship", edit(from_id="c", to_id="d"))
     assert response.status_code == 200, response.text
 
     with OntologyDB(db_path, embedding_dim=DIM, read_only=True) as db:
@@ -839,9 +843,10 @@ def test_note_reader_adds_and_deletes_relationships(tmp_path: Path) -> None:
 
     add_url = "/api/notes/relationship/add"
     delete_url = "/api/notes/relationship/delete"
-    add = {"file": "note.md", "from_id": "alpha", "relation": "BUY", "to_id": "beta"}
-    for invalid in ({"to_id": "missing"}, {"to_id": "alpha"}, {"file": "unprocessed.md"},
-                    {"expected_hash": "stale"}):
+    fields = {"from_id": "alpha", "relation": "BUY", "to_id": "beta"}
+    add = {"file": "note.md", "changes": fields}
+    for invalid in ({"changes": {**fields, "to_id": "missing"}}, {"changes": {**fields, "to_id": "alpha"}},
+                    {"file": "unprocessed.md"}, {"expected_hash": "stale"}):
         response = _note_action(client, settings, llm, add_url, {**add, **invalid})
         assert 400 <= response.status_code < 500, response.text
     assert note_edges() == []
@@ -946,7 +951,7 @@ def test_note_reader_adds_and_deletes_entities(tmp_path: Path) -> None:
 
     for from_id, to_id in (("alpha", "beta"), ("beta", "cedar")):
         response = _note_action(client, settings, llm, "/api/notes/relationship/add", {
-            "file": "note.md", "from_id": from_id, "to_id": to_id, "relation": "BUY",
+            "file": "note.md", "changes": {"from_id": from_id, "to_id": to_id, "relation": "BUY"},
         })
         assert response.status_code == 200, response.text
     with OntologyDB(db_path, embedding_dim=DIM, registry=registry) as db:
@@ -1324,28 +1329,12 @@ def test_note_reader_form_opened_before_an_ontology_correction_cannot_reapply(tm
 
     # A reader form still holds the edge ID it rendered before the Ontology page corrected that edge.
     stale_form = client.post(_EDIT_URL, json={
-        "file": "note.md", "edge_id": "original", "relation": "BUY", "from_id": "a", "to_id": "d",
+        "file": "note.md", "edge_id": "original", "changes": {"relation": "BUY", "from_id": "a", "to_id": "d"},
     })
     judged = _judged(client, settings, llm, stale_form)
     assert (judged.phase, judged.status) == ("submit", 404), judged
     assert judged.detail == translate("service_error.relationship_missing", lang="en")
     assert _note_graph(settings) == corrected
-
-
-def test_note_reader_reverse_reviews_like_the_swapped_endpoints(tmp_path: Path) -> None:
-    from stock_ontology.services.corrections import review_reader_correction
-
-    settings, _, _ = _correction_workspace(tmp_path / "graph")
-    path = (settings.data_dir / "note.md").resolve()
-    with OntologyDB(settings.db_path, embedding_dim=DIM, read_only=True) as db:
-        def review(params: dict[str, Any]) -> dict[str, Any]:
-            return review_reader_correction(db, path, settings.data_dir, "note.relationship",
-                                             {"edge_id": "original", "relation": "COMPETE", **params})
-
-        reversed_ = review({"reverse": True})
-        swapped = review({"from_id": "b", "to_id": "a"})
-    assert reversed_["edges"] == swapped["edges"]
-    assert reversed_["request"]["changes"] == swapped["request"]["changes"]
 
 
 def test_ontology_preview_judges_an_unregistered_relation_before_its_fields(tmp_path: Path) -> None:

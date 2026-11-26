@@ -407,11 +407,6 @@ def test_corrections_are_claimed_ahead_of_earlier_extraction(tmp_path: Path) -> 
         second = db.jobs.claim(clock(), 30)
     assert first is not None and second is not None
     assert (first.job_id, second.job_id) == (correction.job_id, extraction.job_id)
-    # Reader relationship jobs queued before they were retired still run ahead of extraction.
-    from stock_ontology.services.processing import JOB_KINDS, job_priority
-
-    retired = [kind for kind, entry in JOB_KINDS.items() if entry.submit == "retired"]
-    assert retired and {job_priority(kind) for kind in retired} == {job_priority("note.entity.delete")}
 
 
 # --- proposal `job-kind-registry`: one table of job kinds
@@ -420,7 +415,6 @@ _DECLARED_KINDS = {
     **{kind: (0, "correction") for kind in (
         "note.relink", "note.entity.add", "note.entity.delete", "note.ontology.correction",
     )},
-    **{kind: (0, "retired") for kind in ("note.relationship", "note.relationship.add", "note.relationship.delete")},
     **{kind: (10, "operator") for kind in (
         "ingest", "reembed", "repair", "registry.publish", "registry.apply", "registry.apply.preview",
     )},

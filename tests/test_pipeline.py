@@ -2045,16 +2045,17 @@ def test_selected_note_rejects_source_change_while_writing(tmp_path: Path, monke
 
 
 def _reader_correction(
-    pipeline: IngestionPipeline, path: Path, kind: str, params: dict[str, Any],
+    pipeline: IngestionPipeline, path: Path, kind: str, *, edge_id: str = "", changes: dict[str, Any] | None = None,
 ) -> None:
     """Apply a note-reader relationship correction the way the reader's route and the worker do."""
-    from stock_ontology.services.corrections import review_reader_correction
+    from stock_ontology.services.corrections import review_note_correction
 
-    reviewed = review_reader_correction(pipeline.db, path.resolve(), path.parent.resolve(), kind, params)
+    reviewed = review_note_correction(pipeline.db, path.resolve(), path.parent.resolve(),
+                                      kind=kind, edge_id=edge_id, changes=changes or {})
     pipeline.apply_note_correction(path.resolve(), reviewed)
 
 
-@pytest.mark.parametrize("action", ["relink", "reverse"])
+@pytest.mark.parametrize("action", ["relink", "swap"])
 def test_note_correction_updates_only_current_note_edges(tmp_path: Path, action: str) -> None:
     from stock_ontology.models import Edge
 
@@ -2082,11 +2083,11 @@ def test_note_correction_updates_only_current_note_edges(tmp_path: Path, action:
             assert (remaining["from_id"], remaining["to_id"]) == ("company_b", "company_c")
             assert {node.id for node in db.list_note_entities("note")} == {"company_b", "company_c"}
         else:
-            reverse = {"edge_id": "focus_edge", "relation": "OWNS", "reverse": True, "expected_hash": content_hash}
-            _reader_correction(pipeline, path, "note.relationship", reverse)
-            # The corrected edge has a new ID, so the same form cannot reverse it again.
+            swap = {"relation": "OWNS", "from_id": "company_b", "to_id": "company_a"}
+            _reader_correction(pipeline, path, "relationship", edge_id="focus_edge", changes=swap)
+            # The corrected edge has a new ID, so the same form cannot swap it again.
             with pytest.raises(ServiceError) as missing:
-                _reader_correction(pipeline, path, "note.relationship", reverse)
+                _reader_correction(pipeline, path, "relationship", edge_id="focus_edge", changes=swap)
             assert missing.value.key == "service_error.relationship_missing"
             assert {(edge["from_id"], edge["to_id"]) for edge in db.list_note_edges("note")} == {
                 ("company_b", "company_a"), ("company_a", "company_c"),
@@ -2115,10 +2116,9 @@ def test_delete_note_relationship_removes_only_its_pending_edge(tmp_path: Path) 
 
         pipeline = IngestionPipeline(db, FakePipelineLLM(), tmp_path)
         with pytest.raises(ServiceError) as missing:
-            _reader_correction(pipeline, path, "note.relationship.delete",
-                               {"edge_id": "peer-pending", "expected_hash": content_hash})
+            _reader_correction(pipeline, path, "relationship_delete", edge_id="peer-pending")
         assert missing.value.key == "service_error.relationship_missing"
-        _reader_correction(pipeline, path, "note.relationship.delete", {"edge_id": "pending", "expected_hash": content_hash})
+        _reader_correction(pipeline, path, "relationship_delete", edge_id="pending")
 
         assert db.list_note_edges("note", pending=True) == []
         assert [edge["edge_id"] for edge in db.list_note_edges("peer", pending=True)] == ["peer-pending"]
@@ -2144,14 +2144,14 @@ def test_add_note_relationship_accepts_required_fields_from_shipped_registry(tmp
         db.upsert_ingestion_log("note.md", "note", content_hash, entity_ids=())
         pipeline = IngestionPipeline(db, FakePipelineLLM(), tmp_path)
 
-        add = {"from_id": "company", "relation": "EXPOSED_TO", "to_id": "theme", "expected_hash": content_hash}
-        for facets in (None, {"sentiment": "invalid"}):
+        add = {"from_id": "company", "relation": "EXPOSED_TO", "to_id": "theme"}
+        for facets in ({}, {"facets": {"sentiment": "invalid"}}):
             with pytest.raises(ServiceError, match="sentiment") as refused:
-                _reader_correction(pipeline, path, "note.relationship.add", {**add, "facets": facets})
+                _reader_correction(pipeline, path, "relationship_add", changes={**add, **facets})
             assert refused.value.code == "invalid"
         assert db.list_note_edges("note") == []
 
-        _reader_correction(pipeline, path, "note.relationship.add", {**add, "facets": {"sentiment": "positive"}})
+        _reader_correction(pipeline, path, "relationship_add", changes={**add, "facets": {"sentiment": "positive"}})
         edge, = db.list_note_edges("note")
         assert (edge["relation"], edge["facets"]["sentiment"]) == ("EXPOSED_TO", "positive")
 
