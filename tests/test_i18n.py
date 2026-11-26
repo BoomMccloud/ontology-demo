@@ -301,3 +301,39 @@ def test_every_vocab_member_has_an_enum_key_in_every_locale() -> None:
         if f"enum.{v.group}.{member}" not in catalogs.get(code, {})
     ]
     assert missing == []
+
+
+def test_thesis_pages_and_claim_forms_render_in_every_language(tmp_path: Path) -> None:
+    """The thesis page, the theme page's thesis list and forms, and the company page's thesis
+    section resolve every locale key in all six languages (proposal theme-catalysts-phase-1)."""
+    from fastapi.testclient import TestClient
+    from web_support import DIM as WEB_DIM
+    from web_support import FakeWebLLM, seed_web_db
+
+    from stock_ontology.services import ProcessingService
+    from stock_ontology.web import create_app
+    from stock_ontology.worker import Worker
+
+    db_path = tmp_path / "claims_i18n.db"
+    seed_web_db(db_path)
+    settings = Settings(db_path=db_path, embedding_dim=WEB_DIM, data_dir=tmp_path, registry_path=tmp_path / "none.json")
+
+    def apply(kind: str, params: dict[str, Any]) -> dict[str, Any]:
+        ref = ProcessingService(settings).submit_claim(kind, params)
+        Worker(settings, llm_factory=lambda _s: None).run_once(scan=False)
+        return ProcessingService(settings).get_status(ref.job_id)["result"]
+
+    thesis_id = apply("claim.thesis.add", {"theme_id": "thm_power", "statement": "Cooling wins."})["thesis_id"]
+    apply("claim.membership.add", {
+        "thesis_id": thesis_id, "company_id": "ent_nvda", "status": "watching",
+        "catalyst_event": "Qualification", "catalyst_by": "2027-06-30", "expected_effect": "Volume orders.",
+    })
+    llm = FakeWebLLM()
+    client = TestClient(create_app(settings, llm=llm, agent_model=llm.model, note_actions=True))
+    key_re = re.compile(r"(?<![.\w])(?:thesis|theme|entity|page_context|api)\.[a-z_]+\b")
+    for lang in SUPPORTED_LANGUAGE_CODES:
+        for url in (f"/thesis/{thesis_id}", "/theme/thm_power", "/entity/ent_nvda"):
+            page = client.get(url, params={"lang": lang})
+            assert page.status_code == 200, (lang, url)
+            assert key_re.findall(page.text) == [], (lang, url, key_re.findall(page.text))
+        assert translate("thesis.status_candidate", lang=lang) in client.get(f"/thesis/{thesis_id}?lang={lang}").text

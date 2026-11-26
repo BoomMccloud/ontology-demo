@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from web_support import DIM, FakeWebLLM, seed_web_db
 
 from stock_ontology.config import Settings
+from stock_ontology.db import OntologyDB
 from stock_ontology.web import create_app
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "src" / "stock_ontology" / "web"
@@ -55,6 +56,7 @@ VARIANTS: list[tuple[str, str, str, str | None]] = [
     ("/entity/ent_nvda", "research", "companies", "NVIDIA"),
     ("/entity/ent_kenji", "research", "companies", "Kenji Sato"),
     ("/theme/thm_power", "research", "themes", "AI Data Center Power Bottleneck"),
+    ("/thesis/ths_seed", "research", "themes", "The rollout benefits liquid cooling suppliers."),
     ("/ontology", "ontology", "registry", None),
     ("/ontology?tab=entity", "ontology", "entity", None),
     ("/ontology?tab=event", "ontology", "event", None),
@@ -131,6 +133,12 @@ def _parse(text: str) -> _NavParser:
 def client(tmp_path: Path) -> TestClient:
     db_path = tmp_path / "nav.db"
     seed_web_db(db_path)
+    with OntologyDB(db_path, embedding_dim=DIM) as db:
+        db.conn.execute(
+            "INSERT INTO claim_theses (id, theme_id, statement, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            ("ths_seed", "thm_power", "The rollout benefits liquid cooling suppliers.", "2026-11-26", "2026-11-26"),
+        )
+        db.conn.commit()
     data_dir = tmp_path / "data"
     (data_dir / "NVDA").mkdir(parents=True)
     (data_dir / "NVDA" / "2026-10-15_q3.md").write_text(

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('thesis.page_title', statement=thesis.statement) }}{% endblock %}
+
+{% block content %}
+<div data-claim-forms data-busy-label="{{ t('thesis.saving') }}" data-queued-label="{{ t('thesis.queued') }}" data-failed-label="{{ t('thesis.failed') }}">
+<section class="facet-card">
+  <div class="entry-meta">
+    <strong>{{ t('thesis.heading') }}</strong> &middot; {{ t('thesis.theme') }}: <a href="/theme/{{ thesis.theme_id }}">{{ thesis.theme_name }}</a>
+  </div>
+  <h1 class="u-m-0 u-fs-1p55rem">{{ thesis.statement }}</h1>
+  {% if claim_actions %}
+    <details class="u-mt-10px">
+      <summary class="u-cursor-pointer">{{ t('thesis.edit') }}</summary>
+      <form class="note-form u-mt-10px" data-claim-kind="claim.thesis.edit">
+        <input type="hidden" name="thesis_id" value="{{ thesis.id }}">
+        <label for="thesis-statement">{{ t('thesis.statement') }}</label>
+        <textarea id="thesis-statement" name="statement" rows="2" required>{{ thesis.statement }}</textarea>
+        <button type="submit" class="retro-btn">{{ t('thesis.save') }}</button>
+      </form>
+      <form class="note-form u-mt-10px" data-claim-kind="claim.thesis.remove" data-claim-confirm="{{ t('thesis.confirm_remove') }}" data-claim-done="/theme/{{ thesis.theme_id }}">
+        <input type="hidden" name="thesis_id" value="{{ thesis.id }}">
+        <button type="submit" class="retro-btn">{{ t('thesis.remove') }}</button>
+      </form>
+    </details>
+  {% endif %}
+</section>
+
+<section id="sec-thesis-companies" class="section-block" aria-label="{{ t('thesis.companies') }}">
+  <h2>{{ t('thesis.companies') }} ({{ memberships | length }})</h2>
+  {% if memberships %}
+  <table class="catalog-table">
+    <thead>
+      <tr>
+        <th>{{ t('thesis.col_company') }}</th>
+        <th>{{ t('thesis.col_status') }}</th>
+        <th>{{ t('thesis.col_reason') }}</th>
+        <th>{{ t('thesis.col_catalyst') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in memberships %}
+        <tr>
+          <td>
+            <a href="/entity/{{ row.company.id }}"><strong>{{ row.company.name }}</strong></a>
+            {% if row.company.ticker %}<span class="mono">({{ row.company.ticker }})</span>{% endif %}
+          </td>
+          <td><span class="badge badge-{{ 'official' if row.status == 'in' else 'warn' }}">{{ t('thesis.status_' ~ row.status) }}</span></td>
+          <td>{{ row.reason or t('common.none') }}</td>
+          <td>
+            {% if row.catalyst %}
+              <div>{{ t('thesis.catalyst_summary', event=row.catalyst.event, date=row.catalyst.by_date) }}</div>
+              <div class="entry-meta">{{ t('thesis.expected_effect_label') }} {{ row.catalyst.expected_effect }}</div>
+            {% else %}
+              {{ t('common.none') }}
+            {% endif %}
+            {% if claim_actions %}
+              <details class="u-mt-10px">
+                <summary class="u-cursor-pointer">{{ t('thesis.edit_membership') }}</summary>
+                <form class="note-form u-mt-10px" data-claim-kind="claim.membership.edit">
+                  <input type="hidden" name="membership_id" value="{{ row.id }}">
+                  <label>{{ t('thesis.status') }}
+                    <select name="status">
+                      <option value="in"{% if row.status == 'in' %} selected{% endif %}>{{ t('thesis.status_in') }}</option>
+                      <option value="watching"{% if row.status != 'in' %} selected{% endif %}>{{ t('thesis.status_watching') }}</option>
+                    </select>
+                  </label>
+                  <label>{{ t('thesis.reason') }}<textarea name="reason" rows="2">{{ row.reason }}</textarea></label>
+                  <label>{{ t('thesis.catalyst_event') }}<input name="catalyst_event" value="{{ row.catalyst.event if row.catalyst else '' }}"></label>
+                  <label>{{ t('thesis.catalyst_by') }}<input type="date" name="catalyst_by" value="{{ row.catalyst.by_date if row.catalyst else '' }}"></label>
+                  <label>{{ t('thesis.expected_effect') }}<textarea name="expected_effect" rows="2">{{ row.catalyst.expected_effect if row.catalyst else '' }}</textarea></label>
+                  <button type="submit" class="retro-btn">{{ t('thesis.save') }}</button>
+                </form>
+                <form class="note-form u-mt-10px" data-claim-kind="claim.membership.remove" data-claim-confirm="{{ t('thesis.confirm_remove_membership') }}">
+                  <input type="hidden" name="membership_id" value="{{ row.id }}">
+                  <button type="submit" class="retro-btn">{{ t('thesis.remove_membership') }}</button>
+                </form>
+              </details>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p>{{ t('thesis.companies_empty') }}</p>
+  {% endif %}
+</section>
+
+{% if claim_actions %}
+<section id="add-company" class="section-block" aria-label="{{ t('thesis.add_company') }}">
+  <h2>{{ t('thesis.add_company') }}</h2>
+  {% if company_options %}
+  <form class="note-form" data-claim-kind="claim.membership.add">
+    <input type="hidden" name="thesis_id" value="{{ thesis.id }}">
+    <label>{{ t('thesis.company') }}
+      <select name="company_id" required>
+        <option value="">{{ t('thesis.choose_company') }}</option>
+        {% for option in company_options %}
+          <option value="{{ option.id }}"{% if option.id == selected_company %} selected{% endif %}>{{ option.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>{{ t('thesis.status') }}
+      <select name="status">
+        <option value="in">{{ t('thesis.status_in') }}</option>
+        <option value="watching">{{ t('thesis.status_watching') }}</option>
+      </select>
+    </label>
+    <label>{{ t('thesis.reason') }}<textarea name="reason" rows="2"></textarea></label>
+    <p class="entry-meta u-m-0">{{ t('thesis.watching_hint') }}</p>
+    <label>{{ t('thesis.catalyst_event') }}<input name="catalyst_event"></label>
+    <label>{{ t('thesis.catalyst_by') }}<input type="date" name="catalyst_by"></label>
+    <label>{{ t('thesis.expected_effect') }}<textarea name="expected_effect" rows="2"></textarea></label>
+    <button type="submit" class="retro-btn">{{ t('thesis.add_company') }}</button>
+  </form>
+  {% else %}
+    <p>{{ t('thesis.no_companies_left') }}</p>
+  {% endif %}
+</section>
+{% endif %}
+</div>
+
+<p class="portal-more-link">
+  <a href="/ask?context={{ page_context | urlencode }}" data-clippy-context="{{ page_context }}">{{ t('ask.link_from_theme', name=thesis.statement) }}</a>
+</p>
+{% endblock %}
+
+{% block scripts %}
+{% if claim_actions %}<script src="/static/claims.js"></script>{% endif %}
+{% endblock %}

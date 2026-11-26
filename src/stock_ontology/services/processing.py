@@ -12,11 +12,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,14 +35,19 @@ CORRECTION_KINDS = frozenset({
     "note.relationship", "note.relationship.add", "note.relationship.delete",
     "note.ontology.correction",
 })
+# Claim graph writes: the team's theses and thesis memberships, outside the ontology.
+CLAIM_KINDS = frozenset({
+    "claim.thesis.add", "claim.thesis.edit", "claim.thesis.remove",
+    "claim.membership.add", "claim.membership.edit", "claim.membership.remove",
+})
 OPERATOR_KINDS = frozenset({"ingest", "reembed", "repair", "registry.publish", "registry.apply",
                            "registry.apply.preview"})
 PROCESS_KIND = "process"
 
 
 def job_priority(kind: str) -> int:
-    """Lower runs first: reader corrections, then operator commands, then note extraction."""
-    if kind in CORRECTION_KINDS:
+    """Lower runs first: reader corrections and claim writes, then operator commands, then note extraction."""
+    if kind in CORRECTION_KINDS or kind in CLAIM_KINDS:
         return 0
     if kind in OPERATOR_KINDS:
         return 10
@@ -86,6 +92,84 @@ def _recorded_status(job: Job, spooled: list[Submission]) -> dict[str, Any]:
     if status["state"] == "failed" and any(s.op == "retry" for s in spooled):
         status.update(state="queued", attempts=0, error_code=None, error=None)
     return status
+
+
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+MEMBERSHIP_FIELDS = ("status", "reason", "catalyst_event", "catalyst_by", "expected_effect")
+
+
+def _invalid(message: str) -> ServiceError:
+    return ServiceError("invalid", message)
+
+
+def _claim_text(params: dict[str, Any], key: str, *, required: bool = False) -> str:
+    value = params.get(key)
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        raise _invalid(f"{key} must be text.")
+    value = value.strip()
+    if required and not value:
+        raise _invalid(f"{key} is required.")
+    return value
+
+
+def claim_date(value: str) -> str:
+    """A real calendar date written YYYY-MM-DD, or an `invalid` error."""
+    if not _ISO_DATE.fullmatch(value):
+        raise _invalid("catalyst_by must be a date written YYYY-MM-DD.")
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError as exc:
+        raise _invalid("catalyst_by must be a real date.") from exc
+
+
+def check_membership(fields: dict[str, Any]) -> dict[str, str]:
+    """Validate a whole membership. *In* needs a written reason. *Watching* needs the event it waits
+    for, a by-date, and why it would move the company in. Returns the cleaned fields."""
+    status = fields.get("status")
+    if status not in ("in", "watching"):
+        raise _invalid("status must be in or watching.")
+    cleaned = {key: _claim_text(fields, key) for key in MEMBERSHIP_FIELDS if key != "status"}
+    cleaned["status"] = status
+    if status == "in":
+        if not cleaned["reason"]:
+            raise _invalid("An in decision needs a written reason.")
+        return {**cleaned, "catalyst_event": "", "catalyst_by": "", "expected_effect": ""}
+    for key in ("catalyst_event", "catalyst_by", "expected_effect"):
+        if not cleaned[key]:
+            raise _invalid(f"Watching needs {key}.")
+    cleaned["catalyst_by"] = claim_date(cleaned["catalyst_by"])
+    return cleaned
+
+
+def check_claim(kind: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Validate a claim write's shape and return the payload to queue. The worker checks that the
+    referenced theme, company, thesis, or membership exists, and rechecks an edit as a whole."""
+    if kind == "claim.thesis.add":
+        return {"theme_id": _claim_text(params, "theme_id", required=True),
+                "statement": _claim_text(params, "statement", required=True)}
+    if kind == "claim.thesis.edit":
+        return {"thesis_id": _claim_text(params, "thesis_id", required=True),
+                "statement": _claim_text(params, "statement", required=True)}
+    if kind == "claim.thesis.remove":
+        return {"thesis_id": _claim_text(params, "thesis_id", required=True)}
+    if kind == "claim.membership.add":
+        return {"thesis_id": _claim_text(params, "thesis_id", required=True),
+                "company_id": _claim_text(params, "company_id", required=True),
+                **check_membership(params)}
+    if kind == "claim.membership.edit":
+        if "thesis_id" in params or "company_id" in params:
+            raise _invalid("A membership's thesis and company can't change; remove it and add a new one.")
+        changes: dict[str, Any] = {key: _claim_text(params, key) for key in MEMBERSHIP_FIELDS if key in params}
+        if "status" in changes and changes["status"] not in ("in", "watching"):
+            raise _invalid("status must be in or watching.")
+        if changes.get("catalyst_by"):
+            changes["catalyst_by"] = claim_date(changes["catalyst_by"])
+        return {"membership_id": _claim_text(params, "membership_id", required=True), **changes}
+    if kind == "claim.membership.remove":
+        return {"membership_id": _claim_text(params, "membership_id", required=True)}
+    raise _invalid(f"Unknown claim write: {kind}")
 
 
 def process_job_id(file: str, revision: str) -> str:
@@ -142,6 +226,12 @@ class ProcessingService:
         return self._submit(
             f"job_{uuid.uuid4().hex}", kind, file, str(params.get("expected_hash") or ""), {"file": file, **params}
         )
+
+    def submit_claim(self, kind: str, params: dict[str, Any]) -> JobRef:
+        """Queue a claim graph write; the result carries `thesis_id` or `membership_id`."""
+        if kind not in CLAIM_KINDS:
+            raise ServiceError("invalid", f"Unknown claim write: {kind}")
+        return self._submit(f"job_{uuid.uuid4().hex}", kind, "", "", check_claim(kind, params))
 
     def submit_operator(self, kind: str, params: dict[str, Any]) -> JobRef:
         if kind not in OPERATOR_KINDS:

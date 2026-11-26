@@ -141,6 +141,14 @@ def _theme(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
     return NavState("research", "themes", "component", [_ROOT, _crumb(_THEMES), Crumb(label=name)])
 
 
+def _thesis(_q: Mapping[str, str], ctx: Mapping[str, Any]) -> NavState:
+    thesis = ctx.get("thesis")
+    theme_crumb = Crumb(label=str(getattr(thesis, "theme_name", "")), href=f"/theme/{quote(str(getattr(thesis, 'theme_id', '')))}")
+    return NavState("research", "themes", "component", [
+        _ROOT, _crumb(_THEMES), theme_crumb, Crumb(label=str(getattr(thesis, "statement", ""))),
+    ])
+
+
 _NOTES_BY_VIEW = {"company": _NOTES_BY_COMPANY, "author": _NOTES_BY_AUTHOR, "all": _NOTES_ALL}
 
 
@@ -212,6 +220,7 @@ NAV_ROUTES: dict[str, Resolver] = {
     "/search": _search,
     "/entity/{entity_id}": _entity,
     "/theme/{theme_id}": _theme,
+    "/thesis/{thesis_id}": _thesis,
     "/catalog": _catalog,
     "/notes/new": _note_new,
     "/ontology": _ontology,

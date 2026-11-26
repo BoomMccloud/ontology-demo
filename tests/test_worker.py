@@ -850,3 +850,92 @@ def test_run_forever_continues_after_a_tick_raises(tmp_path: Path, monkeypatch: 
     with pytest.raises(_StopWorker):
         worker.run_forever(0)
     assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Claim jobs (proposal theme-catalysts-phase-1): refusals for missing references
+# ---------------------------------------------------------------------------
+
+
+def _claim_settings(tmp_path: Path) -> Settings:
+    from web_support import DIM as WEB_DIM
+    from web_support import seed_web_db
+
+    db_path = tmp_path / "claims.db"
+    seed_web_db(db_path)
+    return Settings(db_path=db_path, embedding_dim=WEB_DIM, data_dir=tmp_path, registry_path=tmp_path / "none.json")
+
+
+def _claim_job(settings: Settings, kind: str, params: dict[str, Any]) -> dict[str, Any]:
+    from stock_ontology.services import ProcessingService
+    from stock_ontology.worker import Worker
+
+    ref = ProcessingService(settings).submit_claim(kind, params)
+    Worker(settings, llm_factory=lambda _s: None).run_once(scan=False)
+    return ProcessingService(settings).get_status(ref.job_id)
+
+
+def test_claim_jobs_refuse_a_missing_theme_company_thesis_or_membership(tmp_path: Path) -> None:
+    from stock_ontology.services import job_priority
+
+    settings = _claim_settings(tmp_path)
+    assert job_priority("claim.membership.add") == job_priority("note.relink") == 0
+
+    def refused(kind: str, params: dict[str, Any]) -> str:
+        status = _claim_job(settings, kind, params)
+        assert status["state"] == "failed", status
+        return str(status["error_code"])
+
+    assert refused("claim.thesis.add", {"theme_id": "thm_missing", "statement": "S"}) == "invalid"
+    assert refused("claim.thesis.add", {"theme_id": "ent_nvda", "statement": "S"}) == "invalid", "not a theme"
+    thesis_id = _claim_job(settings, "claim.thesis.add", {"theme_id": "thm_power", "statement": "S"})["result"]["thesis_id"]
+    member = {"status": "in", "reason": "R"}
+    assert refused("claim.membership.add", {"thesis_id": "ths_missing", "company_id": "ent_nvda", **member}) == "invalid"
+    assert refused("claim.membership.add", {"thesis_id": thesis_id, "company_id": "ent_missing", **member}) == "invalid"
+    assert refused("claim.membership.add", {"thesis_id": thesis_id, "company_id": "ent_kenji", **member}) == "invalid", (
+        "a person is not a company"
+    )
+    _claim_job(settings, "claim.membership.add", {"thesis_id": thesis_id, "company_id": "ent_nvda", **member})
+    assert refused("claim.membership.add", {"thesis_id": thesis_id, "company_id": "ent_nvda", **member}) == "conflict"
+    assert refused("claim.thesis.edit", {"thesis_id": "ths_missing", "statement": "S"}) == "not_found"
+    assert refused("claim.thesis.remove", {"thesis_id": "ths_missing"}) == "not_found"
+    assert refused("claim.membership.edit", {"membership_id": "mbr_missing", "reason": "R"}) == "not_found"
+    assert refused("claim.membership.remove", {"membership_id": "mbr_missing"}) == "not_found"
+
+
+def test_claim_membership_edit_rechecks_the_whole_membership(tmp_path: Path) -> None:
+    settings = _claim_settings(tmp_path)
+    thesis_id = _claim_job(settings, "claim.thesis.add", {"theme_id": "thm_power", "statement": "S"})["result"]["thesis_id"]
+    membership_id = _claim_job(settings, "claim.membership.add", {
+        "thesis_id": thesis_id, "company_id": "ent_nvda", "status": "watching",
+        "catalyst_event": "Qualification", "catalyst_by": "2027-06-30", "expected_effect": "Volume orders.",
+    })["result"]["membership_id"]
+    # Moving a candidate in needs a written reason.
+    status = _claim_job(settings, "claim.membership.edit", {"membership_id": membership_id, "status": "in"})
+    assert (status["state"], status["error_code"]) == ("failed", "invalid")
+    status = _claim_job(settings, "claim.membership.edit", {
+        "membership_id": membership_id, "status": "in", "reason": "Qualified in March.",
+    })
+    assert status["state"] == "succeeded", status
+
+
+def test_claim_routes_queue_jobs_only_with_actions_enabled(tmp_path: Path) -> None:
+    from web_support import FakeWebLLM
+
+    settings = _claim_settings(tmp_path)
+    llm = FakeWebLLM()
+    body = {"kind": "claim.thesis.add", "params": {"theme_id": "thm_power", "statement": "S"}}
+    readonly = TestClient(create_app(settings, llm=llm, agent_model=llm.model))
+    assert readonly.post("/api/claims", json=body).status_code == 503
+    assert "data-claim-kind" not in readonly.get("/theme/thm_power").text
+
+    client = TestClient(create_app(settings, llm=llm, agent_model=llm.model, note_actions=True))
+    assert 'data-claim-kind="claim.thesis.add"' in client.get("/theme/thm_power").text
+    queued = client.post("/api/claims", json=body)
+    assert queued.status_code == 202 and queued.json()["state"] == "queued"
+    bad = client.post("/api/claims", json={"kind": "claim.membership.add", "params": {
+        "thesis_id": "t", "company_id": "c", "status": "watching", "catalyst_event": "E",
+        "catalyst_by": "end of Q2", "expected_effect": "X",
+    }})
+    assert bad.status_code == 422
+    assert client.post("/api/claims", json={"kind": "note.relink", "params": {}}).status_code == 422

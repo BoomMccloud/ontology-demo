@@ -51,7 +51,7 @@ from stock_ontology.services import (
 )
 from stock_ontology.services.notes import has_changes
 from stock_ontology.services.corrections import review_note_correction
-from stock_ontology.services.processing import process_job_id
+from stock_ontology.services.processing import check_membership, process_job_id
 from stock_ontology.services.registry import changed_fields, unique_labels
 
 logger = logging.getLogger(__name__)
@@ -395,6 +395,8 @@ class Worker:
             return self._run_process(db, job)
         if job.kind.startswith("note."):
             return self._run_correction(db, job)
+        if job.kind.startswith("claim."):
+            return self._run_claim(db, job)
         if job.kind == "ingest":
             return self._run_ingest(db, job)
         if job.kind == "reembed":
@@ -556,6 +558,75 @@ class Worker:
                 self._wrote(db, job)
         updated = self._finish_consensus(db, pipeline, replace(job, stage="consensus"))
         return {"file": job.target, "consensus_updated_for": updated}
+
+    # --- claim graph jobs (each finishes its job inside the transaction that writes the claim)
+
+    def _run_claim(self, db: OntologyDB, job: Job) -> None:
+        """Apply one claim write. Claim jobs write only `claim_*` rows, never the ontology."""
+        with db.transaction(immediate=True):
+            self._check(db, job)
+            result = self._apply_claim(db, job.kind, job.payload)
+            db.jobs.finish(job.job_id, job.claim_id or "", result, self.clock())
+
+    @staticmethod
+    def _require_node(db: OntologyDB, node_id: str, node_type: str, entity_type: str | None = None) -> None:
+        node = db.get_node(node_id)
+        if node is None or node.node_type != node_type or (
+            entity_type is not None and node.facets.get("entity_type") != entity_type
+        ):
+            raise ServiceError("invalid", f"No {entity_type or node_type} with id {node_id}.")
+
+    def _apply_claim(self, db: OntologyDB, kind: str, params: dict[str, Any]) -> dict[str, Any]:
+        claims = db.claims
+        if kind == "claim.thesis.add":
+            self._require_node(db, params["theme_id"], "theme")
+            return {"thesis_id": claims.add_thesis(params["theme_id"], params["statement"])}
+        if kind == "claim.thesis.edit":
+            if not claims.edit_thesis(params["thesis_id"], params["statement"]):
+                raise ServiceError("not_found", f"Thesis not found: {params['thesis_id']}")
+            return {"thesis_id": params["thesis_id"]}
+        if kind == "claim.thesis.remove":
+            if not claims.remove_thesis(params["thesis_id"]):
+                raise ServiceError("not_found", f"Thesis not found: {params['thesis_id']}")
+            return {"thesis_id": params["thesis_id"]}
+        if kind == "claim.membership.add":
+            thesis_id, company_id = params["thesis_id"], params["company_id"]
+            if claims.get_thesis(thesis_id) is None:
+                raise ServiceError("invalid", f"Thesis not found: {thesis_id}")
+            self._require_node(db, company_id, "entity", "company")
+            if claims.find_membership(thesis_id, company_id) is not None:
+                raise ServiceError("conflict", "This company is already in the thesis; edit its membership instead.")
+            fields = check_membership(params)
+            membership_id = claims.add_membership(thesis_id, company_id, *self._membership_row(fields))
+            return {"membership_id": membership_id, "thesis_id": thesis_id}
+        if kind == "claim.membership.edit":
+            current = claims.get_membership(params["membership_id"])
+            if current is None:
+                raise ServiceError("not_found", f"Membership not found: {params['membership_id']}")
+            catalyst = current["catalyst"] or {}
+            fields = check_membership({
+                "status": "watching" if current["status"] == "candidate" else "in",
+                "reason": current["reason"],
+                "catalyst_event": catalyst.get("event", ""),
+                "catalyst_by": catalyst.get("by_date", ""),
+                "expected_effect": catalyst.get("expected_effect", ""),
+                **{key: value for key, value in params.items() if key != "membership_id"},
+            })
+            claims.edit_membership(current["id"], *self._membership_row(fields))
+            return {"membership_id": current["id"], "thesis_id": current["thesis_id"]}
+        if kind == "claim.membership.remove":
+            current = claims.get_membership(params["membership_id"])
+            if current is None or not claims.remove_membership(current["id"]):
+                raise ServiceError("not_found", f"Membership not found: {params['membership_id']}")
+            return {"membership_id": current["id"], "thesis_id": current["thesis_id"]}
+        raise ServiceError("invalid", f"Unknown claim write: {kind}")
+
+    @staticmethod
+    def _membership_row(fields: dict[str, str]) -> tuple[str, str, tuple[str, str, str] | None]:
+        """(stored status, reason, entry catalyst or None) for checked membership fields."""
+        if fields["status"] == "in":
+            return "in", fields["reason"], None
+        return "candidate", fields["reason"], (fields["catalyst_event"], fields["catalyst_by"], fields["expected_effect"])
 
     def _operator_settings(self, job: Job) -> Settings:
         updates: dict[str, Any] = {}

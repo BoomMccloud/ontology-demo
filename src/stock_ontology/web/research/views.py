@@ -1,4 +1,4 @@
-"""Research view models: overview, companies, themes, and the entity and theme pages."""
+"""Research view models: overview, companies, themes, and the entity, theme, and thesis pages."""
 
 from __future__ import annotations
 
@@ -354,13 +354,77 @@ class ThemeEvidenceItem:
 
 @dataclass(frozen=True)
 class ThemeCompanyRow:
-    """One company on a theme page. `is_exposed` means a note states an EXPOSED_TO link."""
+    """One company on a theme page. `is_exposed` means a note states an EXPOSED_TO link.
+
+    `suggested` means no thesis on the theme has a membership for the company, so the notes
+    only suggest it as a candidate."""
 
     company: EntityHeader
     is_exposed: bool
     exposure: str | None
     notes: tuple[ExposureNote, ...]
     evidence: tuple[ThemeEvidenceItem, ...]
+    suggested: bool
+
+
+@dataclass(frozen=True)
+class ThesisLinkRow:
+    """One thesis on a theme page, linking to its thesis page."""
+
+    id: str
+    statement: str
+    member_count: int
+    candidate_count: int
+
+
+@dataclass(frozen=True)
+class CatalystRow:
+    """The event a candidate membership waits for, by when, and what it would do."""
+
+    event: str
+    by_date: str
+    expected_effect: str
+
+
+@dataclass(frozen=True)
+class ThesisHeader:
+    """Title block of a thesis page."""
+
+    id: str
+    statement: str
+    theme_id: str
+    theme_name: str
+
+
+@dataclass(frozen=True)
+class ThesisMembershipRow:
+    """One company on a thesis page. `status` is `in` or `candidate`."""
+
+    id: str
+    company: EntityHeader
+    status: str
+    reason: str
+    catalyst: CatalystRow | None
+
+
+@dataclass(frozen=True)
+class CompanyThesisRow:
+    """One thesis a company belongs to, shown on the company page."""
+
+    thesis_id: str
+    statement: str
+    status: str
+    theme_id: str
+    theme_name: str
+    catalyst: CatalystRow | None
+
+
+@dataclass(frozen=True)
+class CompanyOption:
+    """A company the membership form can add."""
+
+    id: str
+    name: str
 
 
 def _text(value: Any) -> str | None:
@@ -582,6 +646,7 @@ def _theme_company_rows(
 ) -> list[ThemeCompanyRow]:
     """Map theme companies to rows, most-documented first."""
     theme_edges = db.get_incident_edges(theme_id)
+    covered = db.claims.covered_company_ids(theme_id)
     file_by_doc = {entry["doc_id"]: path for path, entry in db.get_ingestion_log().items()}
     edges_by_node: dict[str, list[dict[str, Any]]] = {}
     out: list[ThemeCompanyRow] = []
@@ -605,10 +670,103 @@ def _theme_company_rows(
                     else ()
                 ),
                 evidence=_theme_evidence(db, row, edges_by_node),
+                suggested=row["company"]["id"] not in covered,
             )
         )
     out.sort(key=lambda r: (-len(r.notes), -len(r.evidence), r.company.name.casefold()))
     return out
+
+
+def _catalyst_row(catalyst: dict[str, Any] | None) -> CatalystRow | None:
+    if not catalyst:
+        return None
+    return CatalystRow(
+        event=str(catalyst["event"]), by_date=str(catalyst["by_date"]),
+        expected_effect=str(catalyst["expected_effect"]),
+    )
+
+
+def _thesis_link_rows(db: GraphStore, theme_id: str) -> list[ThesisLinkRow]:
+    rows = []
+    for thesis in db.claims.list_theses(theme_id):
+        memberships = db.claims.list_memberships(thesis["id"])
+        rows.append(ThesisLinkRow(
+            id=str(thesis["id"]),
+            statement=str(thesis["statement"]),
+            member_count=sum(1 for m in memberships if m["status"] == "in"),
+            candidate_count=sum(1 for m in memberships if m["status"] != "in"),
+        ))
+    return rows
+
+
+def _company_thesis_rows(db: GraphStore, company_id: str) -> list[CompanyThesisRow]:
+    memberships = db.claims.company_memberships(company_id)
+    theme_names = {node.id: node.name for node in db.get_nodes([str(m["theme_id"]) for m in memberships])}
+    return [
+        CompanyThesisRow(
+            thesis_id=str(m["thesis_id"]),
+            statement=str(m["statement"]),
+            status=str(m["status"]),
+            theme_id=str(m["theme_id"]),
+            theme_name=theme_names.get(str(m["theme_id"]), str(m["theme_id"])),
+            catalyst=_catalyst_row(m["catalyst"]),
+        )
+        for m in memberships
+    ]
+
+
+def build_thesis_context(
+    db: GraphStore,
+    thesis_id: str,
+    *,
+    company_id: str = "",
+    lang: str = DEFAULT_LANGUAGE,
+) -> dict[str, Any]:
+    """Prepare a thesis page: the thesis, its company memberships, and the membership form's choices.
+
+    `company_id` preselects a company in the form (the theme page's suggested-candidate links).
+    Raises KeyError when the thesis does not exist."""
+    thesis = db.claims.get_thesis(thesis_id)
+    if thesis is None:
+        raise KeyError(thesis_id)
+    theme = db.get_node(str(thesis["theme_id"]))
+    theme_name = theme.name if theme is not None else str(thesis["theme_id"])
+    memberships = db.claims.list_memberships(thesis_id)
+    companies = {node.id: node for node in db.get_nodes([str(m["company_id"]) for m in memberships])}
+    rows = []
+    for m in memberships:
+        node = companies.get(str(m["company_id"]))
+        entity = {"id": m["company_id"], "name": node.name if node else m["company_id"],
+                  "summary": node.summary if node else "", "aliases": node.aliases if node else [],
+                  "facets": {"ticker": node.facets.get("ticker")} if node else {}}
+        rows.append(ThesisMembershipRow(
+            id=str(m["id"]),
+            company=_entity_header(entity, "company"),
+            status=str(m["status"]),
+            reason=str(m["reason"]),
+            catalyst=_catalyst_row(m["catalyst"]),
+        ))
+    taken = {str(m["company_id"]) for m in memberships}
+    options = sorted(
+        (
+            CompanyOption(id=node.id, name=node.name)
+            for node in db.list_nodes(node_type="entity", limit=1000)
+            if is_company_entity(str(node.facets.get("entity_type", ""))) and node.id not in taken
+        ),
+        key=lambda option: option.name.casefold(),
+    )
+    return {
+        "thesis": ThesisHeader(
+            id=str(thesis["id"]), statement=str(thesis["statement"]),
+            theme_id=str(thesis["theme_id"]), theme_name=theme_name,
+        ),
+        "memberships": rows,
+        "company_options": options,
+        "selected_company": company_id if any(option.id == company_id for option in options) else "",
+        "page_context": translate(
+            "page_context.thesis", lang=lang, statement=thesis["statement"], theme=theme_name,
+        ),
+    }
 
 
 def build_entity_context(
@@ -662,6 +820,7 @@ def build_entity_context(
         "views": [_view_row(vw, data_dir) for vw in views],
         "themes": [_theme_link_row(thm) for thm in overview["themes"]],
         "related_entities": [_related_entity_row(rel) for rel in overview["related_entities"]],
+        "thesis_memberships": _company_thesis_rows(db, entity_id),
         "page_context": translate(
             "page_context.entity",
             lang=lang,
@@ -722,6 +881,7 @@ def build_theme_context(
         "theme": _theme_header(theme),
         "stage": facets.get("stage", ""),
         "extra_facets": format_facet_pairs(facets, extra_keys, lang=lang),
+        "theses": _thesis_link_rows(db, theme_id),
         "exposed_companies": [row for row in company_rows if row.is_exposed],
         "mentioned_companies": [row for row in company_rows if not row.is_exposed],
         "events": events,

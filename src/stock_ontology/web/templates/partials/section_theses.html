@@ -1,0 +1,31 @@
+{% if thesis_memberships %}
+<section id="sec-theses" class="section-block" aria-label="{{ t('entity.theses') }}">
+  <h2>{{ t('entity.theses') }} ({{ thesis_memberships | length }})</h2>
+  <table class="catalog-table">
+    <thead>
+      <tr>
+        <th>{{ t('thesis.heading') }}</th>
+        <th>{{ t('thesis.theme') }}</th>
+        <th>{{ t('thesis.col_status') }}</th>
+        <th>{{ t('thesis.col_catalyst') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in thesis_memberships %}
+        <tr>
+          <td><a href="/thesis/{{ row.thesis_id }}"><strong>{{ row.statement }}</strong></a></td>
+          <td><a href="/theme/{{ row.theme_id }}">{{ row.theme_name }}</a></td>
+          <td><span class="badge badge-{{ 'official' if row.status == 'in' else 'warn' }}">{{ t('thesis.status_' ~ row.status) }}</span></td>
+          <td>
+            {% if row.catalyst %}
+              {{ t('thesis.catalyst_summary', event=row.catalyst.event, date=row.catalyst.by_date) }}
+            {% else %}
+              {{ t('common.none') }}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}

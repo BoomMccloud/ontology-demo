@@ -70,7 +70,11 @@ The web-to-agent contract (`chat()` and `ChatTurn` only) is enforced by
 resolves, and lists notes and derives each note's status from the extraction
 log. `ProcessingService` submits jobs as JSON files in the command spool next
 to the database (`<db>.commands/`), reports job status, and reopens a failed
-job. A note's processing job ID comes from its path and content revision, so
+job. `submit_claim(kind, params)` queues a claim graph write
+(`claim.thesis.add|edit|remove`, `claim.membership.add|edit|remove`). It checks
+the write's shape first and refuses an *in* membership without a reason or a
+*watching* one without its event, a `YYYY-MM-DD` by-date, and expected effect
+(`invalid`). A note's processing job ID comes from its path and content revision, so
 duplicate requests share a job. `RegistryService.get_applied(db)` is the one
 registry read for graph writes. `GraphQueries` delegates to the `OntologyDB`
 overview methods and adds the consensus status (`current`, `pending`,
@@ -78,8 +82,10 @@ overview methods and adds the consensus status (`current`, `pending`,
 `EXIT_CODES` (`not_found` 3, `conflict` 4, `invalid` 5, `unavailable` 6).
 
 `worker.py` moves spooled submissions into the `jobs` table, claims the most
-urgent due job under a lease (corrections, then operator jobs, then note
-extraction), and runs it. Every graph commit for a job calls
+urgent due job under a lease (corrections and claim writes, then operator
+jobs, then note extraction), and runs it. A claim job checks that its theme,
+company, thesis, or membership exists, writes only the `claim_*` tables, and
+finishes in the same transaction. Every graph commit for a job calls
 `IngestionPipeline.commit_check`, which refuses a lost or expired claim and
 records the consensus revisions the commit queued. A job that committed its
 write and then died resumes at the consensus stage without re-extracting. A
@@ -98,6 +104,15 @@ disposable copy.
   a killed request could not resume (proposal `modular-worker`, 2026-11-24).
   **Guarded by:** `tests/test_architecture.py::test_only_worker_job_executors_open_a_writable_database`
   and `tests/test_worker.py::test_operator_commands_write_only_through_claimed_jobs`.
+
+- Repoint claims before deleting or merging a node: any code that removes a
+  theme or company node calls `OntologyDB.claims.repoint_node` first, as
+  `merge_node_into` does. The `claim_*` foreign keys refuse the delete otherwise.
+  **Why:** claim records are user data nothing can rebuild from notes, and a
+  merge that moved only edges would strand a thesis membership on a deleted
+  company (proposal `theme-catalysts-phase-1`, 2026-11-26).
+  **Guarded by:** `tests/test_claims.py::test_merging_a_company_moves_its_thesis_membership_to_the_survivor`
+  and `tests/test_db.py::test_merge_node_into_moves_theses_and_resolves_membership_collisions`.
 
 If the test fails on a dependency you actually want, update `ALLOWED` in the
 test and the layer list here together.

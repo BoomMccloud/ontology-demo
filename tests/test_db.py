@@ -1522,3 +1522,110 @@ def test_job_tables_are_added_to_a_database_created_before_them(tmp_path: Path) 
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"jobs", "consensus_refresh", "nodes", "ingestion_log"} <= tables
+
+
+# ---------------------------------------------------------------------------
+# Claim graph (proposal theme-catalysts-phase-1): theses and thesis memberships
+# ---------------------------------------------------------------------------
+
+
+def _claim_db(path: Path) -> OntologyDB:
+    db = OntologyDB(path, embedding_dim=8)
+    for idx, node in enumerate([
+        Node(id="thm_dc", node_type="theme", name="Data Center Rollout", summary="s", facets={"stage": "emerging"}),
+        Node(id="thm_dc2", node_type="theme", name="DC Rollout", summary="s", facets={"stage": "emerging"}),
+        Node(id="ent_a", node_type="entity", name="Supplier A", summary="s",
+             facets={"entity_type": "company", "sector": "Tech"}),
+        Node(id="ent_a2", node_type="entity", name="Supplier A Holdings", summary="s",
+             facets={"entity_type": "company", "sector": "Tech"}),
+    ]):
+        db.upsert_node(node, embedding=_unit_vec(idx))
+    return db
+
+
+def test_claim_tables_round_trip_on_a_fresh_and_an_upgraded_database(tmp_path: Path) -> None:
+    claim_tables = {"claim_theses", "claim_memberships", "claim_catalysts", "claim_predictions"}
+    with _claim_db(tmp_path / "fresh.db") as db:
+        thesis = db.claims.add_thesis("thm_dc", "The rollout benefits optical suppliers.")
+        member = db.claims.add_membership(thesis, "ent_a", "candidate", "", ("Qualification", "2027-06-30", "Volume orders."))
+        assert db.claims.get_thesis(thesis)["statement"] == "The rollout benefits optical suppliers."
+        assert db.claims.get_membership(member)["catalyst"] == {
+            "id": db.claims.get_membership(member)["catalyst"]["id"],
+            "event": "Qualification", "by_date": "2027-06-30", "expected_effect": "Volume orders.",
+        }
+
+    # A database from before the claim graph gains its tables on the next writable open.
+    legacy = tmp_path / "legacy.db"
+    with _claim_db(legacy) as db:
+        for table in ("claim_predictions", "claim_catalysts", "claim_memberships", "claim_theses"):
+            db.conn.execute(f"DROP TABLE {table}")
+        db.conn.commit()
+    with OntologyDB(legacy, embedding_dim=8, read_only=True) as db:
+        assert db.claims.list_theses("thm_dc") == [], "a read-only open of an older database reads no claims"
+        assert db.claims.covered_company_ids("thm_dc") == set()
+    with OntologyDB(legacy, embedding_dim=8) as db:
+        tables = {r[0] for r in db.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        assert claim_tables <= tables
+        thesis = db.claims.add_thesis("thm_dc", "Upgraded.")
+        assert [t["id"] for t in db.claims.list_theses("thm_dc")] == [thesis]
+
+
+def test_one_membership_per_company_and_thesis_and_many_predictions_per_catalyst(tmp_path: Path) -> None:
+    with _claim_db(tmp_path / "claims.db") as db:
+        thesis = db.claims.add_thesis("thm_dc", "T")
+        member = db.claims.add_membership(thesis, "ent_a", "in", "Ships in volume.")
+        with pytest.raises(sqlite3.IntegrityError):
+            db.claims.add_membership(thesis, "ent_a", "candidate", "", ("E", "2027-01-01", "X"))
+        # A catalyst can carry more than one prediction.
+        db.claims.edit_membership(member, "candidate", "", ("Qualification", "2027-06-30", "Entry effect."))
+        catalyst_id = db.claims.get_membership(member)["catalyst"]["id"]
+        db.conn.execute(
+            "INSERT INTO claim_predictions (id, catalyst_id, direction, expected_effect, created_at, updated_at) "
+            "VALUES ('prd_exit', ?, 'exit', 'Would remove exposure.', 'now', 'now')",
+            (catalyst_id,),
+        )
+        db.conn.commit()
+        count = db.conn.execute("SELECT COUNT(*) FROM claim_predictions WHERE catalyst_id = ?", (catalyst_id,))
+        assert count.fetchone()[0] == 2
+        assert db.claims.get_membership(member)["catalyst"]["expected_effect"] == "Entry effect."
+        # Removing the thesis removes its memberships, catalysts, and predictions.
+        assert db.claims.remove_thesis(thesis)
+        for table in ("claim_memberships", "claim_catalysts", "claim_predictions"):
+            assert db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
+
+
+def test_a_watching_membership_commits_with_its_catalyst_or_not_at_all(tmp_path: Path) -> None:
+    with _claim_db(tmp_path / "claims.db") as db:
+        thesis = db.claims.add_thesis("thm_dc", "T")
+        # The catalyst insert fails after the membership row is written (by_date is NOT NULL).
+        with pytest.raises(sqlite3.IntegrityError):
+            db.claims.add_membership(thesis, "ent_a", "candidate", "", ("Qualification", None, "Volume orders."))  # type: ignore[arg-type]
+        for table in ("claim_memberships", "claim_catalysts", "claim_predictions"):
+            assert db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
+
+
+def test_merge_node_into_moves_theses_and_resolves_membership_collisions(tmp_path: Path) -> None:
+    with _claim_db(tmp_path / "claims.db") as db:
+        thesis = db.claims.add_thesis("thm_dc2", "T")
+        survivor_member = db.claims.add_membership(thesis, "ent_a", "in", "Ships in volume.")
+        loser_member = db.claims.add_membership(thesis, "ent_a2", "candidate", "", ("Qualification", "2027-06-30", "X"))
+
+        db.merge_node_into("thm_dc2", "thm_dc")
+        assert db.claims.get_thesis(thesis)["theme_id"] == "thm_dc"
+
+        db.merge_node_into("ent_a2", "ent_a")
+        rows = db.claims.list_memberships(thesis)
+        assert [(m["id"], m["company_id"], m["status"]) for m in rows] == [(survivor_member, "ent_a", "in")]
+        assert db.claims.get_membership(loser_member) is None
+        assert rows[0]["catalyst"]["event"] == "Qualification", "the survivor keeps the loser's catalyst"
+        dangling = db.conn.execute(
+            "SELECT COUNT(*) FROM claim_memberships m LEFT JOIN nodes n ON n.id = m.company_id WHERE n.id IS NULL"
+        ).fetchone()[0]
+        assert dangling == 0
+
+
+def test_a_node_a_claim_points_at_cannot_be_deleted_out_from_under_it(tmp_path: Path) -> None:
+    with _claim_db(tmp_path / "claims.db") as db:
+        db.claims.add_thesis("thm_dc", "T")
+        with pytest.raises(sqlite3.IntegrityError):
+            db.conn.execute("DELETE FROM nodes WHERE id = 'thm_dc'")
