@@ -81,7 +81,7 @@ Candidate: `a6d6b58 @ worktree/shared-editor-script-8b7869` (branch claude/share
 - Exclude/protect: `worker.py`, `pipeline.py`, `services/`, correction API URLs and request models, the catalog list and sidebar entity loads (`build_catalog_context`, `build_rail_context`), and existing action test assertions.
 
 ### Invariants changed
-- None. No README entry or test requires the editors to preload nodes. The README "Web UI Constraints" shared-editor rule still holds: node choice stays in `editor.js`.
+- `tests/test_web_ontology.py::test_note_reader_and_ontology_record_share_one_relationship_editor` (authored by `shared-editor-script`, protection ended at its ACCEPT) — today: the embedded model lists every node in the graph (`person` and `company`); after: it lists only the nodes the page shows (`person`), and the cross-page equality and label assertions stay. The README "Web UI Constraints" shared-editor rule still holds: node choice stays in `editor.js`.
 
 ### Decisions required
 - None. The open choice was decided by the human on 2026-11-26: no server-rendered fallback for use without JavaScript.
