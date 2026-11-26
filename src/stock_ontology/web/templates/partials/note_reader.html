@@ -38,7 +38,7 @@
 
   {% set extraction = active_note.extraction %}
   {% set can_add_entity = extraction.actions_enabled and extraction.can_add_entity %}
-  {% set can_correct_relationship = extraction.actions_enabled and extraction.relations %}
+  {% set can_correct_relationship = extraction.relationship_model is not none %}
   {% set can_add_relationship = can_correct_relationship and extraction.can_add_relationship %}
   <div class="section-block note-extraction" data-note-reader data-file="{{ active_note.rel_path }}" data-hash="{{ extraction.content_hash }}"
        data-failed-label="{{ t('note_reader.action_failed') }}" data-queued-label="{{ t('note_reader.job_queued') }}">

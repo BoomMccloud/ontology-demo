@@ -355,7 +355,7 @@ def build_registry_edit_context(
         actions.update(
             registry_operator_edit=operator_allowed and published is not None and not pending,
             registry_edit_values=before.model_dump(),
-            theme_stage_choices=next((field.options for field in applied.field_specs("theme") if field.name == "stage"), ()),
+            theme_stage_choices=applied.facet_options("theme", "stage"),
         )
         if pending and published is not None:
             browser_revision = RegistryService.browser_publication(db, published, applied)
@@ -429,7 +429,7 @@ def build_schema_context(
 
     node_keys = [
         *registry.facet_schema["node"],
-        *(f"entity:{key}" for key in next(field.options for field in registry.field_specs("entity") if field.name == "entity_type")),
+        *(f"entity:{key}" for key in registry.facet_options("entity", "entity_type")),
     ]
     node_defs = {
         key: {

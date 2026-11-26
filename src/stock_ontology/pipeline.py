@@ -950,7 +950,7 @@ class IngestionPipeline:
                 if start == end:
                     self._delete_note_edge(row["edge_id"], pending)
                     continue
-                self._replace_note_edge(row, row["relation"], start, end, pending=pending, keep_pending=pending)
+                self._replace_note_edge(row, start, end, pending=pending)
             self.db.relink_note_entity(doc_id, entity_id, target)
             return affected | self.db.get_doc_affected_company_ids(doc_id)
 
@@ -998,33 +998,25 @@ class IngestionPipeline:
         delete = self.db.delete_pending_edges if pending else self.db.delete_edges
         delete([edge_id])
 
-    def _canonical_note_edge(self, edge: Edge) -> tuple[Edge, tuple[str, ...]]:
+    def _canonical_note_edge(self, edge: Edge) -> Edge:
         """Check a relinked edge by the same registry rules as a reviewed correction."""
-        from_node, to_node = self.db.get_node(edge.from_id), self.db.get_node(edge.to_id)
         checked = self.registry.check_note_edge(
-            edge.relation, from_node=from_node, to_node=to_node, base_facets=edge.facets,
+            edge.relation, from_node=self.db.get_node(edge.from_id), to_node=self.db.get_node(edge.to_id),
+            base_facets=edge.facets,
         )
-        return edge.model_copy(update=checked), tuple(
-            node.id for node in (from_node, to_node) if node is not None and node.node_type == "entity"
-        )
+        return edge.model_copy(update=checked)
 
-    def _replace_note_edge(
-        self, row: dict[str, Any], relation: str, from_id: str, to_id: str, *,
-        pending: bool, keep_pending: bool = False,
-    ) -> tuple[str, ...]:
-        prefix = "pedge" if keep_pending else "edge"
+    def _replace_note_edge(self, row: dict[str, Any], from_id: str, to_id: str, *, pending: bool) -> None:
+        """Move a note edge to new endpoints under a new ID; a pending edge stays pending and unchecked."""
         # Replacing the ID invalidates relationship forms opened before the correction.
-        edge = Edge(id=f"{prefix}_{uuid.uuid4().hex}", from_id=from_id, to_id=to_id, relation=relation,
-                    facets=row["facets"], source_doc_id=row["source_doc_id"], created_at=row["created_at"])
-        entity_ids = ()
-        if not keep_pending:
-            edge, entity_ids = self._canonical_note_edge(edge)
+        edge = Edge(id=f"{'pedge' if pending else 'edge'}_{uuid.uuid4().hex}", from_id=from_id, to_id=to_id,
+                    relation=row["relation"], facets=row["facets"], source_doc_id=row["source_doc_id"],
+                    created_at=row["created_at"])
         self._delete_note_edge(row["edge_id"], pending)
-        if keep_pending:
+        if pending:
             self.db.insert_pending_edge(edge)
         else:
-            self.db.upsert_edge(edge)
-        return entity_ids
+            self.db.upsert_edge(self._canonical_note_edge(edge))
 
     def run(self, force: bool = False, rebuild_consensus: bool = False) -> IngestReport:
         """Scan `data_dir`, incrementally extract changed files, and update consensus."""

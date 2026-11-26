@@ -107,10 +107,9 @@
       const fields = new FormData(form);
       const action = form.dataset.noteAction;
       if (form.dataset.deleteConfirm && !window.confirm(form.dataset.deleteConfirm)) return;
-      const payload = { file: reader.dataset.file };
+      const payload = { file: reader.dataset.file, expected_hash: reader.dataset.hash };
       if (action === "relink") {
         payload.entity_id = fields.get("entity_id");
-        payload.expected_hash = reader.dataset.hash;
         const replacement = fields.get("replacement_id");
         if (replacement === "__new__") {
           const name = fields.get("new_name");
@@ -123,10 +122,8 @@
         }
       } else if (action === "entity/add" || action === "entity/delete") {
         payload.entity_id = fields.get(action === "entity/add" ? "replacement_id" : "entity_id");
-        payload.expected_hash = reader.dataset.hash;
       } else if (action === "relationship/delete") {
         payload.edge_id = fields.get("edge_id");
-        payload.expected_hash = reader.dataset.hash;
       } else if (action === "relationship" || action === "relationship/add") {
         if (action === "relationship") {
           payload.edge_id = fields.get("edge_id");
@@ -136,7 +133,6 @@
         payload.relation = fields.get("relation");
         payload.from_id = fields.get("from_id");
         payload.to_id = fields.get("to_id");
-        payload.expected_hash = reader.dataset.hash;
       }
 
       buttons.forEach((button) => { button.disabled = true; });

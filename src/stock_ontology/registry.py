@@ -447,6 +447,10 @@ class OntologyRegistry(BaseModel):
             for key, spec in self._facet_specs(node_type, entity_type, relation).items()
         ]
 
+    def facet_options(self, node_type: str | None, key: str) -> tuple[str, ...]:
+        """Vocabulary of one declared facet, or () when `node_type` declares no facet `key`."""
+        return next((field.options for field in self.field_specs(node_type) if field.name == key), ())
+
     def schema_stamp(self) -> str:
         """Hash of everything stored facets are checked against; the DB records it after migrating."""
         payload = {
