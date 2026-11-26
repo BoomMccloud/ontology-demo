@@ -1292,3 +1292,41 @@ def test_ontology_preview_judges_an_unregistered_relation_before_its_fields(tmp_
         assert preview.status_code == 422, preview.text
         assert preview.json()["detail"] == translate("service_error.choose_relationship_type", lang="en")
     assert _note_graph(settings)["edges"] == [("a", "BUY", "b", _EXTRACTED)]
+
+
+def _add_with_facets(facets: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    url, payload, edit = _add("a", "BUY", "c")
+    return url, {**payload, "facets": facets}, {**edit, "changes": {**edit["changes"], "facets": facets}}
+
+
+@pytest.mark.parametrize(
+    ("correction", "expected"),
+    [
+        pytest.param(_add("b", "SUPPLIES_TO", "c"),
+                     {"edges": sorted([("a", "BUY", "b", _EXTRACTED), ("c", "BUY", "b", _EXTRACTED)]),
+                      "pending": _PENDING, "peer": _PEER},
+                     id="inverse-alias-add"),
+        pytest.param(_add_with_facets({"bogus": "x"}), (422, "service_error.choose_relationship_fields_registry"),
+                     id="unlisted-facet-key"),
+        pytest.param(_edit("original", "BUY", "a", "missing"), (422, "service_error.choose_two_endpoints"),
+                     id="missing-endpoint"),
+        pytest.param(_edit("pending", "BUY", "a", "b"), (409, "service_error.relationship_exists"),
+                     id="change-into-duplicate"),
+    ],
+)
+def test_note_reader_and_ontology_page_judge_more_relationship_corrections_alike(
+    tmp_path: Path, correction: tuple[str, dict[str, Any], dict[str, Any]], expected: Any,
+) -> None:
+    url, reader_payload, ontology_edit = correction
+    reader = _reader_judgement(tmp_path / "reader", url, reader_payload, stale=False)
+    ontology = _ontology_judgement(tmp_path / "ontology", ontology_edit, stale=False)
+    if isinstance(expected, dict):
+        assert (ontology.status, ontology.graph) == (200, expected), ontology
+        assert (reader.status, reader.graph) == (200, expected), reader
+        return
+    status, key = expected
+    untouched = {"edges": [("a", "BUY", "b", _EXTRACTED)], "pending": _PENDING, "peer": _PEER}
+    assert (ontology.phase, ontology.status, ontology.detail, ontology.graph) == (
+        "submit", status, translate(key, lang="en"), untouched,
+    ), ontology
+    assert reader == ontology

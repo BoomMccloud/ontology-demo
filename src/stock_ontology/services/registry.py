@@ -47,14 +47,17 @@ def unique_labels(labels: list[str], *, excluding: str = "") -> list[str]:
 
 
 def identity_aliases(
-    previous_name: str, name: str, aliases: list[str], *, keep_previous_name: bool, max_length: int,
+    registry: OntologyRegistry, previous_name: str, name: str, aliases: list[str], *,
+    summary: str, keep_previous_name: bool,
 ) -> list[str]:
-    """The one rule for a renamed or re-aliased record or node: keep the previous name as an alias
-    when asked, drop duplicates and the name itself, and refuse an alias over the name length limit."""
+    """The one rule for a renamed or re-aliased record or node: check the name and summary against
+    the registry's limits, keep the previous name as an alias when asked, drop duplicates and the
+    name itself, and refuse an alias over the name length limit."""
+    registry.check_metadata(name, summary)
     if keep_previous_name and name != previous_name:
         aliases = [*aliases, previous_name]
     aliases = unique_labels(aliases, excluding=name)
-    if any(len(alias) > max_length for alias in aliases):
+    if any(len(alias) > registry.metadata_max_length["name"] for alias in aliases):
         raise ServiceError("invalid", "An alternate name exceeds the name length limit.", key="service_error.alternate_name_too_long")
     return aliases
 
@@ -118,10 +121,9 @@ class RegistryService:
             else:
                 text = edit_text(value, field, required=field not in {"ticker", "description"})
                 after[field] = (normalize_ticker(text) or None) if field == "ticker" else text
-        current.check_metadata(after["name"], after.get("description", ""))
         after["aliases"] = identity_aliases(
-            before["name"], after["name"], after["aliases"],
-            keep_previous_name=keep_previous_name, max_length=current.metadata_max_length["name"],
+            current, before["name"], after["name"], after["aliases"],
+            summary=after.get("description", ""), keep_previous_name=keep_previous_name,
         )
         if kind == "themes" and "stage" in changes and after["stage"] not in current._vocabulary("theme", "stage")["members"]:
             raise ServiceError("invalid", "Choose a stage from the published registry.", key="service_error.choose_stage")

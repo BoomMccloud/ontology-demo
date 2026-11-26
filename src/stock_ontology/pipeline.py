@@ -999,9 +999,14 @@ class IngestionPipeline:
         delete([edge_id])
 
     def _canonical_note_edge(self, edge: Edge) -> tuple[Edge, tuple[str, ...]]:
-        checked = self.db.check_edge(edge.relation, edge.from_id, edge.to_id, edge.facets)
-        endpoints = self.db.get_nodes([checked["from_id"], checked["to_id"]])
-        return edge.model_copy(update=checked), tuple(node.id for node in endpoints if node.node_type == "entity")
+        """Check a relinked edge by the same registry rules as a reviewed correction."""
+        from_node, to_node = self.db.get_node(edge.from_id), self.db.get_node(edge.to_id)
+        checked = self.registry.check_note_edge(
+            edge.relation, from_node=from_node, to_node=to_node, base_facets=edge.facets,
+        )
+        return edge.model_copy(update=checked), tuple(
+            node.id for node in (from_node, to_node) if node is not None and node.node_type == "entity"
+        )
 
     def _replace_note_edge(
         self, row: dict[str, Any], relation: str, from_id: str, to_id: str, *,

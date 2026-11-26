@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from stock_ontology.config import note_revision
-from stock_ontology.db import EdgeRejected, OntologyDB
-from stock_ontology.registry import FacetSchemaError, normalize_name_key
+from stock_ontology.db import OntologyDB
+from stock_ontology.registry import EdgeRuleError, FacetSchemaError, normalize_name_key
 from stock_ontology.services.errors import ServiceError
 from stock_ontology.services.registry import (
     changed_fields,
@@ -75,14 +75,6 @@ def _organization(db: OntologyDB, name: str) -> str | None:
     return matches[0] if len(matches) == 1 else None
 
 
-_EDGE_REJECTIONS = {
-    "relation": ("Choose a relationship type from the applied registry.", "service_error.choose_relationship_type"),
-    "endpoints": ("Choose two different existing endpoints.", "service_error.choose_two_endpoints"),
-    "not_allowed": ("The applied registry does not allow that relationship between these nodes.",
-                    "service_error.relationship_not_allowed"),
-}
-
-
 def _review_edge(
     db: OntologyDB, before: dict[str, Any], changes: dict[str, Any], *, all_edges: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -90,35 +82,18 @@ def _review_edge(
     for key in ("from_id", "to_id", "relation"):
         if key in changes:
             after[key] = edit_text(changes[key], key)
-    relation = db.registry.resolve_relation(after["relation"] or "")
-    if relation is None:
-        # Judged first, before the facet fields that depend on the relation.
-        message, key = _EDGE_REJECTIONS["relation"]
-        raise ServiceError("invalid", message, key=key)
-    updates = changes.get("facets", {})
-    editable = db.registry.edge_facet_keys(relation.canonical) - {"basis"}
-    if not isinstance(updates, dict) or updates.keys() - editable:
-        raise ServiceError("invalid", "Choose editable relationship fields from the applied registry.", key="service_error.choose_relationship_fields_registry")
-    facets = dict(after["facets"] or {"basis": "extracted"})
-    for field, value in updates.items():
-        if value is None:
-            facets.pop(field, None)
-        else:
-            facets[field] = value
     try:
-        after = db.check_edge(after["relation"] or "", after["from_id"] or "", after["to_id"] or "", facets)
-    except EdgeRejected as exc:
-        message, key = _EDGE_REJECTIONS[exc.reason]
-        raise ServiceError("invalid", message, key=key) from exc
+        return db.registry.check_note_edge(
+            after["relation"] or "", from_node=db.get_node(after["from_id"] or ""),
+            to_node=db.get_node(after["to_id"] or ""), base_facets=after["facets"],
+            facet_updates=changes.get("facets"),
+            existing=[(row["from_id"], row["to_id"], row["relation"]) for row in all_edges
+                      if not row.get("pending") and row["edge_id"] != before.get("edge_id")],
+        )
+    except EdgeRuleError as exc:
+        raise ServiceError(exc.code, exc.message, key=exc.key) from exc
     except FacetSchemaError as exc:
         raise ServiceError("invalid", str(exc)) from exc
-    if any(
-        row["edge_id"] != before.get("edge_id") and not row.get("pending") and
-        (row["from_id"], row["to_id"], row["relation"]) == (after["from_id"], after["to_id"], after["relation"])
-        for row in all_edges
-    ):
-        raise ServiceError("conflict", "This note already records that relationship.", key="service_error.relationship_exists")
-    return after
 
 
 def _note_edges(db: OntologyDB, doc_id: str) -> list[dict[str, Any]]:
@@ -164,10 +139,9 @@ def review_note_correction(
                 after[field] = _edit_accuracy(value)
             else:
                 after[field] = edit_aliases(value) if field == "aliases" else edit_text(value, field)
-        db.registry.check_metadata(after["name"], node.summary)
         after["aliases"] = identity_aliases(
-            node.name, after["name"], after["aliases"],
-            keep_previous_name=keep_previous_name, max_length=db.registry.metadata_max_length["name"],
+            db.registry, node.name, after["name"], after["aliases"],
+            summary=node.summary, keep_previous_name=keep_previous_name,
         )
         introduced = identity_labels(after["name"], *after["aliases"]) - identity_labels(node.name, *node.aliases)
         if labels_taken(introduced, (

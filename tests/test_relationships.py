@@ -975,3 +975,46 @@ def test_guardrail_locale_parity_and_no_mention_count_badges(tmp_path: Path) -> 
             assert raw_rel not in loc_related
         assert "buys from" not in loc_related.lower()
         assert "exposed to" not in loc_themes.lower()
+
+
+def test_check_note_edge_is_the_one_edge_rule_for_corrections() -> None:
+    import ast
+    import inspect
+    import textwrap
+
+    from stock_ontology.pipeline import IngestionPipeline
+    from stock_ontology.registry import EdgeRuleError, FacetSchemaError, load_registry
+    from stock_ontology.services import corrections
+
+    registry = load_registry(Path(__file__).resolve().parents[1] / "ontology_registry.json")
+    a, b = (Node(id=node_id, node_type="entity", name=node_id, summary="",
+                 facets={"entity_type": "company", "sector": "Tech"}) for node_id in ("a", "b"))
+    event = Node(id="evt", node_type="event", name="An announcement", summary="", facets={"event_type": "fact"})
+    theme = Node(id="theme", node_type="theme", name="A theme", summary="", facets={"stage": "emerging"})
+
+    def rejected(relation: str, start: Any, end: Any, **kwargs: Any) -> tuple[str, str]:
+        with pytest.raises(EdgeRuleError) as error:
+            registry.check_note_edge(relation, from_node=start, to_node=end, base_facets=None, **kwargs)
+        return error.value.code, error.value.key
+
+    # The relation is judged first, so a bad facets field cannot hide an unmapped relation.
+    assert rejected("FROBNICATES", a, b, facet_updates="not-a-dict") == ("invalid", "service_error.choose_relationship_type")
+    assert rejected("BUY", a, b, facet_updates={"bogus": "x"}) == ("invalid", "service_error.choose_relationship_fields_registry")
+    assert rejected("BUY", a, None) == ("invalid", "service_error.choose_two_endpoints")
+    assert rejected("BUY", a, a) == ("invalid", "service_error.choose_two_endpoints")
+    assert rejected("BUY", event, b) == ("invalid", "service_error.relationship_not_allowed")
+    assert rejected("BUY", a, b, existing=[("a", "b", "BUY")]) == ("conflict", "service_error.relationship_exists")
+    with pytest.raises(FacetSchemaError, match="sentiment"):
+        registry.check_note_edge("EXPOSED_TO", from_node=a, to_node=theme, base_facets=None)
+    # An inverse alias is stored canonically: "b SUPPLIES_TO a" is "a BUY b".
+    checked = registry.check_note_edge("SUPPLIES_TO", from_node=b, to_node=a, base_facets=None)
+    assert (checked["from_id"], checked["relation"], checked["to_id"]) == ("a", "BUY", "b")
+
+    def calls(function: Any) -> set[str]:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+        return {node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+                for node in ast.walk(tree) if isinstance(node, ast.Call)}
+
+    # The Ontology review and the note relink both judge an edge by `check_note_edge`, never on their own.
+    for function in (corrections._review_edge, IngestionPipeline._canonical_note_edge):
+        assert "check_note_edge" in calls(function) and "canonicalize_edge" not in calls(function), function

@@ -220,11 +220,16 @@ def test_record_edits_person_corrections_and_rollout_share_one_identity_rule() -
     from stock_ontology.services.errors import ServiceError
     from stock_ontology.services.registry import RegistryService, identity_aliases, identity_labels, labels_taken
 
-    assert identity_aliases("Old", "New", ["new", "Alt", "alt"], keep_previous_name=True, max_length=10) == ["Alt", "Old"]
-    assert identity_aliases("Old", "New", ["Alt"], keep_previous_name=False, max_length=10) == ["Alt"]
+    registry = create_minimal_registry()
+    limit = registry.metadata_max_length["name"]
+    assert identity_aliases(registry, "Old", "New", ["new", "Alt", "alt"], summary="",
+                            keep_previous_name=True) == ["Alt", "Old"]
+    assert identity_aliases(registry, "Old", "New", ["Alt"], summary="", keep_previous_name=False) == ["Alt"]
     with pytest.raises(ServiceError) as too_long:
-        identity_aliases("Old", "New", ["A much longer alias"], keep_previous_name=False, max_length=10)
+        identity_aliases(registry, "Old", "New", ["x" * (limit + 1)], summary="", keep_previous_name=False)
     assert (too_long.value.code, too_long.value.key) == ("invalid", "service_error.alternate_name_too_long")
+    with pytest.raises(FacetSchemaError):
+        identity_aliases(registry, "Old", "x" * (limit + 1), [], summary="", keep_previous_name=False)
     assert identity_labels("Acme", None, "ACME", "") == {"acme"}
     assert labels_taken({"acme"}, [{"beta"}, {"acme", "acme corp"}])
     assert not labels_taken({"acme"}, [{"beta"}])
