@@ -50,9 +50,6 @@ JOB_KINDS: dict[str, JobKind] = {
     **{kind: JobKind(0, "correction") for kind in (
         "note.relink", "note.entity.add", "note.entity.delete", "note.ontology.correction",
     )},
-    # Note-reader relationship corrections are now reviewed at submit and queued as
-    # `note.ontology.correction`. Jobs of these kinds queued before that still run, first.
-    **{kind: JobKind(0, "retired") for kind in ("note.relationship", "note.relationship.add", "note.relationship.delete")},
     **{kind: JobKind(10, "operator") for kind in (
         "ingest", "reembed", "repair", "registry.publish", "registry.apply", "registry.apply.preview",
     )},

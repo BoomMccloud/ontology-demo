@@ -49,11 +49,7 @@ from stock_ontology.services import (
 )
 from stock_ontology.services.processing import JOB_KINDS, SCAN_PRIORITY
 from stock_ontology.services.notes import has_changes
-from stock_ontology.services.corrections import (
-    READER_RELATIONSHIP_KINDS,
-    review_note_correction,
-    review_reader_correction,
-)
+from stock_ontology.services.corrections import review_note_correction
 from stock_ontology.services.processing import check_membership, process_job_id
 from stock_ontology.services.registry import changed_fields, identity_labels, labels_taken, unique_labels
 
@@ -256,7 +252,7 @@ class Worker:
         self._executors: dict[str, Callable[[OntologyDB, Job], dict[str, Any] | None]] = {
             "process": self._run_process,
             **dict.fromkeys(("note.relink", "note.entity.add", "note.entity.delete"), correction),
-            **dict.fromkeys(("note.ontology.correction", *READER_RELATIONSHIP_KINDS), self._run_ontology_correction),
+            "note.ontology.correction": self._run_ontology_correction,
             "ingest": self._run_ingest,
             "reembed": self._run_reembed,
             "repair": self._run_rollout,
@@ -570,13 +566,9 @@ class Worker:
         if job.stage == "write":
             with db.transaction(immediate=True):
                 self._check(db, job)
-                if job.kind in READER_RELATIONSHIP_KINDS:
-                    # Queued by the note reader before it reviewed at submit: review it now, by the same rules.
-                    fresh = review_reader_correction(db, path, self.settings.data_dir, job.kind, reviewed)
-                else:
-                    fresh = review_note_correction(db, path, self.settings.data_dir, **reviewed["request"])
-                    if fresh != reviewed:
-                        raise ServiceError("conflict", "The source or graph changed after review.")
+                fresh = review_note_correction(db, path, self.settings.data_dir, **reviewed["request"])
+                if fresh != reviewed:
+                    raise ServiceError("conflict", "The source or graph changed after review.")
                 pipeline.apply_note_correction(path, fresh)
                 self._wrote(db, job)
         updated = self._finish_consensus(db, pipeline, replace(job, stage="consensus"))

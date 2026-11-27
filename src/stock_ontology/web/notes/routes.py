@@ -6,11 +6,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from stock_ontology.i18n import translate
 from stock_ontology.services import NoteSaveError, NotesService, ServiceError
-from stock_ontology.services.corrections import review_reader_correction
+from stock_ontology.services.corrections import review_note_correction
 from stock_ontology.web.notes.views import build_catalog_context
 from stock_ontology.web.shared import build_rail_context
 from stock_ontology.web.shell import WebShell, http_error
@@ -41,24 +41,12 @@ class NoteRelinkRequest(NoteEntityRequest):
 
 
 class NoteRelationshipRequest(NoteProcessRequest):
-    edge_id: str
-    relation: str
-    from_id: str | None = None
-    to_id: str | None = None
-    reverse: bool = False
-    expected_hash: str | None = None
+    """A relationship correction in the Ontology page's shape; the URL names its kind."""
 
+    model_config = ConfigDict(extra="forbid")
 
-class NoteRelationshipAddRequest(NoteProcessRequest):
-    from_id: str
-    relation: str
-    to_id: str
-    expected_hash: str | None = None
-    facets: dict[str, Any] | None = None
-
-
-class NoteRelationshipDeleteRequest(NoteProcessRequest):
-    edge_id: str
+    edge_id: str = ""
+    changes: dict[str, Any] = {}
     expected_hash: str | None = None
 
 
@@ -131,14 +119,17 @@ def build_router(shell: WebShell) -> APIRouter:
             ) from exc
         return {"file": ref.file, "job_id": ref.job_id}
 
+    def _note_error(request: Request, file: str, exc: ServiceError) -> HTTPException:
+        if exc.code == "not_found":
+            return HTTPException(404, translate("api.raw_note_not_found", lang=shell.lang(request), file=file))
+        return http_error(exc, shell.lang(request))
+
     def _submitted(request: Request, file: str, submit: Any) -> JSONResponse:
         shell.require_note_actions(request)
         try:
             ref = submit()
         except ServiceError as exc:
-            if exc.code == "not_found":
-                raise HTTPException(404, translate("api.raw_note_not_found", lang=shell.lang(request), file=file)) from exc
-            raise http_error(exc, shell.lang(request)) from exc
+            raise _note_error(request, file, exc) from exc
         return JSONResponse({"file": file, "job_id": ref.job_id, "state": ref.state}, status_code=202)
 
     def _correction(request: Request, kind: str, payload: BaseModel) -> JSONResponse:
@@ -162,36 +153,41 @@ def build_router(shell: WebShell) -> APIRouter:
     def delete_note_entity(request: Request, payload: NoteEntityRequest) -> JSONResponse:
         return _correction(request, "note.entity.delete", payload)
 
-    def _reviewed_correction(request: Request, kind: str, payload: BaseModel) -> JSONResponse:
+    def _reviewed_correction(request: Request, kind: str, payload: NoteRelationshipRequest) -> JSONResponse:
         """Review a relationship correction now, by the Ontology page's rules, and queue what was reviewed."""
         shell.require_note_actions(request)
-        file = getattr(payload, "file")
+        file = payload.file
         lang = shell.lang(request)
         try:
             path = notes.resolve(file).resolve()
         except ServiceError as exc:
-            if exc.code == "not_found":
-                raise HTTPException(404, translate("api.raw_note_not_found", lang=lang, file=file)) from exc
-            raise http_error(exc, lang) from exc
+            raise _note_error(request, file, exc) from exc
         try:
             with shell.open_db(lang) as db:
-                reviewed = review_reader_correction(db, path, settings.data_dir, kind, payload.model_dump(exclude={"file"}))
+                reviewed = review_note_correction(
+                    db, path, settings.data_dir, kind=kind, edge_id=payload.edge_id, changes=payload.changes,
+                )
         except ServiceError as exc:
             raise http_error(exc, lang) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+        # The reader must have rendered the revision that was reviewed.
+        if payload.expected_hash and payload.expected_hash != reviewed["expected_hash"]:
+            stale = ServiceError("conflict", "Review the latest processed version of this source note.",
+                                 key="service_error.stale_source_note")
+            raise http_error(stale, lang)
         return _submitted(request, file, lambda: processing.submit_correction("note.ontology.correction", file, reviewed))
 
     @router.post("/api/notes/relationship", status_code=202)
     def correct_note_relationship(request: Request, payload: NoteRelationshipRequest) -> JSONResponse:
-        return _reviewed_correction(request, "note.relationship", payload)
+        return _reviewed_correction(request, "relationship", payload)
 
     @router.post("/api/notes/relationship/add", status_code=202)
-    def add_note_relationship(request: Request, payload: NoteRelationshipAddRequest) -> JSONResponse:
-        return _reviewed_correction(request, "note.relationship.add", payload)
+    def add_note_relationship(request: Request, payload: NoteRelationshipRequest) -> JSONResponse:
+        return _reviewed_correction(request, "relationship_add", payload)
 
     @router.post("/api/notes/relationship/delete", status_code=202)
-    def delete_note_relationship(request: Request, payload: NoteRelationshipDeleteRequest) -> JSONResponse:
-        return _reviewed_correction(request, "note.relationship.delete", payload)
+    def delete_note_relationship(request: Request, payload: NoteRelationshipRequest) -> JSONResponse:
+        return _reviewed_correction(request, "relationship_delete", payload)
 
     return router

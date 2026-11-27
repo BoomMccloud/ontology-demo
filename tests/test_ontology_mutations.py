@@ -19,7 +19,6 @@ import tempfile
 from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +43,7 @@ from stock_ontology.registry import FacetSchemaError, OntologyRegistry, Relation
 from stock_ontology.repair import RepairReport, _delete_orphan_artifacts, validate_rollout
 from stock_ontology.services import ProcessingService
 from stock_ontology.services.corrections import review_note_correction
-from stock_ontology.services.processing import JOB_KINDS, JobKind, job_priority
+from stock_ontology.services.processing import JOB_KINDS, JobKind
 from stock_ontology.services.registry import RegistryService
 from stock_ontology.worker import Worker, load_repair_registry, plan_rollout
 from web_support import note_tree
@@ -501,32 +500,6 @@ def _reviewed_correction(*, edit_note_after_review: bool) -> Callable[[Workspace
     return submit
 
 
-def _legacy(kind: str, params: Callable[[Workspace], dict[str, Any]]) -> Callable[[Workspace], str]:
-    """A job of a retired kind, queued before that kind stopped being submitted."""
-
-    def submit(ws: Workspace) -> str:
-        revision, job_id, now = ws.revision("note.md"), f"job_legacy_{kind}", datetime.now(UTC)
-        payload = {"file": "note.md", "expected_hash": revision, **params(ws)}
-        with ws.write() as db:
-            assert db.jobs.insert(
-                job_id=job_id,
-                kind=kind,
-                target="note.md",
-                revision=revision,
-                priority=job_priority(kind),
-                payload=payload,
-                created_at=now.isoformat(),
-                now=now,
-            )
-        return job_id
-
-    return submit
-
-
-def _ids(ws: Workspace, from_name: str, to_name: str) -> dict[str, str]:
-    return {"from_id": ws.node_id(from_name), "to_id": ws.node_id(to_name)}
-
-
 BUY = ("NVIDIA", "BUY", "TSMC", "note.md")
 PENDING = ("NVIDIA", "PARTNERS_WITH", "TSMC", "note.md")
 
@@ -786,43 +759,6 @@ GOOD_CASES: list[Case] = [
         _reviewed_correction(edit_note_after_review=False),
         added={"edges": {("NVIDIA", "OWNS", "TSMC", "note.md")}},
     ),
-    Case(
-        "note.relationship",
-        "pending-edit-maps-it",
-        _legacy(
-            "note.relationship",
-            lambda ws: {
-                "edge_id": ws.edge_id("NVIDIA", "PARTNERS_WITH", "TSMC", pending=True),
-                "relation": "OWNS",
-                **_ids(ws, "NVIDIA", "TSMC"),
-            },
-        ),
-        added={"edges": {("NVIDIA", "OWNS", "TSMC", "note.md")}},
-        removed={"pending": {PENDING}},
-    ),
-    Case(
-        "note.relationship.add",
-        "new-relationship",
-        _legacy(
-            "note.relationship.add",
-            lambda ws: {
-                "relation": "BUY",
-                **_ids(ws, "TSMC", "NVIDIA"),
-            },
-        ),
-        added={"edges": {("TSMC", "BUY", "NVIDIA", "note.md")}},
-    ),
-    Case(
-        "note.relationship.delete",
-        "extracted-edge",
-        _legacy(
-            "note.relationship.delete",
-            lambda ws: {
-                "edge_id": ws.edge_id("NVIDIA", "BUY", "TSMC"),
-            },
-        ),
-        removed={"edges": {BUY}},
-    ),
     Case("reembed", "all-nodes", _reembed(_FakeLLM(embed_index=3)), check=_all_vectors_are(3)),
     Case(
         "repair",
@@ -925,45 +861,6 @@ BAD_CASES: list[Case] = [
         _reviewed_correction(edit_note_after_review=True),
         fails_with="conflict",
         because="latest processed version",
-    ),
-    Case(
-        "note.relationship",
-        "unmapped-relation",
-        _legacy(
-            "note.relationship",
-            lambda ws: {
-                "edge_id": ws.edge_id("NVIDIA", "BUY", "TSMC"),
-                "relation": "MYSTERY_LINK",
-                **_ids(ws, "NVIDIA", "TSMC"),
-            },
-        ),
-        fails_with="invalid",
-        because="Choose a relationship type",
-    ),
-    Case(
-        "note.relationship.add",
-        "duplicate",
-        _legacy(
-            "note.relationship.add",
-            lambda ws: {
-                "relation": "BUY",
-                **_ids(ws, "NVIDIA", "TSMC"),
-            },
-        ),
-        fails_with="conflict",
-        because="already records that relationship",
-    ),
-    Case(
-        "note.relationship.delete",
-        "missing-edge",
-        _legacy(
-            "note.relationship.delete",
-            lambda ws: {
-                "edge_id": "edge_missing",
-            },
-        ),
-        fails_with="not_found",
-        because="not in the selected note's extraction",
     ),
     Case(
         "reembed",

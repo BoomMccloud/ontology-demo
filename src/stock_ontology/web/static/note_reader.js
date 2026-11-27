@@ -125,14 +125,14 @@
       } else if (action === "relationship/delete") {
         payload.edge_id = fields.get("edge_id");
       } else if (action === "relationship" || action === "relationship/add") {
+        // The same `changes` the Ontology page sends; the URL names the kind.
+        payload.changes = { relation: fields.get("relation"), from_id: fields.get("from_id"), to_id: fields.get("to_id") };
         if (action === "relationship") {
           payload.edge_id = fields.get("edge_id");
         } else {
-          payload.facets = relationshipInputs.facetChanges();
+          const facets = relationshipInputs.facetChanges();
+          if (Object.keys(facets).length) payload.changes.facets = facets;
         }
-        payload.relation = fields.get("relation");
-        payload.from_id = fields.get("from_id");
-        payload.to_id = fields.get("to_id");
       }
 
       buttons.forEach((button) => { button.disabled = true; });
