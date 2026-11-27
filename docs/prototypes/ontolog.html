@@ -8,20 +8,58 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;1,8..60,400&display=swap" rel="stylesheet">
 <style>
 :root {
-  --paper: #EDF0F4;
-  --sheet: #F7F8FA;
-  --ink: #14213D;
-  --ink-2: #5B6B85;
-  --rule: #C3CAD5;
-  --rule-strong: #14213D;
-  --challenge: #B45309;
-  --support: #047857;
+  --outer-bg: #DCE3F0;
+  --paper: #F1F5FB;
+  --sheet: #FFFFFF;
+  --card: #FFFFFF;
+  --card-hover: #F8FAFF;
+  --card-shadow: 0 2px 8px rgba(30, 41, 82, 0.06), 0 1px 2px rgba(30, 41, 82, 0.04);
+  --bar-shadow: 0 -4px 16px rgba(15, 23, 42, 0.06);
+  --ink: #0F172A;
+  --ink-2: #475569;
+  --rule: #DCE3EE;
+  --rule-strong: #CBD5E1;
+  --accent-bg: #EEF2F9;
+
+  --brand: #4338CA;
+  --brand-strong: #3730A3;
+  --brand-soft: #EEF2FF;
+  --brand-border: #C7D2FE;
+  --brand-grad: linear-gradient(135deg, #4F46E5 0%, #2563EB 100%);
+  --brand-shadow: 0 4px 12px rgba(79, 70, 229, 0.28);
+
+  --company: #1D4ED8;
+  --company-bg: #EFF6FF;
+  --company-border: #BFDBFE;
+  --theme: #7C3AED;
+  --theme-bg: #F5F3FF;
+  --theme-border: #DDD6FE;
+  --entity: #0F766E;
+  --entity-bg: #F0FDFA;
+  --entity-border: #99F6E4;
+  --note: #B45309;
+  --note-bg: #FFFBEB;
+  --note-border: #FDE68A;
+
+  --support: #059669;
+  --support-bg: #ECFDF5;
+  --support-border: #A7F3D0;
+  --challenge: #E11D48;
+  --challenge-bg: #FFF1F2;
+  --challenge-border: #FECDD3;
+  --warn: #D97706;
+  --warn-bg: #FFFBEB;
+  --warn-border: #FDE68A;
+
   --routine: #94A3B8;
-  --focus: #1D4ED8;
-  --scrim: rgba(20, 33, 61, 0.32);
+  --focus: #4F46E5;
+  --scrim: rgba(15, 23, 42, 0.45);
+  --toast-bg: #1E1B4B;
+  --toast-fg: #FFFFFF;
+
   --font-ui: "Inter Tight", system-ui, sans-serif;
   --font-source: "Source Serif 4", Georgia, serif;
-  --size-title: 28px;
+  --size-title: 27px;
   --size-heading: 19px;
   --size-body: 15px;
   --size-quote: 15px;
@@ -34,51 +72,186 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #10151F; --sheet: #171E2B; --ink: #E4E9F1; --ink-2: #93A1B8;
-    --rule: #2A3446; --rule-strong: #E4E9F1; --challenge: #F0A35A; --support: #4CC79A;
-    --routine: #64748B; --focus: #7AA2FF; --scrim: rgba(0, 0, 0, 0.5); color-scheme: dark;
+    --outer-bg: #080C14; --paper: #0D121D; --sheet: #141B2B; --card: #182135; --card-hover: #1E2942;
+    --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.30);
+    --bar-shadow: 0 -4px 18px rgba(0, 0, 0, 0.35);
+    --ink: #F1F5F9; --ink-2: #94A3B8;
+    --rule: #263248; --rule-strong: #334155;
+    --accent-bg: rgba(148, 163, 184, 0.10);
+    --brand: #818CF8; --brand-strong: #A5B4FC; --brand-soft: rgba(129, 140, 248, 0.16); --brand-border: rgba(129, 140, 248, 0.35);
+    --brand-grad: linear-gradient(135deg, #6366F1 0%, #3B82F6 100%);
+    --brand-shadow: 0 4px 14px rgba(99, 102, 241, 0.32);
+    --company: #60A5FA; --company-bg: rgba(59, 130, 246, 0.16); --company-border: rgba(96, 165, 250, 0.34);
+    --theme: #A78BFA; --theme-bg: rgba(139, 92, 246, 0.16); --theme-border: rgba(167, 139, 250, 0.35);
+    --entity: #2DD4BF; --entity-bg: rgba(20, 184, 166, 0.16); --entity-border: rgba(45, 212, 191, 0.34);
+    --note: #FBBF24; --note-bg: rgba(245, 158, 11, 0.15); --note-border: rgba(251, 191, 36, 0.34);
+    --support: #34D399; --support-bg: rgba(16, 185, 129, 0.15); --support-border: rgba(52, 211, 153, 0.36);
+    --challenge: #FB7185; --challenge-bg: rgba(244, 63, 94, 0.15); --challenge-border: rgba(251, 113, 133, 0.36);
+    --warn: #FBBF24; --warn-bg: rgba(245, 158, 11, 0.15); --warn-border: rgba(251, 191, 36, 0.34);
+    --routine: #64748B; --focus: #818CF8; --scrim: rgba(0, 0, 0, 0.62);
+    --toast-bg: #312E81; --toast-fg: #FFFFFF;
+    color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --paper: #10151F; --sheet: #171E2B; --ink: #E4E9F1; --ink-2: #93A1B8;
-  --rule: #2A3446; --rule-strong: #E4E9F1; --challenge: #F0A35A; --support: #4CC79A;
-  --routine: #64748B; --focus: #7AA2FF; --scrim: rgba(0, 0, 0, 0.5); color-scheme: dark;
+  --outer-bg: #080C14; --paper: #0D121D; --sheet: #141B2B; --card: #182135; --card-hover: #1E2942;
+  --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.30);
+  --bar-shadow: 0 -4px 18px rgba(0, 0, 0, 0.35);
+  --ink: #F1F5F9; --ink-2: #94A3B8;
+  --rule: #263248; --rule-strong: #334155;
+  --accent-bg: rgba(148, 163, 184, 0.10);
+  --brand: #818CF8; --brand-strong: #A5B4FC; --brand-soft: rgba(129, 140, 248, 0.16); --brand-border: rgba(129, 140, 248, 0.35);
+  --brand-grad: linear-gradient(135deg, #6366F1 0%, #3B82F6 100%);
+  --brand-shadow: 0 4px 14px rgba(99, 102, 241, 0.32);
+  --company: #60A5FA; --company-bg: rgba(59, 130, 246, 0.16); --company-border: rgba(96, 165, 250, 0.34);
+  --theme: #A78BFA; --theme-bg: rgba(139, 92, 246, 0.16); --theme-border: rgba(167, 139, 250, 0.35);
+  --entity: #2DD4BF; --entity-bg: rgba(20, 184, 166, 0.16); --entity-border: rgba(45, 212, 191, 0.34);
+  --note: #FBBF24; --note-bg: rgba(245, 158, 11, 0.15); --note-border: rgba(251, 191, 36, 0.34);
+  --support: #34D399; --support-bg: rgba(16, 185, 129, 0.15); --support-border: rgba(52, 211, 153, 0.36);
+  --challenge: #FB7185; --challenge-bg: rgba(244, 63, 94, 0.15); --challenge-border: rgba(251, 113, 133, 0.36);
+  --warn: #FBBF24; --warn-bg: rgba(245, 158, 11, 0.15); --warn-border: rgba(251, 191, 36, 0.34);
+  --routine: #64748B; --focus: #818CF8; --scrim: rgba(0, 0, 0, 0.62);
+  --toast-bg: #312E81; --toast-fg: #FFFFFF;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body { background: var(--paper); color: var(--ink); font: 400 var(--size-body)/1.45 var(--font-ui); -webkit-font-smoothing: antialiased; }
-button, input, textarea { font: inherit; color: inherit; }
+button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 a { color: inherit; }
 
 .app { max-width: 430px; margin: 0 auto; min-height: 100%; position: relative; background: var(--paper); }
-@media (min-width: 600px) { body { background: var(--rule); } .app { min-height: 100vh; border-left: 1px solid var(--rule); border-right: 1px solid var(--rule); } }
+@media (min-width: 600px) {
+  body { background: var(--outer-bg); }
+  .app { min-height: 100vh; border-left: 1px solid var(--rule); border-right: 1px solid var(--rule); box-shadow: 0 12px 40px rgba(15, 23, 42, 0.12); }
+}
 
-.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; background: var(--paper); display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 6px var(--gutter) 0; }
-.back { border: 0; background: none; padding: 8px 0; color: var(--ink-2); font-size: var(--size-meta); }
+.top {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2;
+  background: var(--sheet); border-bottom: 1px solid var(--rule);
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: 52px; padding: 8px var(--gutter);
+}
+.back { border: 0; background: none; padding: 6px 0; color: var(--brand); font-size: var(--size-meta); font-weight: 500; }
 .back[hidden] { display: none; }
-.brand { border: 0; background: none; padding: 8px 0; font-weight: 600; letter-spacing: -0.2px; }
+.brand { border: 0; background: none; padding: 6px 0; font-weight: 600; font-size: 17px; letter-spacing: -0.3px; display: inline-flex; align-items: center; gap: 8px; color: var(--ink); }
+.brand::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--brand-grad); box-shadow: 0 2px 6px rgba(79, 70, 229, 0.35); }
 .brand[hidden] { display: none; }
-main { padding: 0 var(--gutter) calc(var(--bar-height) + 32px); }
+.theme-toggle { border: 1px solid var(--rule); background: var(--paper); border-radius: 999px; padding: 5px 12px; color: var(--ink-2); font-size: var(--size-small); font-weight: 500; }
+main { padding: 4px var(--gutter) calc(var(--bar-height) + 40px); }
 
-h1 { font-size: var(--size-title); font-weight: 500; letter-spacing: -0.4px; line-height: 1.15; margin: 4px 0 4px; }
-h2 { font-size: var(--size-meta); font-weight: 600; margin: 28px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--rule-strong); }
-.kind { color: var(--ink-2); font-size: var(--size-meta); }
-.lede { margin: 12px 0 0; }
+h1 { font-size: var(--size-title); font-weight: 600; letter-spacing: -0.5px; line-height: 1.15; margin: 12px 0 4px; color: var(--ink); }
+h2 {
+  font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--ink); margin: 26px 0 10px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.sec-title { display: inline-flex; align-items: center; gap: 8px; }
+.sec-title::before { content: ""; display: inline-block; width: 4px; height: 14px; border-radius: 999px; background: var(--sec-accent, var(--brand)); }
+.sec-count {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  background: var(--sec-soft, var(--brand-soft)); color: var(--sec-accent, var(--brand));
+  font-variant-numeric: tabular-nums;
+}
+h2.sec-theses { --sec-accent: var(--brand); --sec-soft: var(--brand-soft); }
+h2.sec-news { --sec-accent: var(--company); --sec-soft: var(--company-bg); }
+h2.sec-captured { --sec-accent: var(--warn); --sec-soft: var(--warn-bg); }
+h2.sec-consensus { --sec-accent: var(--brand); --sec-soft: var(--brand-soft); }
+h2.sec-questions { --sec-accent: var(--theme); --sec-soft: var(--theme-bg); }
+h2.sec-notes { --sec-accent: var(--note); --sec-soft: var(--note-bg); }
+h2.sec-company { --sec-accent: var(--company); --sec-soft: var(--company-bg); }
+h2.sec-theme { --sec-accent: var(--theme); --sec-soft: var(--theme-bg); }
+h2.sec-entity { --sec-accent: var(--entity); --sec-soft: var(--entity-bg); }
+h2.sec-support { --sec-accent: var(--support); --sec-soft: var(--support-bg); }
+h2.sec-risk { --sec-accent: var(--challenge); --sec-soft: var(--challenge-bg); }
+
+.kind { color: var(--ink-2); font-size: var(--size-meta); margin: 8px 0 0; }
+.kind-badge {
+  display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  border: 1px solid transparent;
+}
+.kind-company { background: var(--company-bg); color: var(--company); border-color: var(--company-border); }
+.kind-theme { background: var(--theme-bg); color: var(--theme); border-color: var(--theme-border); }
+.kind-entity { background: var(--entity-bg); color: var(--entity); border-color: var(--entity-border); }
+.kind-note { background: var(--note-bg); color: var(--note); border-color: var(--note-border); }
+.kind-cross { background: var(--brand-soft); color: var(--brand); border-color: var(--brand-border); }
+
+.lede { margin: 0; }
 .meta { color: var(--ink-2); font-size: var(--size-small); }
+.subhead {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  margin: 18px 0 8px; padding: 6px 10px; border-radius: 8px;
+  color: var(--ink-2); background: var(--accent-bg);
+}
+.subhead.support { color: var(--support); background: var(--support-bg); border: 1px solid var(--support-border); }
+.subhead.detract { color: var(--challenge); background: var(--challenge-bg); border: 1px solid var(--challenge-border); }
 
-.row { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--rule); background: none; padding: 12px 0; }
-.row-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-.row-name { font-weight: 500; }
+.list-card {
+  background: var(--card); border: 1px solid var(--rule); border-radius: 14px;
+  box-shadow: var(--card-shadow); overflow: hidden;
+}
+.row { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--rule); background: none; padding: 12px 0; transition: background-color 120ms ease; }
+.list-card .row { padding: 13px 14px; }
+.list-card .row:last-child { border-bottom: 0; }
+.list-card button.row:hover { background: var(--card-hover); }
+.row-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.row-name { font-weight: 600; color: var(--ink); display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .row-name .kind { font-weight: 400; margin-left: 4px; }
 .when { color: var(--ink-2); font-size: var(--size-small); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.count-pill { background: var(--accent-bg); color: var(--ink-2); padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
-.quote { font-family: var(--font-source); font-style: italic; font-size: var(--size-quote); line-height: 1.5; margin: 6px 0 0 var(--margin-indent); padding-left: var(--margin-indent); border-left: 2px solid var(--routine); }
-.quote.challenge { border-color: var(--challenge); }
-.quote.support { border-color: var(--support); }
-.cite { display: block; text-align: left; margin: 4px 0 0 calc(var(--margin-indent) * 2 + 2px); color: var(--ink-2); font-size: var(--size-small); }
-.stance { font-size: var(--size-small); font-weight: 500; margin: 0 0 0 calc(var(--margin-indent) * 2 + 2px); }
+.item-hero {
+  margin-top: 12px; padding: 16px; border-radius: 16px;
+  background: linear-gradient(180deg, var(--brand-soft) 0%, var(--card) 58%); border: 1px solid var(--brand-border);
+  box-shadow: var(--card-shadow);
+}
+.item-hero.kind-company { background: linear-gradient(180deg, var(--company-bg) 0%, var(--card) 58%); border-color: var(--company-border); }
+.item-hero.kind-theme { background: linear-gradient(180deg, var(--theme-bg) 0%, var(--card) 58%); border-color: var(--theme-border); }
+.item-hero.kind-entity { background: linear-gradient(180deg, var(--entity-bg) 0%, var(--card) 58%); border-color: var(--entity-border); }
+.item-hero.kind-note { background: linear-gradient(180deg, var(--note-bg) 0%, var(--card) 58%); border-color: var(--note-border); }
+.item-hero h1 { margin: 8px 0 0; font-size: 25px; }
+.item-hero .status { margin-top: 10px; }
+
+.consensus-card {
+  padding: 14px 15px; border-radius: 12px;
+  background: var(--brand-soft); border: 1px solid var(--brand-border);
+}
+.consensus-card .lede { font-family: var(--font-source); font-size: 15.5px; line-height: 1.55; color: var(--ink); }
+
+.source-card {
+  margin-top: 14px; padding: 16px; border-radius: 14px;
+  background: var(--note-bg); border: 1px solid var(--note-border);
+  box-shadow: var(--card-shadow);
+}
+.source-card .source-text { margin: 0; }
+
+.q-row-body { display: flex; align-items: flex-start; gap: 10px; flex: 1; min-width: 0; }
+.q-icon {
+  flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; margin-top: 1px;
+  background: var(--theme-bg); color: var(--theme); border: 1px solid var(--theme-border);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;
+}
+.ask-pill {
+  flex-shrink: 0; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  background: var(--theme-bg); color: var(--theme); border: 1px solid var(--theme-border); white-space: nowrap;
+}
+
+.quote {
+  font-family: var(--font-source); font-style: italic; font-size: var(--size-quote); line-height: 1.5;
+  margin: 10px 0 0; padding: 10px 12px; border-radius: 10px;
+  background: var(--accent-bg); border: 1px solid var(--rule); color: var(--ink);
+}
+.quote.challenge { border-color: var(--challenge-border); background: var(--challenge-bg); }
+.quote.support { border-color: var(--support-border); background: var(--support-bg); }
+.cite { display: block; text-align: left; margin: 8px 0 0; color: var(--ink-2); font-size: var(--size-small); }
+.cite.flat { margin-left: 0; margin-top: 6px; }
+.stance { font-size: var(--size-small); font-weight: 600; margin: 0; }
+.stance.flat { margin-left: 0; }
 .stance.challenge { color: var(--challenge); }
 .stance.support { color: var(--support); }
 .stance.routine { color: var(--ink-2); }
@@ -87,71 +260,289 @@ h2 { font-size: var(--size-meta); font-weight: 600; margin: 28px 0 0; padding-bo
 .pair { margin-top: 10px; }
 .pair-label { font-size: var(--size-small); color: var(--challenge); font-weight: 500; margin-top: 12px; }
 
-.status { display: inline-block; font-size: var(--size-small); color: var(--ink-2); }
-.status.queued::before, .status.processing::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--challenge); margin-right: 6px; vertical-align: 1px; }
+.status {
+  display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 600;
+  color: var(--ink-2); background: var(--accent-bg); padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+}
+.status.queued::before, .status.processing::before, .status.watching::before, .status.support::before, .status.challenge::before {
+  content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--routine); margin-right: 6px;
+}
+.status.watching { background: var(--warn-bg); color: var(--warn); }
+.status.watching::before { background: var(--warn); }
+.status.queued, .status.processing { background: var(--warn-bg); color: var(--warn); }
+.status.queued::before, .status.processing::before { background: var(--warn); }
 .status.processing::before { animation: pulse 1s ease-in-out infinite alternate; }
+.status.support { color: var(--support); background: var(--support-bg); font-weight: 600; }
+.status.support::before { background: var(--support); }
+.status.challenge { color: var(--challenge); background: var(--challenge-bg); font-weight: 600; }
+.status.challenge::before { background: var(--challenge); }
 @keyframes pulse { to { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) { .status.processing::before { animation: none; } }
 
 .source-text { font-family: var(--font-source); font-size: 17px; line-height: 1.6; margin: 16px 0 0; }
-.link { border: 0; background: none; padding: 0; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--rule); }
+.note-snippet { margin: 6px 0 0; font-family: var(--font-source); font-size: 14px; line-height: 1.45; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.link { border: 0; background: none; padding: 0; color: var(--brand); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--brand-border); text-align: left; }
 
 .empty { padding: 48px 0 0; }
 .empty p { color: var(--ink-2); margin: 8px 0 20px; max-width: 30ch; }
-.primary { border: 0; border-radius: 10px; background: var(--ink); color: var(--paper); padding: 11px 18px; font-weight: 500; }
-.secondary { border: 1px solid var(--rule); border-radius: 10px; background: none; padding: 10px 16px; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.primary { border: 0; border-radius: 10px; background: var(--brand-grad); color: #FFFFFF; padding: 11px 18px; font-weight: 600; box-shadow: 0 2px 8px rgba(79, 70, 229, 0.22); }
+.primary:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+.secondary { border: 1px solid var(--brand-border); border-radius: 10px; background: var(--card); color: var(--brand); padding: 10px 16px; font-weight: 500; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
 .proto { margin-top: 40px; color: var(--ink-2); font-size: var(--size-small); }
 
-.bar { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; height: calc(var(--bar-height) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); background: var(--paper); border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; z-index: 3; }
+/* Rich elevated card components for Feed, Theses & Configurator */
+.card-stack { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.card {
+  display: block; width: 100%; text-align: left;
+  background: var(--card); border: 1px solid var(--rule);
+  border-radius: 14px; padding: 14px; box-shadow: var(--card-shadow);
+  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+}
+button.card:hover { border-color: var(--brand-border); background: var(--card-hover); }
+.card.thesis-card { border-color: var(--brand-border); }
+.card.thesis-card.support { border-color: var(--support-border); }
+.card.thesis-card.challenge { border-color: var(--challenge-border); }
+.card.feed-card { border-color: var(--rule); }
+.card.feed-card.support { border-color: var(--support-border); }
+.card.feed-card.challenge { border-color: var(--challenge-border); }
+.card.cta-card { background: var(--brand-soft); border: 1px dashed var(--brand-border); }
+.card-title { font-weight: 600; font-size: var(--size-body); line-height: 1.35; margin: 0; color: var(--ink); }
+.card-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 10px; font-size: var(--size-small); color: var(--ink-2); }
+
+.pill-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  border-radius: 999px; padding: 3px 9px; font-size: 11px; font-weight: 600;
+  background: var(--accent-bg); color: var(--ink-2); border: 1px solid transparent; white-space: nowrap;
+}
+.pill-badge.brand { background: var(--brand-soft); color: var(--brand); border-color: var(--brand-border); }
+.pill-badge.theme { background: var(--theme-bg); color: var(--theme); border-color: var(--theme-border); }
+.pill-badge.support { background: var(--support-bg); color: var(--support); border-color: var(--support-border); }
+.pill-badge.challenge { background: var(--challenge-bg); color: var(--challenge); border-color: var(--challenge-border); }
+.pill-badge.routine { background: var(--accent-bg); color: var(--ink-2); border-color: var(--rule); }
+.pill-badge.link-pill { border: 1px solid var(--rule); background: var(--card); color: var(--ink); }
+.pill-badge.link-pill.kind-company { background: var(--company-bg); color: var(--company); border-color: var(--company-border); }
+.pill-badge.link-pill.kind-theme { background: var(--theme-bg); color: var(--theme); border-color: var(--theme-border); }
+
+.baseline-box {
+  margin-top: 12px; padding: 14px; border-radius: 12px;
+  background: var(--brand-soft); border: 1px solid var(--brand-border);
+}
+.baseline-kicker { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--brand); margin: 0; }
+.baseline-metric { font-size: 18px; font-weight: 700; margin: 4px 0; letter-spacing: -0.2px; color: var(--brand-strong); }
+.baseline-copy { font-family: var(--font-source); font-size: 14px; line-height: 1.45; margin: 0; color: var(--ink); }
+
+/* 1-Page Configurator & Add-on Cards */
+.step-card {
+  margin-top: 14px; padding: 15px; border-radius: 14px;
+  background: var(--card); border: 1px solid var(--rule); box-shadow: var(--card-shadow);
+}
+.step-head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+.step-num {
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #FFFFFF;
+}
+.step-num.step-1 { background: var(--brand); }
+.step-num.step-2 { background: var(--theme); }
+.step-num.step-3 { background: var(--entity); }
+.step-tag { display: inline-block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink); margin: 0; }
+
+.theme-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+.theme-chip { border: 1px solid var(--rule); background: var(--paper); border-radius: 999px; padding: 5px 12px; font-size: var(--size-small); color: var(--ink-2); font-weight: 500; }
+.theme-chip[aria-pressed="true"] { background: var(--theme); color: #FFFFFF; border-color: var(--theme); font-weight: 600; }
+
+.custom-driver-row { display: flex; gap: 8px; margin-top: 4px; }
+.custom-driver-row input { flex: 1; }
+.custom-chip-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.custom-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 10px; padding: 9px 12px; font-size: var(--size-meta); color: var(--ink); }
+.custom-item button { border: 0; background: none; color: var(--theme); font-size: 16px; padding: 0 4px; font-weight: 700; }
+
+.populate-btn {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+  border: 0; border-radius: 12px; background: var(--brand-grad);
+  color: #FFFFFF; padding: 12px 16px; font-weight: 600; box-shadow: var(--brand-shadow);
+}
+.populate-btn.populated { background: var(--support-bg); color: var(--support); border: 1px solid var(--support-border); box-shadow: none; }
+.populate-btn:disabled { opacity: 0.75; cursor: default; }
+
+.addon-card {
+  background: var(--card); border: 1px solid var(--rule); border-radius: 12px;
+  padding: 13px 14px; box-shadow: var(--card-shadow); transition: border-color 140ms ease, background-color 140ms ease;
+}
+.addon-card.support { border-color: var(--support-border); }
+.addon-card.detract { border-color: var(--challenge-border); }
+.addon-card.added.support { background: var(--support-bg); border-color: var(--support-border); }
+.addon-card.added.detract { background: var(--challenge-bg); border-color: var(--challenge-border); }
+.addon-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.addon-title { font-weight: 600; font-size: var(--size-body); margin: 0; color: var(--ink); }
+.badge-cred { border: 1px solid var(--brand-border); border-radius: 999px; background: var(--brand-soft); padding: 2px 9px; font-size: 11px; font-weight: 500; color: var(--brand); white-space: nowrap; }
+
+.chain { margin: 10px 0 0; padding: 9px 11px; border-radius: 10px; border: 1px solid var(--rule); background: var(--accent-bg); display: flex; flex-direction: column; gap: 4px; }
+.chain.support { border-color: var(--support-border); background: var(--support-bg); }
+.chain.detract { border-color: var(--challenge-border); background: var(--challenge-bg); }
+.chain-step { margin: 0; font-size: 13.5px; line-height: 1.4; }
+.chain-k { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-2); margin-right: 4px; }
+.chain.support .chain-k { color: var(--support); }
+.chain.detract .chain-k { color: var(--challenge); }
+
+.addon-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rule); }
+.watch-cue-sm { font-size: var(--size-small); color: var(--ink-2); line-height: 1.35; }
+.add-btn {
+  flex-shrink: 0; border: 1px solid var(--brand-border); border-radius: 999px;
+  background: var(--brand-soft); color: var(--brand); padding: 6px 13px;
+  font-size: var(--size-small); font-weight: 600; white-space: nowrap;
+}
+.add-btn.support[aria-pressed="true"] { background: var(--support); color: #FFFFFF; border-color: var(--support); }
+.add-btn.detract[aria-pressed="true"] { background: var(--challenge); color: #FFFFFF; border-color: var(--challenge); }
+
+/* Sticky checkout bar on builder */
+.checkout-bar {
+  position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 100%; max-width: 430px; min-height: calc(var(--bar-height) + env(safe-area-inset-bottom));
+  padding: 10px var(--gutter) calc(10px + env(safe-area-inset-bottom));
+  background: var(--sheet); border-top: 1px solid var(--rule); box-shadow: var(--bar-shadow);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; z-index: 3;
+}
+.checkout-bar[hidden] { display: none; }
+.checkout-meta { font-size: var(--size-small); color: var(--ink-2); line-height: 1.3; }
+.checkout-meta strong { display: block; color: var(--brand); font-size: var(--size-meta); }
+
+/* Live Thesis Hero & Watchlist Cards */
+.hero-card {
+  margin-top: 10px; background: linear-gradient(180deg, var(--brand-soft) 0%, var(--card) 52%);
+  border: 1px solid var(--brand-border);
+  border-radius: 16px; padding: 15px; box-shadow: var(--card-shadow);
+}
+.hero-card.support { background: linear-gradient(180deg, var(--support-bg) 0%, var(--card) 52%); border-color: var(--support-border); }
+.hero-card.challenge { background: linear-gradient(180deg, var(--challenge-bg) 0%, var(--card) 52%); border-color: var(--challenge-border); }
+.verdict-band {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 9px 11px; border-radius: 10px; background: var(--accent-bg); margin-top: 12px;
+}
+.verdict-band.support { background: var(--support-bg); border: 1px solid var(--support-border); }
+.verdict-band.challenge { background: var(--challenge-bg); border: 1px solid var(--challenge-border); }
+.verdict-title { font-weight: 700; font-size: var(--size-meta); }
+.verdict-band.support .verdict-title { color: var(--support); }
+.verdict-band.challenge .verdict-title { color: var(--challenge); }
+.verdict-tally { font-size: var(--size-small); color: var(--ink-2); font-variant-numeric: tabular-nums; font-weight: 500; }
+.meter { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; margin-top: 9px; }
+.meter-seg { height: 7px; background: var(--rule); border-radius: 999px; }
+.meter-seg.support { background: var(--support); }
+.meter-seg.challenge { background: var(--challenge); }
+.meter-seg.neutral { background: var(--brand); }
+.priced-in-box {
+  margin-top: 12px; padding: 10px 12px; border-radius: 10px;
+  background: var(--brand-soft); border: 1px solid var(--brand-border);
+  font-size: var(--size-small); color: var(--ink); line-height: 1.45;
+}
+.priced-in-box strong { color: var(--brand-strong); }
+
+.watch-card {
+  background: var(--card); border: 1px solid var(--rule); border-radius: 14px;
+  padding: 13px 14px; box-shadow: var(--card-shadow);
+}
+.watch-card.driver-support { border-color: var(--support-border); }
+.watch-card.driver-detract { border-color: var(--challenge-border); }
+.watch-card.driver-custom { border-color: var(--theme-border); }
+.watch-card.support { border-color: var(--support-border); }
+.watch-card.challenge { border-color: var(--challenge-border); }
+.watch-cue-box {
+  margin-top: 9px; padding: 8px 10px; border-radius: 8px;
+  background: var(--accent-bg); font-size: 13px; color: var(--ink-2); line-height: 1.4;
+}
+.evidence-box {
+  margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+  background: var(--accent-bg); border: 1px solid var(--rule);
+}
+.evidence-box.support { background: var(--support-bg); border-color: var(--support-border); }
+.evidence-box.challenge { background: var(--challenge-bg); border-color: var(--challenge-border); }
+.evidence-quote { font-family: var(--font-source); font-style: italic; font-size: 14px; line-height: 1.45; margin: 4px 0 0; }
+
+.unwatched-card {
+  margin-top: 14px; padding: 14px; border-radius: 14px;
+  background: var(--warn-bg); border: 1px solid var(--warn-border);
+}
+
+.news-card {
+  display: block; width: 100%; text-align: left;
+  background: var(--card); border: 1px solid var(--rule); border-radius: 14px;
+  padding: 13px 14px; box-shadow: var(--card-shadow); transition: border-color 140ms ease, background-color 140ms ease;
+}
+.news-card:hover:not(:disabled) { border-color: var(--brand-border); background: var(--card-hover); }
+.news-card:disabled { opacity: 0.62; cursor: default; }
+.news-headline { font-family: var(--font-source); font-size: 14.5px; line-height: 1.45; margin: 7px 0 0; color: var(--ink); }
+.news-tag { font-size: var(--size-small); color: var(--ink-2); margin-top: 9px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+/* Bottom bar */
+.bar { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; height: calc(var(--bar-height) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); background: var(--sheet); border-top: 1px solid var(--rule); box-shadow: var(--bar-shadow); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; z-index: 3; }
+.bar[hidden] { display: none; }
 .slot { display: flex; justify-content: center; }
 .bar button[hidden] { display: none; }
-.bar button { border: 0; background: none; color: var(--ink-2); font-size: var(--size-meta); padding: 12px; }
-.bar button[aria-current="page"], .bar button[aria-expanded="true"] { color: var(--ink); font-weight: 600; }
-.bar .plus { width: 44px; height: 44px; border-radius: 12px; background: var(--ink); color: var(--paper); font-size: 24px; line-height: 1; padding: 0; }
+.bar button { border: 0; background: none; color: var(--ink-2); font-size: var(--size-meta); padding: 8px 14px; border-radius: 999px; font-weight: 500; }
+.bar button[aria-current="page"], .bar button[aria-expanded="true"] { color: var(--brand); background: var(--brand-soft); font-weight: 600; }
+.bar .plus { width: 46px; height: 46px; border-radius: 14px; background: var(--brand-grad); color: #FFFFFF; font-size: 24px; line-height: 1; padding: 0; box-shadow: var(--brand-shadow); }
 
-.search { width: 100%; border: 0; border-bottom: 1px solid var(--rule-strong); background: none; padding: 10px 0; font-size: 17px; outline-offset: 4px; }
+.search {
+  width: 100%; border: 1.5px solid var(--rule-strong); border-radius: 12px;
+  background: var(--card); padding: 11px 14px; font-size: 16px;
+  box-shadow: var(--card-shadow); margin-top: 8px;
+}
+.search:focus { border-color: var(--brand); outline: none; }
 
-dialog.sheet { border: 0; padding: 0; margin: auto auto 0; width: 100%; max-width: 430px; max-height: 88vh; background: var(--sheet); color: var(--ink); border-radius: 16px 16px 0 0; }
+dialog.sheet { border: 0; padding: 0; margin: auto auto 0; width: 100%; max-width: 430px; max-height: 88vh; background: var(--sheet); color: var(--ink); border-radius: 18px 18px 0 0; box-shadow: 0 -8px 32px rgba(15, 23, 42, 0.18); }
 dialog.sheet::backdrop { background: var(--scrim); }
 dialog.sheet[open] { display: flex; flex-direction: column; animation: rise 180ms ease-out; }
 @keyframes rise { from { transform: translateY(24px); opacity: 0.6; } }
 @media (prefers-reduced-motion: reduce) { dialog.sheet[open] { animation: none; } }
-.sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 14px var(--gutter) 8px; border-bottom: 1px solid var(--rule); }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 14px var(--gutter) 10px; border-bottom: 1px solid var(--rule); }
 .sheet-head strong { font-weight: 600; }
-.sheet-head button { border: 0; background: none; color: var(--ink-2); padding: 6px 0; font-size: var(--size-meta); }
-.sheet-body { padding: 12px var(--gutter) 16px; overflow-y: auto; }
+.sheet-head button { border: 0; background: none; color: var(--brand); padding: 6px 0; font-size: var(--size-meta); font-weight: 500; }
+.sheet-body { padding: 14px var(--gutter) 18px; overflow-y: auto; }
 .sheet-foot { padding: 10px var(--gutter) calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--rule); }
+.sheet-divider { margin: 18px 0 10px; font-size: 11px; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.05em; }
 
-.chat { position: fixed; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; bottom: calc(var(--bar-height) + env(safe-area-inset-bottom)); height: 62vh; background: var(--sheet); border-top: 1px solid var(--rule-strong); border-radius: 16px 16px 0 0; display: flex; flex-direction: column; z-index: 4; }
+.chooser-option {
+  display: block; width: 100%; text-align: left; background: var(--brand-soft);
+  border: 1px solid var(--brand-border); border-radius: 12px; padding: 14px; margin-bottom: 10px;
+  box-shadow: var(--card-shadow);
+}
+.chooser-option#choose-note { background: var(--note-bg); border-color: var(--note-border); }
+.chooser-option strong { display: block; font-size: 16px; margin-bottom: 3px; color: var(--ink); }
+.chooser-option span { display: block; font-size: var(--size-small); color: var(--ink-2); }
+
+.chat { position: fixed; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; bottom: calc(var(--bar-height) + env(safe-area-inset-bottom)); height: 62vh; background: var(--sheet); border-top: 1px solid var(--brand-border); border-radius: 18px 18px 0 0; box-shadow: 0 -8px 30px rgba(15, 23, 42, 0.16); display: flex; flex-direction: column; z-index: 4; }
 .chat.expanded { height: calc(100vh - var(--bar-height) - 48px - env(safe-area-inset-bottom) - env(safe-area-inset-top)); }
 .chat[hidden] { display: none; }
-.chat .sheet-body { flex: 1; min-height: 0; }
-.chat .sheet-foot { padding-bottom: 12px; }
+.chat .sheet-head { background: var(--brand-soft); border-radius: 18px 18px 0 0; }
+.chat .sheet-body { flex: 1; min-height: 0; background: var(--paper); }
+.chat .sheet-foot { padding-bottom: 12px; background: var(--sheet); }
 .chat-heading { min-width: 0; }
-.chat-context { color: var(--ink-2); font-size: var(--size-small); }
+.chat-context { color: var(--brand); font-size: var(--size-small); font-weight: 500; }
 .chat-tools { display: flex; gap: 14px; }
 .foot-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; }
 
-.field { width: 100%; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); padding: 10px 12px; }
-textarea.field { min-height: 180px; resize: vertical; font-family: var(--font-source); font-size: 16px; line-height: 1.55; }
-.hint { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--rule); border-radius: 999px; padding: 3px 4px 3px 10px; font-size: var(--size-small); margin-bottom: 10px; }
-.hint button { border: 0; background: none; color: var(--ink-2); padding: 0 6px; }
-.error { color: var(--challenge); font-size: var(--size-small); margin: 6px 0 0; min-height: 1em; }
+.field { width: 100%; border: 1px solid var(--rule-strong); border-radius: 10px; background: var(--paper); padding: 10px 12px; }
+.field:focus { border-color: var(--brand); outline: none; }
+textarea.field { min-height: 150px; resize: vertical; font-family: var(--font-source); font-size: 16px; line-height: 1.55; }
+.hint { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--brand-border); background: var(--brand-soft); color: var(--brand); border-radius: 999px; padding: 3px 6px 3px 10px; font-size: var(--size-small); font-weight: 500; margin-bottom: 10px; }
+.hint button { border: 0; background: none; color: var(--brand); padding: 0 4px; font-weight: 700; }
+.error { color: var(--challenge); font-size: var(--size-small); margin: 6px 0 0; min-height: 1em; font-weight: 500; }
 
-.msg { margin: 0 0 16px; }
+.msg { margin: 0 0 14px; }
 .msg.you { text-align: right; }
-.msg.you span { display: inline-block; background: var(--paper); border: 1px solid var(--rule); border-radius: 12px; padding: 8px 12px; text-align: left; max-width: 85%; }
+.msg.you span { display: inline-block; background: var(--brand-grad); color: #FFFFFF; border: 0; border-radius: 14px 14px 4px 14px; padding: 9px 13px; text-align: left; max-width: 85%; box-shadow: 0 2px 8px rgba(79, 70, 229, 0.2); }
+.msg.agent { background: var(--card); border: 1px solid var(--rule); border-radius: 14px 14px 14px 4px; padding: 12px 13px; box-shadow: var(--card-shadow); }
 .msg.agent p { margin: 0 0 8px; }
 .msg.agent .quote { margin-left: 0; }
-.msg.agent .cite { margin-left: calc(var(--margin-indent) + 2px); }
+.msg.agent .cite { margin-left: 0; }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-.chips button { border: 1px solid var(--rule); background: none; border-radius: 999px; padding: 5px 12px; font-size: var(--size-meta); }
+.chips button { border: 1px solid var(--brand-border); background: var(--brand-soft); color: var(--brand); border-radius: 999px; padding: 5px 12px; font-size: var(--size-meta); font-weight: 500; }
 .composer { display: flex; gap: 8px; }
 .composer input { flex: 1; }
-.thinking { color: var(--ink-2); font-size: var(--size-meta); }
+.thinking { color: var(--brand); font-size: var(--size-meta); font-weight: 500; }
 
-.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--bar-height) + 16px); background: var(--ink); color: var(--paper); border-radius: 10px; padding: 10px 14px; font-size: var(--size-meta); z-index: 5; max-width: 90%; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--bar-height) + 16px); background: var(--toast-bg); color: var(--toast-fg); border-radius: 10px; padding: 10px 14px; font-size: var(--size-meta); font-weight: 500; box-shadow: 0 6px 20px rgba(15, 23, 42, 0.25); z-index: 5; max-width: 90%; }
 .toast[hidden] { display: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
@@ -161,16 +552,48 @@ textarea.field { min-height: 180px; resize: vertical; font-family: var(--font-so
   <header class="top">
     <button class="brand" id="brand">OntoLog</button>
     <button class="back" id="back" hidden><span aria-hidden="true">‹ </span><span id="back-label"></span></button>
-    <span></span>
+    <button class="theme-toggle" id="theme-toggle" type="button">Dark</button>
   </header>
   <main id="screen" tabindex="-1"></main>
+
   <nav class="bar" id="bar" aria-label="Main navigation">
-    <div class="slot"><button id="nav-recent">Recent</button><button id="nav-sources" aria-controls="sources" hidden>Sources</button></div>
-    <button class="plus" id="nav-capture" aria-label="Capture a note">+</button>
-    <div class="slot"><button id="nav-ontology">Ontology</button><button id="nav-chat" aria-controls="chat" aria-expanded="false" hidden>Chat</button></div>
+    <div class="slot">
+      <button id="nav-recent">Recent</button>
+      <button id="nav-sources" hidden>Notes</button>
+      <button id="nav-edit-thesis" hidden>Edit</button>
+    </div>
+    <button class="plus" id="nav-capture" aria-label="Add">+</button>
+    <div class="slot">
+      <button id="nav-ontology">Coverage</button>
+      <button id="nav-chat" aria-controls="chat" aria-expanded="false" hidden>Chat</button>
+    </div>
   </nav>
+
+  <div class="checkout-bar" id="checkout-bar" hidden>
+    <div class="checkout-meta">
+      <strong id="checkout-count">0 drivers selected</strong>
+      <span id="checkout-sub">Ready to track</span>
+    </div>
+    <button class="primary" id="checkout-submit" type="button">Create &amp; watch</button>
+  </div>
 </div>
 
+<!-- Chooser when tapping + on Company or Theme -->
+<dialog class="sheet" id="add-chooser" aria-labelledby="chooser-title">
+  <div class="sheet-head"><strong id="chooser-title">Add to Apple</strong><button type="button" id="chooser-cancel">Cancel</button></div>
+  <div class="sheet-body">
+    <button type="button" class="chooser-option" id="choose-thesis">
+      <strong id="choose-thesis-label">Add a thesis</strong>
+      <span id="choose-thesis-sub">State a hunch, pull ontology findings, and watch drivers</span>
+    </button>
+    <button type="button" class="chooser-option" id="choose-note">
+      <strong>Add a note</strong>
+      <span>Capture a quote, meeting note, or excerpt</span>
+    </button>
+  </div>
+</dialog>
+
+<!-- Capture Note Sheet -->
 <dialog class="sheet" id="capture" aria-labelledby="capture-title">
   <form id="capture-form" method="dialog" novalidate>
     <div class="sheet-head"><strong id="capture-title">New note</strong><button type="button" id="capture-cancel">Cancel</button></div>
@@ -186,6 +609,28 @@ textarea.field { min-height: 180px; resize: vertical; font-family: var(--font-so
   </form>
 </dialog>
 
+<!-- Drop News Sheet (from Live Thesis + button) -->
+<dialog class="sheet" id="news-sheet" aria-labelledby="news-sheet-title">
+  <form id="custom-news-form" method="dialog" novalidate>
+    <div class="sheet-head"><strong id="news-sheet-title">Drop news headline</strong><button type="button" id="news-sheet-cancel">Cancel</button></div>
+    <div class="sheet-body">
+      <p class="meta" style="margin-top:0">See how an incoming headline maps directly onto a watched driver.</p>
+      <textarea class="field" id="custom-news-text" placeholder="e.g. Verizon reports Q4 family-plan iPhone upgrades jumped 19% YoY" aria-label="Headline text" style="min-height:92px"></textarea>
+      <p class="error" id="custom-news-error" role="alert"></p>
+      <div class="actions" style="margin-top:8px"><button class="primary" type="submit">Map headline</button></div>
+      <p class="sheet-divider">Or simulate incoming headline</p>
+      <div id="news-sheet-presets" class="card-stack"></div>
+    </div>
+  </form>
+</dialog>
+
+<!-- Source Preview Sheet -->
+<dialog class="sheet" id="source-sheet" aria-labelledby="source-sheet-title">
+  <div class="sheet-head"><strong id="source-sheet-title">Source</strong><button type="button" id="source-sheet-close">Close</button></div>
+  <div class="sheet-body" id="source-sheet-body"></div>
+</dialog>
+
+<!-- Research Chat Sheet -->
 <section class="chat" id="chat" role="dialog" aria-modal="false" aria-labelledby="chat-title" hidden>
   <div class="sheet-head"><div class="chat-heading"><strong id="chat-title">Research chat</strong><div class="chat-context" id="chat-context"></div></div>
     <div class="chat-tools"><button type="button" id="chat-expand" aria-expanded="false">Expand</button><button type="button" id="chat-close">Minimize</button></div></div>
@@ -196,7 +641,7 @@ textarea.field { min-height: 180px; resize: vertical; font-family: var(--font-so
       <button type="button" data-ask="What would refute it?">What would refute it?</button>
     </div>
     <form class="composer" id="chat-form">
-      <input class="field" id="chat-input" placeholder="What else have we heard about rollout timing?" aria-label="Message">
+      <input class="field" id="chat-input" placeholder="Ask about evidence or rollout timing…" aria-label="Message">
       <button class="primary" type="submit">Send</button>
     </form>
   </div>
@@ -206,14 +651,63 @@ textarea.field { min-height: 180px; resize: vertical; font-family: var(--font-so
 
 <script>
 const CATALOG = {
-  groq: { name: "Groq", kind: "company", match: /groq/i,
-    consensus: "Groq leads on low-latency inference. The open question is whether packaging costs let it hold a gross margin above 65%." },
-  sram: { name: "SRAM Latency", kind: "theme", match: /sram|latency/i,
-    consensus: "On-chip SRAM gives a durable latency edge for inference. Benchmarks cover one model size, and packaging cost affects the economics." },
-  cowos: { name: "TSMC CoWoS Allocation", kind: "entity", match: /cowos|tsmc|packaging/i,
-    consensus: "Advanced packaging capacity is the binding constraint for 2027 accelerator supply." },
-  cerebras: { name: "Cerebras", kind: "company", match: /cerebras|wse/i,
-    consensus: "Cerebras competes on wafer-scale inference throughput. Customer concentration is the main risk." },
+  apple: {
+    name: "Apple", kind: "company", match: /apple|iphone|siri|aapl/i, defaultTheme: "edge_ai",
+    consensus: "Consensus Buy (~$345 PT) prices in a modest +5% iPhone upgrade bump. Bulls see an Edge AI supercycle; bears cite China softness and 45–46% margin compression.",
+    openQuestions: [
+      "Does Siri AI drive upgrades past the +5% baseline, or do EU/China delays stall demand?",
+      "Can A20 Pro and WMCM packaging preserve battery life and gross margins near 46%?",
+      "Are users sticking with built-in Apple Intelligence vs. third-party AI apps?"
+    ]
+  },
+  edge_ai: {
+    name: "Edge AI", kind: "theme", match: /edge ai|on-device|siri ai|apple intelligence/i,
+    companies: ["apple", "tsmc"],
+    consensus: "On-device AI combines 2nm custom silicon, higher RAM floors, and private cloud execution—creating upgrade leverage without hyperscaler CapEx.",
+    openQuestions: [
+      "Which hardware constraints (2nm silicon vs. 12GB+ RAM) force actual device replacements?",
+      "Does on-device privacy win daily retention over cloud AI apps?"
+    ]
+  },
+  tsmc: {
+    name: "TSMC", kind: "company", match: /tsmc|n2|2nm|wmcm|foundry/i, defaultTheme: "edge_ai",
+    consensus: "Anchor 2nm and WMCM packaging partner for leading-edge mobile AI SoCs, offsetting legacy node cyclicality.",
+    openQuestions: [
+      "Do 2nm N2 and WMCM pricing gains offset Arizona fab ramp dilution?",
+      "How tightly does mobile Edge AI compete with AI accelerator CoWoS capacity?"
+    ]
+  },
+  groq: {
+    name: "Groq", kind: "company", match: /groq/i, defaultTheme: "sram",
+    consensus: "Groq leads on low-latency inference. The open question is whether packaging costs let it hold a gross margin above 65%.",
+    openQuestions: [
+      "Can Groq hold gross margin above 65% if interposer and packaging costs stay elevated?",
+      "Does single-model 70B latency leadership generalize across production workloads?"
+    ]
+  },
+  sram: {
+    name: "SRAM Latency", kind: "theme", match: /sram|latency/i,
+    companies: ["groq", "cerebras"],
+    consensus: "On-chip SRAM gives a durable latency edge for inference. Benchmarks cover one model size, and packaging cost affects the economics.",
+    openQuestions: [
+      "Do SRAM-heavy architectures hold their cost-per-token advantage beyond 70B models?",
+      "Will advanced packaging allocation limit 2027 shipment growth?"
+    ]
+  },
+  cowos: {
+    name: "TSMC CoWoS Allocation", kind: "entity", match: /cowos|packaging/i,
+    consensus: "Advanced packaging capacity is the binding constraint for 2027 accelerator supply.",
+    openQuestions: [
+      "Are raised 2027 CoWoS allocations holding firm or seeing customer pushouts?"
+    ]
+  },
+  cerebras: {
+    name: "Cerebras", kind: "company", match: /cerebras|wse/i, defaultTheme: "sram",
+    consensus: "Cerebras competes on wafer-scale inference throughput. Customer concentration is the main risk.",
+    openQuestions: [
+      "Do customer pilots on WSE-3 convert into diversified multi-quarter volume orders?"
+    ]
+  }
 };
 
 const SAMPLE_NOTES = [
@@ -231,17 +725,203 @@ const SAMPLE_NOTES = [
     text: "WSE-3 beat GPU latency on 70B inference in the customer pilot. The pilot used one model and batch size.",
     views: [{ item: "cerebras", stance: "support", view: "WSE-3 leads GPUs on 70B latency.", quote: "WSE-3 beat GPU latency on 70B inference in the customer pilot." },
             { item: "sram", stance: "routine", view: "A second SRAM-heavy design shows the same latency pattern.", quote: "The pilot used one model and batch size." }] },
-  { id: "n5", title: "Supplier call, TSMC", hoursAgo: 2, items: ["groq", "cowos"],
-    text: "Interposer costs could take Groq's gross margin to about 52% through the next production cycle. Customers are asking about later delivery dates, but there's no confirmed change to the rollout.",
+  { id: "n5", title: "Supplier call, TSMC", hoursAgo: 3, items: ["groq", "cowos", "tsmc"],
+    text: "Interposer costs could take Groq's gross margin to about 52% through the next production cycle. Meanwhile 2nm A20 Pro and WMCM packaging ramps for Apple remain on schedule.",
     views: [{ item: "groq", stance: "challenge", view: "Gross margin could fall to about 52% on interposer costs.", quote: "Interposer costs could take Groq's gross margin to about 52%.", against: "Gross margin will exceed 65% at scale." },
-            { item: "cowos", stance: "routine", view: "Customers are asking about later delivery dates.", quote: "Customers are asking about later delivery dates, but there's no confirmed change to the rollout." }] },
+            { item: "tsmc", stance: "support", view: "2nm A20 Pro and WMCM packaging ramps remain on schedule.", quote: "2nm A20 Pro and WMCM packaging ramps for Apple remain on schedule." }] },
+  { id: "n6", title: "AAPL Q4 FY26 & Street reaction", hoursAgo: 1, items: ["apple", "edge_ai"],
+    text: "Wedbush and China Renaissance cite Siri AI across 2.5B+ active devices driving an iPhone 18 upgrade cycle. Barclays counters that upgrade fatigue, EU/China delays, and 45–46% gross margin guidance limit upside.",
+    views: [
+      { item: "apple", stance: "routine", view: "Market prices in a modest +5% upgrade bump (~$345 PT).", quote: "Wedbush and China Renaissance cite Siri AI across 2.5B+ active devices driving an iPhone 18 upgrade cycle.", baseline: true },
+      { item: "apple", stance: "challenge", view: "Upgrade fatigue and regional AI delays cap iPhone upside.", quote: "Barclays counters that upgrade fatigue, EU/China delays, and 45–46% gross margin guidance limit upside.", against: "Market prices in a modest +5% upgrade bump (~$345 PT)." },
+      { item: "edge_ai", stance: "support", view: "On-device Siri AI + 2nm silicon avoids hyperscaler CapEx.", quote: "Wedbush and China Renaissance cite Siri AI across 2.5B+ active devices driving an iPhone 18 upgrade cycle." }
+    ] }
 ];
 
 const SAMPLE_TEXT = "A supplier says advanced packaging costs for Groq's SRAM-heavy accelerators may stay elevated through the next production cycle. Latency in the latest inference tests remains strong.";
 
+const SOURCES = {
+  consensus_q4: {
+    title: "AAPL Q4 FY26 Earnings & Consensus",
+    credibility: "High",
+    date: "Nov 2026",
+    excerpt: "Consensus sits at Buy/Outperform (~$345 PT vs. ~$345–$352 share price). Q1 FY27 revenue is guided +7% to +10% YoY, pricing in a modest +5% iPhone upgrade bump."
+  },
+  retail_gifting: {
+    title: "Holiday Retail & Carrier Channel Check",
+    credibility: "Medium",
+    date: "Nov 2026",
+    excerpt: "Preliminary carrier feedback shows adult children evaluating health alerts, simplified Siri help, and live translation when upgrading older family members' phones."
+  },
+  hardware_spec: {
+    title: "A20 Pro Silicon & 12GB RAM Floor Spec",
+    credibility: "High",
+    date: "Sept 2026",
+    excerpt: "Full on-device Siri AI requires the A20 Pro (TSMC 2nm) and a 12GB+ unified memory floor, gating full features from 3+ year old iPhones."
+  },
+  regional_filings: {
+    title: "EU DMA & China AI Rollout Tracker",
+    credibility: "High",
+    date: "Nov 2026",
+    excerpt: "Regulatory reviews in the EU and local model approvals in China continue to stagger regional Siri AI availability compared with U.S. launch timelines."
+  },
+  battery_lab: {
+    title: "Edge AI Thermal & Battery Benchmark",
+    credibility: "Medium",
+    date: "Oct 2026",
+    excerpt: "Pre-launch testing warned continuous background inference can cut battery endurance unless mitigated by WMCM packaging and thermal tuning."
+  },
+  usage_telemetry: {
+    title: "Mobile AI App Engagement Telemetry",
+    credibility: "Medium",
+    date: "Nov 2026",
+    excerpt: "Telemetry shows high daily usage of ChatGPT, Gemini, and Claude apps on older iPhones without requiring new hardware."
+  },
+  generic_src: {
+    title: "Ontology Synthesis & Channel Notes",
+    credibility: "Medium",
+    date: "Nov 2026",
+    excerpt: "Synthesized from ingested company earnings, supplier calls, and analyst notes stored in the ontology."
+  }
+};
+
+const APPLE_FINDINGS = {
+  sampleThesis: "Apple Intelligence will drive an iPhone upgrade cycle.",
+  baselineMetric: "+5% upgrade bump priced in",
+  baselineDetail: "Consensus (~$345 PT; Q1 FY27 rev +7–10% YoY) expects modest replacement growth, not a supercycle.",
+  baselineSource: "consensus_q4",
+  addons: [
+    {
+      id: "gifting", kind: "support", name: "Parents / Family Gifting Driver",
+      credibility: "Retail checks · med", sourceId: "retail_gifting",
+      assumption: "New iPhones address specific adult & family needs (health alerts, simplified AI help).",
+      driver: "Adult children buy flagship iPhones as upgrades for their parents.",
+      outcome: "Multi-device and family-plan upgrade spikes lift unit volume past baseline.",
+      watchWindow: "Dec 2026",
+      watchEvent: "Retail/carrier Q4 reports on multi-device or family-plan upgrade spikes."
+    },
+    {
+      id: "hardware_gate", kind: "support", name: "Hardware-Gate Driver",
+      credibility: "Hardware spec · high", sourceId: "hardware_spec",
+      assumption: "Older chips can't run on-device Apple Intelligence due to silicon & RAM floors.",
+      driver: "Owners of 3+ year old iPhones must upgrade to access Siri AI.",
+      outcome: "Shortens the average replacement cycle.",
+      watchWindow: "Q1 FY27",
+      watchEvent: "Carrier trade-in age mix showing a surge in 3+ year old devices."
+    },
+    {
+      id: "rollout_delay", kind: "detract", name: "Rollout-Delay Friction",
+      credibility: "Regional filings · high", sourceId: "regional_filings",
+      assumption: "Regulatory reviews and localization slow non-U.S. AI launches.",
+      driver: "Key AI features ship late in major regions (EU, China).",
+      outcome: "International upgrade demand slips or stalls.",
+      watchWindow: "Q1–Q2 2027",
+      watchEvent: "Official EU & China Siri AI approval or launch-delay announcements."
+    },
+    {
+      id: "priority_mismatch", kind: "detract", name: "Priority Mismatch (Battery)",
+      credibility: "Lab tests · med", sourceId: "battery_lab",
+      assumption: "Continuous on-device AI workloads strain mobile battery budgets.",
+      driver: "New AI feature shortens battery life by up to 50% under heavy use.",
+      outcome: "Buyers disable AI or delay upgrading for better battery life.",
+      watchWindow: "Post-launch",
+      watchEvent: "Independent battery-drain benchmarks and early return rates."
+    },
+    {
+      id: "app_substitution", kind: "detract", name: "App-Substitution Driver",
+      credibility: "Usage telemetry · med", sourceId: "usage_telemetry",
+      assumption: "Users already run ChatGPT, Gemini, or Claude apps on older iPhones.",
+      driver: "Third-party AI apps satisfy daily tasks without new hardware.",
+      outcome: "Weak retention on built-in Apple Intelligence mutes upgrade urgency.",
+      watchWindow: "30-day survey",
+      watchEvent: "Retention comparison of built-in Apple Intelligence vs. 3rd-party AI apps."
+    }
+  ]
+};
+
+function findingsForContext(companyId, themeId) {
+  if (companyId === "apple" || (!companyId && themeId === "edge_ai")) return APPLE_FINDINGS;
+  const target = CATALOG[companyId || themeId] || CATALOG.apple;
+  return {
+    sampleThesis: `${target.name} will outperform baseline expectations over the next 2 quarters.`,
+    baselineMetric: "Consensus baseline priced in",
+    baselineDetail: target.consensus,
+    baselineSource: "generic_src",
+    addons: [
+      {
+        id: "gen_demand", kind: "support", name: `${target.name} Volume Acceleration`,
+        credibility: "Channel checks · med", sourceId: "generic_src",
+        assumption: "Early customer pilots convert into multi-quarter production commitments.",
+        driver: "Committed volume orders lift revenue mix above consensus estimates.",
+        outcome: "Earnings revisions move higher.",
+        watchWindow: "Next 2 quarters",
+        watchEvent: "Signed volume order disclosures or raised supplier allocation."
+      },
+      {
+        id: "gen_margin", kind: "detract", name: "Input Cost & Margin Squeeze",
+        credibility: "Supplier calls · med", sourceId: "generic_src",
+        assumption: "Leading-edge packaging or memory costs remain elevated.",
+        driver: "Higher BOM costs compress gross margin below target.",
+        outcome: "Multiple expansion stalls despite top-line growth.",
+        watchWindow: "Next earnings",
+        watchEvent: "Next-quarter gross margin guidance and packaging spot pricing."
+      }
+    ]
+  };
+}
+
+const PRESET_NEWS = [
+  {
+    id: "news_gifting", addonId: "gifting", effect: "confirms",
+    sourceTitle: "Verizon & Best Buy Q4 retail check", credibility: "Medium", age: "12m ago",
+    headline: "Multi-line family-plan iPhone upgrades rose 19% YoY over Thanksgiving week, led by buyers adding flagship devices for parents.",
+    agentNote: "Confirms Parents / Family Gifting — adds upside above the +5% market baseline."
+  },
+  {
+    id: "news_rollout", addonId: "rollout_delay", effect: "confirms",
+    sourceTitle: "EU & China Siri AI rollout delay filing", credibility: "High", age: "28m ago",
+    headline: "Apple confirmed full agentic Siri AI features in the EU and Greater China will slip into Q2 2027 pending regulatory sign-off.",
+    agentNote: "Triggers Rollout-Delay Friction — removes the near-term AI upgrade catalyst in two major regions."
+  },
+  {
+    id: "news_substitution", addonId: "app_substitution", effect: "confirms",
+    sourceTitle: "CIRP 30-day AI app retention survey", credibility: "Medium", age: "1h ago",
+    headline: "Survey finds 68% of iOS users still open standalone ChatGPT or Gemini apps daily vs. 21% sticking with built-in Siri AI.",
+    agentNote: "Confirms App-Substitution risk — users are getting AI utility without upgrading hardware."
+  },
+  {
+    id: "news_hardware", addonId: "hardware_gate", effect: "confirms",
+    sourceTitle: "Carrier trade-in age report", credibility: "High", age: "2h ago",
+    headline: "U.S. carrier trade-in mix shows iPhone 13 and 14 models jumped to 44% of Q4 upgrades, pulling forward 3+ year old cohorts.",
+    agentNote: "Confirms Hardware-Gate driver — older-chip owners are upgrading sooner for Siri AI."
+  },
+  {
+    id: "news_battery", addonId: "priority_mismatch", effect: "breaks",
+    sourceTitle: "Independent A20 Pro battery-drain lab test", credibility: "High", age: "3h ago",
+    headline: "Benchmarks on iPhone 18 Pro show A20 Pro + WMCM packaging holds full-day battery within 4% of baseline under continuous AI load.",
+    agentNote: "Breaks Priority Mismatch — refutes the 50% battery-penalty bear case."
+  }
+];
+
+const SEEDED_THESES = [
+  {
+    id: "th_tsmc_edge",
+    companyId: "tsmc",
+    themeId: "edge_ai",
+    statement: "2nm A20 Pro & WMCM packaging locks in Edge AI silicon pricing power.",
+    baselineMetric: "Consensus baseline priced in",
+    baselineDetail: CATALOG.tsmc.consensus,
+    customDrivers: [],
+    selectedAddonIds: ["gen_demand", "gen_margin"],
+    mappedNews: [],
+    createdAt: Date.now() - 86400e3
+  }
+];
+
 let state;
 let history = [];
 let current = { screen: "recent" };
+let builder = null;
 const chats = {};
 let chatKey = null;
 let toastTimer;
@@ -252,10 +932,15 @@ const esc = value => String(value).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<
 
 function load(empty) {
   const now = Date.now();
-  state = { notes: {}, items: {}, views: [] };
-  if (!empty) SAMPLE_NOTES.forEach(note => ingest({ ...note, at: now - note.hoursAgo * 3600e3, status: "processed" }, note.views));
+  state = { notes: {}, items: {}, views: [], theses: [] };
+  if (!empty) {
+    Object.entries(CATALOG).forEach(([id, data]) => { state.items[id] = { id, ...data }; });
+    SAMPLE_NOTES.forEach(note => ingest({ ...note, at: now - note.hoursAgo * 3600e3, status: "processed" }, note.views));
+    state.theses = SEEDED_THESES.map(t => ({ ...t, customDrivers: [...t.customDrivers], selectedAddonIds: [...t.selectedAddonIds], mappedNews: [] }));
+  }
   history = [];
   current = { screen: "recent" };
+  builder = null;
   Object.keys(chats).forEach(key => delete chats[key]);
   render();
 }
@@ -277,8 +962,65 @@ function ago(at) {
 const since = at => { const value = ago(at); return value === "now" ? "just now" : value + " ago"; };
 const viewsFor = id => state.views.filter(view => view.item === id).sort((a, b) => b.at - a.at);
 const notesFor = id => Object.values(state.notes).filter(note => note.items.includes(id)).sort((a, b) => b.at - a.at);
+const thesesForItem = id => state.theses.filter(t => t.companyId === id || t.themeId === id);
+const thesisById = id => state.theses.find(t => t.id === id);
 const statusWord = { ready: "Not processed", queued: "Queued", processing: "Processing" };
 const stanceWord = { challenge: "Challenges a view", support: "Supports", routine: "Adds" };
+
+function allAddonsFor(companyId, themeId) {
+  return findingsForContext(companyId, themeId).addons;
+}
+
+function newsDeltaForAddon(addon, effect) {
+  if (!addon) return 0;
+  if (addon.kind === "support") return effect === "confirms" ? 1 : -1;
+  return effect === "breaks" ? 1 : -1;
+}
+
+function thesisRealism(thesis) {
+  const addons = allAddonsFor(thesis.companyId, thesis.themeId);
+  const activeNews = thesis.mappedNews.filter(n => thesis.selectedAddonIds.includes(n.addonId));
+  let score = 0;
+  let bullish = 0;
+  let bearish = 0;
+  activeNews.forEach(item => {
+    const addon = addons.find(a => a.id === item.addonId);
+    const delta = newsDeltaForAddon(addon, item.effect);
+    score += delta;
+    if (delta > 0) bullish += 1;
+    else if (delta < 0) bearish += 1;
+  });
+
+  let label = "Baseline · Unproven";
+  let tone = "routine";
+  if (activeNews.length > 0) {
+    if (score >= 2) { label = "Much more realistic"; tone = "support"; }
+    else if (score === 1) { label = "More realistic"; tone = "support"; }
+    else if (score === 0) { label = "Mixed signals"; tone = "routine"; }
+    else if (score === -1) { label = "Less realistic"; tone = "challenge"; }
+    else { label = "Much less realistic"; tone = "challenge"; }
+  }
+
+  const totalWatched = thesis.customDrivers.length + thesis.selectedAddonIds.length;
+  const tally = activeNews.length
+    ? `${bullish} bullish · ${bearish} bearish signal${bullish + bearish === 1 ? "" : "s"}`
+    : `${totalWatched} item${totalWatched === 1 ? "" : "s"} watched · 0 headlines`;
+
+  const clamped = Math.max(-2, Math.min(2, score));
+  const segs = [0, 1, 2, 3, 4].map(idx => {
+    if (activeNews.length === 0) return idx === 2 ? "neutral" : "";
+    if (clamped > 0 && idx >= 2 && idx <= 2 + clamped) return "support";
+    if (clamped < 0 && idx <= 2 && idx >= 2 + clamped) return "challenge";
+    if (clamped === 0 && idx === 2) return "neutral";
+    return "";
+  });
+
+  return { label, tone, tally, segs, totalWatched, mappedCount: activeNews.length };
+}
+
+const sectionHead = (title, cls, count, extraAttrs = "") =>
+  `<h2 class="${cls}"${extraAttrs ? " " + extraAttrs : ""}><span class="sec-title">${title}</span>${count !== undefined ? `<span class="sec-count">${count}</span>` : ""}</h2>`;
+const kindBadge = (kind, text) => `<span class="kind-badge kind-${kind}">${esc(text || kind)}</span>`;
 
 function quoteBlock(view, withStance) {
   const note = state.notes[view.note];
@@ -287,71 +1029,370 @@ function quoteBlock(view, withStance) {
     <button class="cite link" data-go="note" data-id="${note.id}">${esc(note.title)}, ${since(note.at)}</button>`;
 }
 
+function renderThesisSummaryCard(thesis) {
+  const r = thesisRealism(thesis);
+  const company = thesis.companyId ? state.items[thesis.companyId] : null;
+  const theme = thesis.themeId ? state.items[thesis.themeId] : null;
+  const toneCls = r.tone === "routine" ? "" : r.tone;
+  return `<button class="card thesis-card ${toneCls}" data-go="thesis" data-id="${thesis.id}">
+    <p class="card-title">${esc(thesis.statement)}</p>
+    <div class="card-foot">
+      <span>${company ? `<strong style="color:var(--company)">${esc(company.name)}</strong>` : `<strong style="color:var(--brand)">Cross-company</strong>`}${theme ? ` · <span style="color:var(--theme);font-weight:500">${esc(theme.name)}</span>` : ""}</span>
+      <span class="pill-badge ${r.tone}">${esc(r.label)}</span>
+    </div>
+  </button>`;
+}
+
 function renderRecent() {
   const pending = Object.values(state.notes).filter(note => note.status !== "processed");
   const items = Object.values(state.items).map(item => ({ item, latest: viewsFor(item.id)[0] }))
     .filter(entry => entry.latest).sort((a, b) => b.latest.at - a.latest.at);
-  if (!items.length && !pending.length) {
+  if (!items.length && !pending.length && !state.theses.length) {
     return `<h1>Recent</h1>
-      <div class="empty"><h2 style="border:0;font-size:var(--size-heading);font-weight:500;margin:0">Capture your first note</h2>
+      <div class="empty"><h2 style="border:0;font-size:var(--size-heading);font-weight:600;margin:0;text-transform:none;letter-spacing:0">Capture your first note</h2>
       <p>Write or paste what you heard. Companies and themes from the note show up here once it's processed.</p>
       <button class="primary" data-action="capture">New note</button></div>
       <p class="proto">Prototype. <button class="link" data-action="sample">Load sample research</button></p>`;
   }
   const pendingRows = pending.map(note => `<button class="row" data-go="note" data-id="${note.id}">
       <div class="row-head"><span class="row-name">${esc(note.title)}</span><span class="status ${note.status}">${statusWord[note.status]}</span></div></button>`).join("");
-  const rows = items.map(({ item, latest }) => `<div class="row">
-      <div class="row-head"><button class="link row-name" style="text-decoration:none" data-go="item" data-id="${item.id}">${esc(item.name)}<span class="kind">${item.kind}</span></button><span class="when">${ago(latest.at)}</span></div>
+  const thesisCards = state.theses.length
+    ? `${sectionHead("Active theses", "sec-theses", state.theses.length)}<div class="card-stack">${state.theses.map(renderThesisSummaryCard).join("")}</div>`
+    : "";
+  const rows = items.map(({ item, latest }) => `<div class="card feed-card ${latest.stance}">
+      <div class="row-head">
+        <button class="link row-name" style="text-decoration:none" data-go="item" data-id="${item.id}">${esc(item.name)}${kindBadge(item.kind)}</button>
+        <span style="display:inline-flex;align-items:center;gap:6px;flex-shrink:0"><span class="pill-badge ${latest.stance}">${esc(stanceWord[latest.stance])}</span><span class="when">${ago(latest.at)}</span></span>
+      </div>
       ${quoteBlock(latest, false)}</div>`).join("");
   return `<h1>Recent</h1>
-    ${pending.length ? `<h2>Captured</h2>${pendingRows}` : ""}
-    ${items.length ? `<h2>Changed</h2>${rows}` : ""}
+    ${pending.length ? `${sectionHead("Captured", "sec-captured", pending.length)}<div class="list-card">${pendingRows}</div>` : ""}
+    ${thesisCards}
+    ${items.length ? `${sectionHead("News", "sec-news", items.length)}<div class="card-stack">${rows}</div>` : ""}
     <p class="proto">Prototype. <button class="link" data-action="empty">Start empty</button> · <button class="link" data-action="sample">Reload sample</button></p>`;
+}
+
+function renderCompanyThesesSection(item) {
+  const theses = thesesForItem(item.id);
+  if (!theses.length) return "";
+  return `${sectionHead("Theses", "sec-theses", theses.length)}<div class="card-stack">${theses.map(renderThesisSummaryCard).join("")}</div>`;
+}
+
+function renderThemeCompaniesSection(item) {
+  const theses = thesesForItem(item.id);
+  const linkedCompanyIds = Array.from(new Set([
+    ...(item.companies || []),
+    ...theses.map(t => t.companyId).filter(Boolean)
+  ]));
+  const crossTheses = theses.filter(t => !t.companyId);
+
+  const companyBlocks = linkedCompanyIds.map(cid => {
+    const comp = state.items[cid];
+    if (!comp) return "";
+    const compTheses = theses.filter(t => t.companyId === cid);
+    return `<div class="card">
+      <div class="row-head">
+        <button type="button" class="link row-name" style="text-decoration:none;font-size:16px" data-go="item" data-id="${cid}">${esc(comp.name)}${kindBadge("company")}</button>
+        <button type="button" class="link meta" style="font-weight:500" data-go="item" data-id="${cid}">Open →</button>
+      </div>
+      ${compTheses.length
+        ? compTheses.map(t => {
+            const r = thesisRealism(t);
+            return `<button type="button" class="row" style="padding:10px 0 4px;border-bottom:0" data-go="thesis" data-id="${t.id}">
+              <div class="row-head"><span style="font-size:14px">${esc(t.statement)}</span><span class="pill-badge ${r.tone}" style="flex-shrink:0">${esc(r.label)}</span></div>
+            </button>`;
+          }).join("")
+        : `<p class="meta" style="margin:8px 0 0">No active thesis yet · <button type="button" class="link" data-start-thesis="${cid}" data-theme-hint="${item.id}">Add ${esc(comp.name)} thesis</button></p>`}
+    </div>`;
+  }).join("");
+
+  const crossHtml = crossTheses.length
+    ? `<p class="subhead">Cross-company theses</p><div class="card-stack">${crossTheses.map(renderThesisSummaryCard).join("")}</div>`
+    : "";
+
+  return `${sectionHead(`Companies &amp; theses on ${esc(item.name)}`, "sec-theme", linkedCompanyIds.length)}
+    <p class="meta">Compare companies sharing this theme, or create a cross-company thesis.</p>
+    <div class="card-stack">${companyBlocks}</div>
+    ${crossHtml}
+    <div class="actions"><button type="button" class="secondary" data-start-cross-thesis="${item.id}">+ Cross-company thesis</button></div>`;
 }
 
 function renderItem(id) {
   const item = state.items[id];
-  const views = viewsFor(id);
-  const challenged = views.filter(view => view.against);
-  const rest = views.filter(view => !view.against && !challenged.some(c => c.against === view.view));
-  const pairs = challenged.map(view => {
-    const base = views.find(other => other.view === view.against);
-    return `<div class="pair">
-      <p class="view-text">${esc(view.view)}</p>${quoteBlock(view, true)}
-      ${base ? `<p class="pair-label">Disagrees with</p><p class="view-text" style="margin-top:4px">${esc(base.view)}</p>${quoteBlock(base, false)}` : ""}
-      <div class="actions"><button class="secondary" data-action="chat" data-ask="Which is more likely, ${esc(view.view.toLowerCase().replace(/\.$/, ""))} or ${esc((base ? base.view : "the prior view").toLowerCase().replace(/\.$/, ""))}?">Ask which holds</button></div></div>`;
+  const openQ = item.openQuestions || [];
+  const questions = openQ.map(q => `<button type="button" class="row" data-action="chat" data-ask="${esc(q)}">
+    <div class="row-head" style="align-items:flex-start"><span class="q-row-body"><span class="q-icon" aria-hidden="true">?</span><span class="row-name" style="font-weight:400">${esc(q)}</span></span><span class="ask-pill">Ask →</span></div>
+  </button>`).join("");
+
+  const thesisSection = item.kind === "company"
+    ? renderCompanyThesesSection(item)
+    : item.kind === "theme"
+      ? renderThemeCompaniesSection(item)
+      : "";
+
+  return `<div class="item-hero kind-${item.kind}">${kindBadge(item.kind)}<h1>${esc(item.name)}</h1></div>
+    ${sectionHead("Consensus", "sec-consensus")}<div class="consensus-card"><p class="lede">${esc(item.consensus)}</p></div>
+    ${thesisSection}
+    ${questions ? `${sectionHead("Open questions", "sec-questions", openQ.length)}<div class="list-card">${questions}</div>` : ""}`;
+}
+
+function renderItemNotes(id) {
+  const item = state.items[id];
+  if (!item) return `<p class="meta">Item not found.</p>`;
+  const notes = notesFor(id);
+  const pending = Object.values(state.notes)
+    .filter(note => note.status !== "processed" && note.hint === id && !note.items.includes(id))
+    .sort((a, b) => b.at - a.at);
+
+  const pendingHtml = pending.length ? `${sectionHead("Captured", "sec-captured", pending.length)}<div class="list-card">${pending.map(note => `<button type="button" class="row" data-go="note" data-id="${note.id}">
+    <div class="row-head"><span class="row-name">${esc(note.title)}</span><span class="status ${note.status}">${statusWord[note.status]}</span></div>
+  </button>`).join("")}</div>` : "";
+
+  const notesHtml = notes.length ? `${sectionHead("Notes", "sec-notes", notes.length)}<div class="list-card">${notes.map(note => `<button type="button" class="row" data-go="note" data-id="${note.id}">
+    <div class="row-head"><span class="row-name">${esc(note.title)}</span><span class="when">${ago(note.at)}</span></div>
+    <p class="note-snippet">${esc(note.text)}</p>
+  </button>`).join("")}</div>` : "";
+
+  const emptyHtml = !notes.length && !pending.length
+    ? `<div class="card cta-card" style="margin-top:16px"><p class="meta" style="margin:0">No notes for ${esc(item.name)} yet.</p><div class="actions"><button type="button" class="secondary" data-action="capture">Add a note</button></div></div>`
+    : "";
+
+  return `<div class="item-hero kind-${item.kind}">${kindBadge(item.kind, `${item.name} · ${item.kind}`)}<h1>Notes</h1></div>
+    ${pendingHtml}
+    ${notesHtml}
+    ${emptyHtml}`;
+}
+
+function renderAddonCard(addon) {
+  const added = builder.selectedAddonIds.includes(addon.id);
+  return `<div class="addon-card ${addon.kind} ${added ? "added" : ""}">
+    <div class="addon-head">
+      <div>
+        <p class="addon-title">${esc(addon.name)}</p>
+        <button type="button" class="badge-cred" style="margin-top:5px" data-source="${addon.sourceId}">${esc(addon.credibility)}</button>
+      </div>
+      <button type="button" class="add-btn ${addon.kind}" data-toggle-addon="${addon.id}" aria-pressed="${added}">${added ? "✓ Added" : "+ Add"}</button>
+    </div>
+    <div class="chain ${addon.kind}">
+      <p class="chain-step"><span class="chain-k">Assumption</span> ${esc(addon.assumption)}</p>
+      <p class="chain-step"><span class="chain-k">Driver</span> ${esc(addon.driver)}</p>
+      <p class="chain-step"><span class="chain-k">Outcome</span> ${esc(addon.outcome)}</p>
+    </div>
+    <div class="addon-foot">
+      <span class="watch-cue-sm"><span class="chain-k">Watch event · ${esc(addon.watchWindow)}</span> ${esc(addon.watchEvent)}</span>
+    </div>
+  </div>`;
+}
+
+function renderThesisBuilder() {
+  const company = builder.companyId ? state.items[builder.companyId] : null;
+  const themes = Object.values(state.items).filter(i => i.kind === "theme");
+  const findings = findingsForContext(builder.companyId, builder.themeId);
+  const supportAddons = findings.addons.filter(a => a.kind === "support");
+  const detractAddons = findings.addons.filter(a => a.kind === "detract");
+
+  const customList = builder.customDrivers.map((txt, idx) => `<div class="custom-item">
+    <span>${esc(txt)}</span>
+    <button type="button" aria-label="Remove driver" data-remove-custom="${idx}">×</button>
+  </div>`).join("");
+
+  const populatedHtml = builder.populated ? `
+    <div class="baseline-box">
+      <p class="baseline-kicker">Market baseline · priced in</p>
+      <p class="baseline-metric">${esc(findings.baselineMetric)}</p>
+      <p class="baseline-copy">${esc(findings.baselineDetail)}</p>
+      <button type="button" class="cite flat link" data-source="${findings.baselineSource}">View consensus source</button>
+    </div>
+
+    <p class="subhead support"><span>Supporting drivers · tap + to watch</span><span>${supportAddons.length}</span></p>
+    <div class="card-stack">${supportAddons.map(renderAddonCard).join("")}</div>
+
+    <p class="subhead detract"><span>Detracting risks · tap + to watch</span><span>${detractAddons.length}</span></p>
+    <div class="card-stack">${detractAddons.map(renderAddonCard).join("")}</div>
+  ` : "";
+
+  return `<div class="item-hero ${company ? "kind-company" : ""}">${company ? kindBadge("company", `${company.name} · new thesis`) : kindBadge("cross", "cross-company · new thesis")}<h1>${builder.editingId ? "Customize thesis" : "Build a thesis"}</h1></div>
+
+    <div class="step-card">
+      <div class="step-head"><span class="step-num step-1">1</span><span class="step-tag">Your thesis</span></div>
+      <textarea class="field" id="builder-statement" style="min-height:94px" placeholder="State your investment hunch…" aria-label="Thesis statement">${esc(builder.statement)}</textarea>
+      ${!builder.statement ? `<div class="chips" style="margin-top:8px;margin-bottom:0"><button type="button" data-fill-thesis="${esc(findings.sampleThesis)}">Sample: “${esc(findings.sampleThesis)}”</button></div>` : ""}
+      <p class="error" id="builder-error" role="alert"></p>
+      <div class="theme-row">
+        <span class="meta">Theme:</span>
+        ${themes.map(th => `<button type="button" class="theme-chip" data-pick-theme="${th.id}" aria-pressed="${builder.themeId === th.id}">${esc(th.name)}</button>`).join("")}
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-head"><span class="step-num step-2">2</span><span class="step-tag">Add your own drivers (optional)</span></div>
+      <div class="custom-driver-row">
+        <input class="field" id="custom-driver-input" placeholder="e.g. Carrier promo bundle pulls forward upgrades" aria-label="Custom driver" value="${esc(builder.draftCustom || "")}">
+        <button type="button" class="secondary" id="add-custom-driver">Add</button>
+      </div>
+      ${customList ? `<div class="custom-chip-list">${customList}</div>` : ""}
+    </div>
+
+    <div class="step-card">
+      <div class="step-head"><span class="step-num step-3">3</span><span class="step-tag">Ontology findings</span></div>
+      <button type="button" class="populate-btn ${builder.populated ? "populated" : ""}" id="populate-findings" ${builder.populating ? "disabled" : ""}>
+        ${builder.populating ? `<span class="status processing">Pulling baseline &amp; watchable drivers…</span>` : builder.populated ? "✓ Populated from ontology" : "Populate with ontology findings"}
+      </button>
+      ${populatedHtml}
+    </div>`;
+}
+
+function addonStatus(addon, mappedItems) {
+  if (!mappedItems.length) return { cls: "watching", text: "Watching" };
+  const latest = mappedItems[0];
+  const delta = newsDeltaForAddon(addon, latest.effect);
+  if (addon.kind === "detract") {
+    return delta < 0 ? { cls: "challenge", text: "Risk triggered" } : { cls: "support", text: "Broken" };
+  }
+  return delta > 0 ? { cls: "support", text: "Confirmed" } : { cls: "challenge", text: "Broken" };
+}
+
+function evidenceLabel(addon, item) {
+  if (addon.kind === "detract") {
+    return item.effect === "confirms"
+      ? { cls: "challenge", text: "Confirms risk · Makes thesis less realistic" }
+      : { cls: "support", text: "Refutes risk · Makes thesis more realistic" };
+  }
+  return item.effect === "confirms"
+    ? { cls: "support", text: "Confirms driver · Makes thesis more realistic" }
+    : { cls: "challenge", text: "Breaks driver · Makes thesis less realistic" };
+}
+
+function renderThesisLive(id) {
+  const thesis = thesisById(id);
+  if (!thesis) return `<p class="meta">Thesis not found.</p>`;
+  const company = thesis.companyId ? state.items[thesis.companyId] : null;
+  const theme = thesis.themeId ? state.items[thesis.themeId] : null;
+  const r = thesisRealism(thesis);
+  const addons = allAddonsFor(thesis.companyId, thesis.themeId);
+  const watchedAddons = addons.filter(a => thesis.selectedAddonIds.includes(a.id));
+
+  const unwatchedHtml = state.unwatchedPrompt && state.unwatchedPrompt.thesisId === thesis.id ? (() => {
+    const p = state.unwatchedPrompt.preset;
+    const addon = addons.find(a => a.id === p.addonId);
+    return `<div class="unwatched-card">
+      <p style="margin:0;font-size:13.5px"><strong>Unwatched signal:</strong> “${esc(p.sourceTitle)}” tests <strong>${esc(addon.name)}</strong>, which wasn’t added to this thesis yet.</p>
+      <div class="actions" style="margin-top:10px">
+        <button type="button" class="primary" data-add-watch-map="${p.id}">+ Add to thesis &amp; map</button>
+        <button type="button" class="secondary" data-dismiss-unwatched="1">Dismiss</button>
+      </div>
+    </div>`;
+  })() : "";
+
+  const customCards = thesis.customDrivers.map(txt => `<div class="watch-card driver-custom">
+    <div class="row-head">
+      <span class="row-name">${esc(txt)}</span>
+      <span class="status watching">Watching</span>
+    </div>
+    <div style="margin-top:6px"><span class="pill-badge theme">Custom driver</span> <span class="meta">Added at checkout</span></div>
+  </div>`).join("");
+
+  const addonCards = watchedAddons.map(addon => {
+    const items = thesis.mappedNews.filter(n => n.addonId === addon.id);
+    const st = addonStatus(addon, items);
+    const cardTone = items.length ? st.cls : "";
+    const mappedHtml = items.map(item => {
+      const ev = evidenceLabel(addon, item);
+      return `<div class="evidence-box ${ev.cls}">
+        <p class="stance flat ${ev.cls}">${esc(ev.text)}</p>
+        <p class="evidence-quote">“${esc(item.headline)}”</p>
+        <span class="cite flat">${esc(item.sourceTitle)} · ${esc(item.credibility)} · ${esc(item.age)}</span>
+        <p class="meta" style="margin:4px 0 0">${esc(item.agentNote)}</p>
+      </div>`;
+    }).join("");
+
+    return `<div class="watch-card driver-${addon.kind} ${cardTone}">
+      <div class="row-head">
+        <span class="row-name">${esc(addon.name)}</span>
+        <span class="status ${st.cls}">${esc(st.text)}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px">
+        <span class="pill-badge ${addon.kind === "support" ? "support" : "challenge"}">${addon.kind === "support" ? "Supporting driver" : "Detracting risk"}</span>
+        <button type="button" class="link meta" data-source="${addon.sourceId}">${esc(addon.credibility)}</button>
+      </div>
+      <div class="watch-cue-box"><span class="chain-k">Watch event · ${esc(addon.watchWindow)}</span> ${esc(addon.watchEvent)}</div>
+      ${mappedHtml}
+    </div>`;
   }).join("");
-  const list = rest.map(view => `<div class="row" style="cursor:default"><div class="row-head"><span class="row-name" style="font-weight:400">${esc(view.view)}</span><span class="when">${ago(view.at)}</span></div>${quoteBlock(view, true)}</div>`).join("");
-  const sources = notesFor(id).map(note => `<button class="row" data-go="note" data-id="${note.id}"><div class="row-head"><span class="row-name" style="font-weight:400">${esc(note.title)}</span><span class="when">${ago(note.at)}</span></div></button>`).join("");
-  return `<p class="kind">${item.kind}</p><h1>${esc(item.name)}</h1>
-    <h2>Consensus</h2><p class="lede" style="font-family:var(--font-source);line-height:1.55">${esc(item.consensus)}</p>
-    ${pairs ? `<h2>Disagreement</h2>${pairs}` : ""}
-    ${list ? `<h2>Views and events</h2>${list}` : ""}
-    <h2 id="sources" tabindex="-1">Sources</h2>${sources}`;
+
+  const showAppleDemoNews = !thesis.companyId || thesis.companyId === "apple";
+  const newsSection = showAppleDemoNews ? `
+    ${sectionHead("Incoming news (demo)", "sec-news", PRESET_NEWS.length)}
+    <p class="meta" style="margin-top:0">Tap a headline to watch it map onto the exact driver it confirms or breaks.</p>
+    <div class="card-stack">${PRESET_NEWS.map(p => renderPresetNewsRow(thesis, p)).join("")}</div>
+  ` : "";
+
+  const totalWatchCount = thesis.customDrivers.length + watchedAddons.length;
+  return `<div class="hero-card ${r.tone === "routine" ? "" : r.tone}">
+      <div class="actions" style="margin-top:0;margin-bottom:8px">
+        ${company ? `<button type="button" class="pill-badge link-pill kind-company" data-go="item" data-id="${company.id}">${esc(company.name)}</button>` : `<span class="pill-badge brand">Cross-company</span>`}
+        ${theme ? `<button type="button" class="pill-badge link-pill kind-theme" data-go="item" data-id="${theme.id}">${esc(theme.name)}</button>` : ""}
+      </div>
+      <h1 style="font-size:23px;margin:0">${esc(thesis.statement)}</h1>
+      <div class="verdict-band ${r.tone === "routine" ? "" : r.tone}">
+        <span class="verdict-title">${esc(r.label)}</span>
+        <span class="verdict-tally">${esc(r.tally)}</span>
+      </div>
+      <div class="meter" aria-hidden="true">${r.segs.map(cls => `<span class="meter-seg ${cls}"></span>`).join("")}</div>
+      <div class="priced-in-box"><strong>Priced in:</strong> ${esc(thesis.baselineMetric)} — ${esc(thesis.baselineDetail)}</div>
+    </div>
+
+    ${unwatchedHtml}
+
+    ${sectionHead("Scenario watchlist", "sec-theses", totalWatchCount)}
+    <div class="card-stack">
+      ${customCards || addonCards ? `${customCards}${addonCards}` : `<div class="card cta-card"><p class="meta" style="margin:0">No drivers attached yet. Tap <strong>Edit</strong> below to add drivers &amp; watch events.</p></div>`}
+    </div>
+
+    ${newsSection}`;
+}
+
+function renderPresetNewsRow(thesis, preset) {
+  const mapped = thesis.mappedNews.some(n => n.id === preset.id);
+  const addon = allAddonsFor(thesis.companyId, thesis.themeId).find(a => a.id === preset.addonId);
+  const watched = thesis.selectedAddonIds.includes(preset.addonId);
+  const delta = newsDeltaForAddon(addon, preset.effect);
+  return `<button type="button" class="news-card" data-drop-news="${preset.id}" ${mapped ? "disabled" : ""}>
+    <div class="row-head">
+      <span class="row-name">${esc(preset.sourceTitle)}</span>
+      <span class="pill-badge ${mapped ? "routine" : "brand"}">${mapped ? "✓ Mapped" : "Simulate →"}</span>
+    </div>
+    <p class="news-headline">“${esc(preset.headline)}”</p>
+    <div class="news-tag">
+      <span>Tests: <strong style="color:var(--ink)">${esc(addon ? addon.name : preset.addonId)}</strong>${watched ? "" : " (not added)"}</span>
+      <span class="pill-badge ${delta > 0 ? "support" : "challenge"}">${delta > 0 ? "More realistic" : "Less realistic"}</span>
+    </div>
+  </button>`;
 }
 
 function renderNote(id) {
   const note = state.notes[id];
   const done = note.status === "processed";
-  const linked = note.items.filter(item => state.items[item]).map(item => `<button class="row" data-go="item" data-id="${item}"><span class="row-name">${esc(state.items[item].name)}<span class="kind">${state.items[item].kind}</span></span></button>`).join("");
-  const status = done ? `<span class="status">Processed ${since(note.at)}</span>` : `<span class="status ${note.status}">${{ ready: "Not processed", queued: "Queued for processing", processing: "Processing" }[note.status]}</span>`;
-  return `<p class="kind">note</p><h1>${esc(note.title)}</h1>${status}
-    <p class="source-text">${esc(note.text)}</p>
-    ${done ? `<h2>Extracted</h2>${linked || '<p class="meta">No companies or themes found in this note.</p>'}` : ""}
+  const linkedItems = note.items.filter(item => state.items[item]);
+  const linked = linkedItems.map(item => `<button class="row" data-go="item" data-id="${item}"><div class="row-head"><span class="row-name">${esc(state.items[item].name)}${kindBadge(state.items[item].kind)}</span><span class="when">Open →</span></div></button>`).join("");
+  const status = done ? `<span class="status support">Processed ${since(note.at)}</span>` : `<span class="status ${note.status}">${{ ready: "Not processed", queued: "Queued for processing", processing: "Processing" }[note.status]}</span>`;
+  return `<div class="item-hero kind-note">${kindBadge("note")}<h1>${esc(note.title)}</h1>${status}</div>
+    <div class="source-card"><p class="source-text">${esc(note.text)}</p></div>
+    ${done ? `${sectionHead("Extracted", "sec-company", linkedItems.length)}${linked ? `<div class="list-card">${linked}</div>` : '<p class="meta">No companies or themes found in this note.</p>'}` : ""}
     <div class="actions">${note.status === "ready" ? '<button class="primary" data-action="process">Process</button>' : ""}<button class="secondary" data-action="chat">Research this note</button></div>`;
 }
 
 function renderOntology() {
-  return `<h1>Ontology</h1><input class="search" id="search-input" type="search" placeholder="Search companies, themes, and notes" aria-label="Search the ontology" value="${esc(current.query || "")}"><div id="results">${searchResults(current.query || "")}</div>`;
+  return `<h1>Coverage</h1><input class="search" id="search-input" type="search" placeholder="Search companies, themes, and notes" aria-label="Search coverage" value="${esc(current.query || "")}"><div id="results">${searchResults(current.query || "")}</div>`;
 }
 
 function directory() {
-  const groups = [["company", "Companies"], ["theme", "Themes"], ["entity", "Entities"]];
+  const groups = [["company", "Companies", "sec-company"], ["theme", "Themes", "sec-theme"], ["entity", "Entities", "sec-entity"]];
   const items = Object.values(state.items);
   if (!items.length) return `<p class="meta" style="margin-top:16px">Companies, themes, and entities appear here once a note is processed.</p>`;
-  return groups.map(([kind, heading]) => {
+  return groups.map(([kind, heading, secCls]) => {
     const group = items.filter(item => item.kind === kind).sort((a, b) => a.name.localeCompare(b.name));
-    return group.length ? `<h2>${heading}</h2>${group.map(item => `<button class="row" data-go="item" data-id="${item.id}"><div class="row-head"><span class="row-name">${esc(item.name)}</span><span class="when">${notesFor(item.id).length} ${notesFor(item.id).length === 1 ? "note" : "notes"}</span></div></button>`).join("")}` : "";
+    return group.length ? `${sectionHead(heading, secCls, group.length)}<div class="list-card">${group.map(item => `<button class="row" data-go="item" data-id="${item.id}"><div class="row-head"><span class="row-name">${esc(item.name)}</span><span class="count-pill">${notesFor(item.id).length} ${notesFor(item.id).length === 1 ? "note" : "notes"}</span></div></button>`).join("")}</div>` : "";
   }).join("");
 }
 
@@ -361,37 +1402,77 @@ function searchResults(query) {
   const items = Object.values(state.items).filter(item => (item.name + " " + item.consensus).toLowerCase().includes(q));
   const notes = Object.values(state.notes).filter(note => (note.title + " " + note.text).toLowerCase().includes(q));
   if (!items.length && !notes.length) return `<p class="meta" style="margin-top:16px">Nothing matches “${esc(query)}”. Try a company or theme name.</p>`;
-  return `${items.length ? `<h2>Companies and themes</h2>${items.map(item => `<button class="row" data-go="item" data-id="${item.id}"><span class="row-name">${esc(item.name)}<span class="kind">${item.kind}</span></span></button>`).join("")}` : ""}
-    ${notes.length ? `<h2>Notes</h2>${notes.map(note => `<button class="row" data-go="note" data-id="${note.id}"><div class="row-head"><span class="row-name" style="font-weight:400">${esc(note.title)}</span><span class="when">${ago(note.at)}</span></div></button>`).join("")}` : ""}`;
+  return `${items.length ? `${sectionHead("Companies and themes", "sec-company", items.length)}<div class="list-card">${items.map(item => `<button class="row" data-go="item" data-id="${item.id}"><div class="row-head"><span class="row-name">${esc(item.name)}${kindBadge(item.kind)}</span><span class="when">Open →</span></div></button>`).join("")}</div>` : ""}
+    ${notes.length ? `${sectionHead("Notes", "sec-notes", notes.length)}<div class="list-card">${notes.map(note => `<button class="row" data-go="note" data-id="${note.id}"><div class="row-head"><span class="row-name" style="font-weight:500">${esc(note.title)}</span><span class="when">${ago(note.at)}</span></div></button>`).join("")}</div>` : ""}`;
+}
+
+function updateCheckoutBar() {
+  if (!builder) return;
+  const total = builder.customDrivers.length + builder.selectedAddonIds.length;
+  $("#checkout-count").textContent = `${total} item${total === 1 ? "" : "s"} selected`;
+  $("#checkout-sub").textContent = builder.populated ? "Market baseline included" : "Populate ontology to add drivers";
+  $("#checkout-submit").textContent = builder.editingId ? "Update & watch" : "Create & watch";
 }
 
 function render(focus) {
-  const views = { recent: renderRecent, item: () => renderItem(current.id), note: () => renderNote(current.id), ontology: renderOntology };
+  const views = {
+    recent: renderRecent,
+    item: () => renderItem(current.id),
+    item_notes: () => renderItemNotes(current.id),
+    note: () => renderNote(current.id),
+    ontology: renderOntology,
+    thesis_builder: renderThesisBuilder,
+    thesis: () => renderThesisLive(current.id)
+  };
   screen.innerHTML = views[current.screen]();
   const previous = history.at(-1);
   $("#back").hidden = !previous;
   $("#brand").hidden = Boolean(previous);
   if (previous) { $("#back-label").textContent = label(previous); $("#back").setAttribute("aria-label", "Back to " + label(previous)); }
-  const contextual = current.screen === "item";
-  $("#bar").setAttribute("aria-label", contextual ? "Research navigation" : "Main navigation");
-  $("#nav-recent").hidden = $("#nav-ontology").hidden = contextual;
-  $("#nav-sources").hidden = $("#nav-chat").hidden = !contextual;
+
+  const isBuilder = current.screen === "thesis_builder";
+  const isItem = current.screen === "item";
+  const isItemNotes = current.screen === "item_notes";
+  const isItemContext = isItem || isItemNotes;
+  const isThesis = current.screen === "thesis";
+
+  $("#bar").hidden = isBuilder;
+  $("#checkout-bar").hidden = !isBuilder;
+  if (isBuilder) updateCheckoutBar();
+
+  $("#bar").setAttribute("aria-label", (isItemContext || isThesis) ? "Research navigation" : "Main navigation");
+  $("#nav-recent").hidden = $("#nav-ontology").hidden = isItemContext || isThesis;
+  $("#nav-sources").hidden = !isItemContext;
+  $("#nav-edit-thesis").hidden = !isThesis;
+  $("#nav-chat").hidden = !(isItemContext || isThesis);
   $("#nav-chat").setAttribute("aria-expanded", String(!$("#chat").hidden));
+  $("#nav-capture").setAttribute("aria-label", isThesis ? "Drop news headline" : "Add");
+
   $("#nav-recent").toggleAttribute("aria-current", current.screen === "recent");
   $("#nav-ontology").toggleAttribute("aria-current", current.screen === "ontology");
+  $("#nav-sources").toggleAttribute("aria-current", isItemNotes);
   if (current.screen === "recent") $("#nav-recent").setAttribute("aria-current", "page");
+  if (isItemNotes) $("#nav-sources").setAttribute("aria-current", "page");
+
   if (current.screen === "ontology") {
     $("#nav-ontology").setAttribute("aria-current", "page");
     const input = $("#search-input");
     input.addEventListener("input", () => { current.query = input.value; $("#results").innerHTML = searchResults(input.value); });
     if (focus) input.focus();
-  } else if (focus) screen.focus();
+  } else if (isBuilder) {
+    wireBuilderEvents();
+  } else if (focus) {
+    screen.focus();
+  }
 }
 
 function label(entry) {
   if (entry.screen === "item") return state.items[entry.id].name;
+  if (entry.screen === "item_notes") return "Notes";
   if (entry.screen === "note") return state.notes[entry.id].title;
-  return entry.screen === "ontology" ? "Ontology" : "Recent";
+  if (entry.screen === "thesis") return "Thesis";
+  if (entry.screen === "thesis_builder") return "Edit thesis";
+  return entry.screen === "ontology" ? "Coverage" : "Recent";
 }
 
 function go(screenName, id) {
@@ -419,10 +1500,193 @@ function toast(message) {
   toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
 }
 
+/* Thesis Builder Lifecycle */
+function startThesisBuilder({ companyId = null, themeId = null, existing = null } = {}) {
+  closeChat();
+  const comp = companyId ? state.items[companyId] : null;
+  const resolvedTheme = themeId || (comp && comp.defaultTheme) || "edge_ai";
+  if (existing) {
+    builder = {
+      editingId: existing.id,
+      companyId: existing.companyId,
+      themeId: existing.themeId,
+      statement: existing.statement,
+      customDrivers: [...existing.customDrivers],
+      draftCustom: "",
+      selectedAddonIds: [...existing.selectedAddonIds],
+      populated: true,
+      populating: false
+    };
+  } else {
+    builder = {
+      editingId: null,
+      companyId,
+      themeId: resolvedTheme,
+      statement: "",
+      customDrivers: [],
+      draftCustom: "",
+      selectedAddonIds: [],
+      populated: false,
+      populating: false
+    };
+  }
+  history.push(current);
+  current = { screen: "thesis_builder" };
+  render(true);
+  window.scrollTo(0, 0);
+}
+
+function wireBuilderEvents() {
+  const st = $("#builder-statement");
+  const customInput = $("#custom-driver-input");
+  st.addEventListener("input", () => {
+    builder.statement = st.value;
+    $("#builder-error").textContent = "";
+  });
+  customInput.addEventListener("input", () => { builder.draftCustom = customInput.value; });
+  customInput.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); addCustomDriver(); }
+  });
+  $("#add-custom-driver").addEventListener("click", addCustomDriver);
+  $("#populate-findings").addEventListener("click", () => {
+    if (builder.populated || builder.populating) return;
+    builder.populating = true;
+    render();
+    setTimeout(() => {
+      builder.populating = false;
+      builder.populated = true;
+      render();
+    }, 600);
+  });
+}
+
+function addCustomDriver() {
+  const val = ($("#custom-driver-input").value || "").trim();
+  if (!val) return;
+  builder.customDrivers.push(val);
+  builder.draftCustom = "";
+  render();
+  toast("Added custom driver.");
+}
+
+function checkoutThesis() {
+  const text = (builder.statement || "").trim();
+  if (!text) {
+    $("#builder-error").textContent = "State your thesis first, or tap the sample above.";
+    $("#builder-statement").focus();
+    return;
+  }
+  const findings = findingsForContext(builder.companyId, builder.themeId);
+  let targetId;
+  if (builder.editingId) {
+    const existing = thesisById(builder.editingId);
+    existing.statement = text;
+    existing.themeId = builder.themeId;
+    existing.customDrivers = [...builder.customDrivers];
+    existing.selectedAddonIds = [...builder.selectedAddonIds];
+    targetId = existing.id;
+    toast("Thesis updated.");
+  } else {
+    targetId = "th_" + Date.now();
+    state.theses.unshift({
+      id: targetId,
+      companyId: builder.companyId,
+      themeId: builder.themeId,
+      statement: text,
+      baselineMetric: findings.baselineMetric,
+      baselineDetail: findings.baselineDetail,
+      customDrivers: [...builder.customDrivers],
+      selectedAddonIds: [...builder.selectedAddonIds],
+      mappedNews: [],
+      createdAt: Date.now()
+    });
+    toast("Thesis created — watching drivers.");
+  }
+  if (history.length && history.at(-1).screen === "thesis" && history.at(-1).id === targetId) {
+    history.pop();
+  }
+  builder = null;
+  // Replace builder in navigation with the live thesis so Back goes to Company/Theme
+  current = { screen: "thesis", id: targetId };
+  render(true);
+  window.scrollTo(0, 0);
+}
+
+/* News dropping & custom headline classification on Live Thesis */
+function dropPresetOnThesis(presetId) {
+  if (current.screen !== "thesis") return;
+  const thesis = thesisById(current.id);
+  const preset = PRESET_NEWS.find(p => p.id === presetId);
+  if (!thesis || !preset || thesis.mappedNews.some(n => n.id === preset.id)) return;
+  const addon = allAddonsFor(thesis.companyId, thesis.themeId).find(a => a.id === preset.addonId);
+
+  if (!thesis.selectedAddonIds.includes(preset.addonId)) {
+    state.unwatchedPrompt = { thesisId: thesis.id, preset };
+    if ($("#news-sheet").open) $("#news-sheet").close();
+    render();
+    toast(`${addon.name} wasn’t added yet — add it to map this news.`);
+    return;
+  }
+
+  thesis.mappedNews.unshift(preset);
+  if ($("#news-sheet").open) $("#news-sheet").close();
+  render();
+  const delta = newsDeltaForAddon(addon, preset.effect);
+  toast(`Mapped to ${addon.name} · ${delta > 0 ? "More realistic" : "Less realistic"}`);
+}
+
+function classifyCustomHeadline(text, thesis) {
+  const lower = text.toLowerCase();
+  let addonId = "gifting";
+  if (/battery|power|drain|thermal|overheat/.test(lower)) addonId = "priority_mismatch";
+  else if (/delay|slip|eu|europe|china|regulat|late|postpone/.test(lower)) addonId = "rollout_delay";
+  else if (/chatgpt|gemini|claude|third-party|3rd party|substitut|retention|stick|app/.test(lower)) addonId = "app_substitution";
+  else if (/chip|silicon|a20|ram|3\+|older|trade-in|cycle|gate/.test(lower)) addonId = "hardware_gate";
+
+  const addons = allAddonsFor(thesis.companyId, thesis.themeId);
+  let addon = addons.find(a => a.id === addonId) || addons[0];
+  let effect = "confirms";
+  if (/no delay|on time|ahead|approved|passed|holds|minimal drain|within \d+%|false|no issue|didn't|did not|rebound/.test(lower)) {
+    effect = "breaks";
+  } else if (addon.kind === "support" && /slow|weak|miss|drop|fell|decline|stall|fail/.test(lower)) {
+    effect = "breaks";
+  }
+
+  const delta = newsDeltaForAddon(addon, effect);
+  return {
+    id: "custom_" + Date.now(),
+    addonId: addon.id,
+    effect,
+    sourceTitle: "Custom headline",
+    credibility: "Unrated",
+    age: "just now",
+    headline: text,
+    agentNote: delta > 0 ? `Mapped to ${addon.name} — makes thesis more realistic.` : `Mapped to ${addon.name} — makes thesis less realistic.`
+  };
+}
+
+function openNewsSheet() {
+  const thesis = thesisById(current.id);
+  if (!thesis) return;
+  $("#custom-news-text").value = "";
+  $("#custom-news-error").textContent = "";
+  $("#news-sheet-presets").innerHTML = PRESET_NEWS.map(p => renderPresetNewsRow(thesis, p)).join("");
+  $("#news-sheet").showModal();
+  $("#custom-news-text").focus();
+}
+
+function openSourceSheet(sourceId) {
+  const src = SOURCES[sourceId] || SOURCES.generic_src;
+  $("#source-sheet-title").textContent = src.title;
+  $("#source-sheet-body").innerHTML = `<p class="meta" style="margin-top:0">Credibility: <strong>${esc(src.credibility)}</strong> · ${esc(src.date)}</p><p class="source-text">${esc(src.excerpt)}</p>`;
+  $("#source-sheet").showModal();
+}
+
+/* Existing Capture & Chooser */
 let captureHint = null;
 let captureSummary = null;
 function openCapture(prefill) {
-  captureHint = current.screen === "item" ? current.id : null;
+  captureHint = (current.screen === "item" || current.screen === "item_notes") ? current.id : null;
   $("#capture-hint").innerHTML = captureHint ? `<span class="hint">For ${esc(state.items[captureHint].name)}<button type="button" aria-label="Remove hint" id="hint-remove">×</button></span>` : "";
   captureSummary = prefill ? prefill.summary : null;
   $("#capture-name").value = prefill ? prefill.title : "";
@@ -431,6 +1695,20 @@ function openCapture(prefill) {
   $("#capture-error").textContent = "";
   $("#capture").showModal();
   $("#capture-text").focus();
+}
+
+function openAddChooser() {
+  const item = state.items[current.id];
+  if (!item) return openCapture();
+  $("#chooser-title").textContent = `Add to ${item.name}`;
+  if (item.kind === "theme") {
+    $("#choose-thesis-label").textContent = "Add a cross-company thesis";
+    $("#choose-thesis-sub").textContent = `Track a narrative across companies in ${item.name}`;
+  } else {
+    $("#choose-thesis-label").textContent = "Add a thesis";
+    $("#choose-thesis-sub").textContent = `State a hunch on ${item.name}, pull ontology findings, and watch drivers`;
+  }
+  $("#add-chooser").showModal();
 }
 
 function stanceOf(text) {
@@ -478,9 +1756,15 @@ function finishProcessing(note) {
   toast(found.length ? `Processed. Updated ${found.map(key => CATALOG[key].name).join(", ")}.` : "Processed. No companies or themes found.");
 }
 
+/* Research Chat */
 function contextFor() {
-  if (current.screen === "item") return { key: "item:" + current.id, name: state.items[current.id].name, notes: notesFor(current.id) };
+  if (current.screen === "item" || current.screen === "item_notes") return { key: "item:" + current.id, name: state.items[current.id].name, notes: notesFor(current.id) };
   if (current.screen === "note") return { key: "note:" + current.id, name: state.notes[current.id].title, notes: [state.notes[current.id]] };
+  if (current.screen === "thesis") {
+    const t = thesisById(current.id);
+    const notes = t.companyId ? notesFor(t.companyId) : (t.themeId ? notesFor(t.themeId) : []);
+    return { key: "thesis:" + t.id, name: t.statement, thesis: t, notes: notes.length ? notes : Object.values(state.notes).slice(0, 2) };
+  }
   return null;
 }
 
@@ -510,9 +1794,9 @@ function toggleExpand() {
 
 function showSources() {
   closeChat();
-  const heading = $("#sources");
-  heading.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  heading.focus({ preventScroll: true });
+  if (current.screen === "item" && current.id) {
+    go("item_notes", current.id);
+  }
 }
 
 function drawChat() {
@@ -530,20 +1814,22 @@ function reply(context, question) {
   const refute = /refute|against|wrong|risk/i.test(question);
   const cited = context.notes.slice(0, 3);
   const lead = refute
-    ? `These notes cut against the current view of ${esc(context.name)}:`
+    ? `These notes cut against ${esc(context.name)}:`
     : /timing|rollout|delivery/i.test(question)
       ? `Here's what the notes say about timing for ${esc(context.name)}:`
       : `Here's what the notes say about ${esc(context.name)}:`;
   const pick = note => { const parts = note.text.split(/(?<=[.!?])\s+/); return refute ? parts.at(-1) : parts[0]; };
   const quotes = cited.map((note, i) => `<blockquote class="quote ${stanceOf(note.text)}">“${esc(pick(note))}”</blockquote>
     <button class="cite link" data-go="note" data-id="${note.id}">[${i + 1}] ${esc(note.title)}</button>`).join("");
-  const close = refute || /which|likely|margin|hold/i.test(question)
-    ? "The 52% figure rests on one supplier call. A second quote on interposer pricing, or a margin figure from the next earnings call, would settle it."
-    : /timing|rollout|delivery/i.test(question)
-      ? "None of these notes confirms a change to the rollout. A dated customer order would."
-      : "These notes agree on the latency lead. Cost is the open question.";
+  const close = context.thesis
+    ? (refute
+        ? "Watch EU/China regulatory timelines and third-party AI app retention — those would invalidate the near-term upgrade bump."
+        : "Carrier family-plan mix and 3+ year trade-in share are the cleanest observable checks against the +5% baseline.")
+    : refute || /which|likely|margin|hold/i.test(question)
+      ? "Further channel checks or next-quarter guidance would settle this."
+      : "These notes agree on the core driver; timing and margins remain the open test.";
   const plain = `${lead.replace(/&#39;/g, "'")}\n\n${cited.map((note, i) => `"${pick(note)}" [${i + 1}]`).join("\n")}\n\n${close}\n\n${cited.map((note, i) => `[${i + 1}] ${note.title}`).join("\n")}`;
-  return { html: `<p>${lead}</p>${quotes}<p style="margin-top:10px">${close}</p>`, plain, title: `Chat on ${context.name}`, summary: close.split(/(?<=[.!?])\s+/)[0] };
+  return { html: `<p>${lead}</p>${quotes}<p style="margin-top:10px">${close}</p>`, plain, title: `Chat on ${context.name.slice(0, 36)}`, summary: close.split(/(?<=[.!?])\s+/)[0] };
 }
 
 function send(text) {
@@ -558,15 +1844,61 @@ function send(text) {
   }, 900);
 }
 
+function toggleTheme() {
+  const rootEl = document.documentElement;
+  const prefersDark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const currentTheme = rootEl.getAttribute("data-theme") || (prefersDark ? "dark" : "light");
+  const next = currentTheme === "dark" ? "light" : "dark";
+  rootEl.setAttribute("data-theme", next);
+  $("#theme-toggle").textContent = next === "dark" ? "Light" : "Dark";
+}
+
 document.addEventListener("click", event => {
-  const target = event.target.closest("[data-go],[data-action],[data-save],[data-ask]");
+  const target = event.target.closest("[data-go],[data-action],[data-save],[data-ask],[data-start-thesis],[data-start-cross-thesis],[data-fill-thesis],[data-pick-theme],[data-remove-custom],[data-toggle-addon],[data-source],[data-drop-news],[data-add-watch-map],[data-dismiss-unwatched]");
   if (!target) return;
+
   if (target.dataset.go) {
     go(target.dataset.go, target.dataset.id);
   } else if (target.dataset.save) {
     const message = chats[chatKey].messages[Number(target.dataset.save)];
     closeChat();
     openCapture({ title: message.title, text: message.plain, summary: message.summary });
+  } else if (target.dataset.startThesis) {
+    startThesisBuilder({ companyId: target.dataset.startThesis, themeId: target.dataset.themeHint || null });
+  } else if (target.dataset.startCrossThesis) {
+    startThesisBuilder({ companyId: null, themeId: target.dataset.startCrossThesis });
+  } else if (target.dataset.fillThesis) {
+    builder.statement = target.dataset.fillThesis;
+    render();
+  } else if (target.dataset.pickTheme) {
+    builder.themeId = target.dataset.pickTheme;
+    render();
+  } else if (target.dataset.removeCustom !== undefined) {
+    builder.customDrivers.splice(Number(target.dataset.removeCustom), 1);
+    render();
+  } else if (target.dataset.toggleAddon) {
+    const id = target.dataset.toggleAddon;
+    const idx = builder.selectedAddonIds.indexOf(id);
+    if (idx >= 0) builder.selectedAddonIds.splice(idx, 1);
+    else builder.selectedAddonIds.push(id);
+    render();
+  } else if (target.dataset.source) {
+    openSourceSheet(target.dataset.source);
+  } else if (target.dataset.dropNews) {
+    dropPresetOnThesis(target.dataset.dropNews);
+  } else if (target.dataset.addWatchMap) {
+    const p = state.unwatchedPrompt;
+    if (p && p.preset.id === target.dataset.addWatchMap) {
+      const thesis = thesisById(p.thesisId);
+      if (!thesis.selectedAddonIds.includes(p.preset.addonId)) thesis.selectedAddonIds.push(p.preset.addonId);
+      thesis.mappedNews.unshift(p.preset);
+      state.unwatchedPrompt = null;
+      render();
+      toast("Added driver to thesis and mapped headline.");
+    }
+  } else if (target.dataset.dismissUnwatched) {
+    state.unwatchedPrompt = null;
+    render();
   } else if (target.dataset.action === "capture") openCapture();
   else if (target.dataset.action === "chat") openChat(target.dataset.ask);
   else if (target.dataset.action === "process") startProcessing(state.notes[current.id]);
@@ -575,13 +1907,63 @@ document.addEventListener("click", event => {
   else if (target.dataset.ask && !$("#chat").hidden) send(target.dataset.ask);
 });
 
-$("#back").addEventListener("click", () => { closeChat(); current = history.pop(); render(true); });
+$("#back").addEventListener("click", () => {
+  closeChat();
+  builder = null;
+  current = history.pop();
+  render(true);
+});
 $("#brand").addEventListener("click", () => root("recent"));
 $("#nav-recent").addEventListener("click", () => root("recent"));
 $("#nav-ontology").addEventListener("click", () => root("ontology"));
-$("#nav-capture").addEventListener("click", () => openCapture());
 $("#nav-sources").addEventListener("click", showSources);
+$("#nav-edit-thesis").addEventListener("click", () => {
+  const t = thesisById(current.id);
+  if (t) startThesisBuilder({ existing: t });
+});
+$("#nav-capture").addEventListener("click", () => {
+  if (current.screen === "item" && (state.items[current.id].kind === "company" || state.items[current.id].kind === "theme")) {
+    openAddChooser();
+  } else if (current.screen === "thesis") {
+    openNewsSheet();
+  } else {
+    openCapture();
+  }
+});
 $("#nav-chat").addEventListener("click", () => { if ($("#chat").hidden) openChat(); else closeChat(); });
+$("#checkout-submit").addEventListener("click", checkoutThesis);
+
+$("#chooser-cancel").addEventListener("click", () => $("#add-chooser").close());
+$("#choose-thesis").addEventListener("click", () => {
+  $("#add-chooser").close();
+  const item = state.items[current.id];
+  if (item && item.kind === "theme") startThesisBuilder({ companyId: null, themeId: item.id });
+  else startThesisBuilder({ companyId: current.id });
+});
+$("#choose-note").addEventListener("click", () => {
+  $("#add-chooser").close();
+  openCapture();
+});
+
+$("#custom-news-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const text = $("#custom-news-text").value.trim();
+  if (!text) { $("#custom-news-error").textContent = "Enter a headline or pick one below."; return; }
+  const thesis = thesisById(current.id);
+  if (!thesis) return;
+  const item = classifyCustomHeadline(text, thesis);
+  if (!thesis.selectedAddonIds.includes(item.addonId)) thesis.selectedAddonIds.push(item.addonId);
+  thesis.mappedNews.unshift(item);
+  state.unwatchedPrompt = null;
+  $("#news-sheet").close();
+  render();
+  const addon = allAddonsFor(thesis.companyId, thesis.themeId).find(a => a.id === item.addonId);
+  toast(`Added & mapped to ${addon.name}.`);
+});
+$("#custom-news-text").addEventListener("input", () => { $("#custom-news-error").textContent = ""; });
+$("#news-sheet-cancel").addEventListener("click", () => $("#news-sheet").close());
+$("#source-sheet-close").addEventListener("click", () => $("#source-sheet").close());
+
 $("#chat-close").addEventListener("click", closeChat);
 $("#chat-expand").addEventListener("click", toggleExpand);
 $("#capture-cancel").addEventListener("click", () => $("#capture").close());
@@ -594,7 +1976,14 @@ $("#chat-form").addEventListener("submit", event => {
   const input = $("#chat-input");
   if (input.value.trim()) { send(input.value.trim()); input.value = ""; }
 });
-setInterval(() => { if (!$("#capture").open && current.screen !== "ontology") render(); }, 60e3);
+$("#theme-toggle").addEventListener("click", toggleTheme);
+
+(() => {
+  const prefersDark = matchMedia("(prefers-color-scheme: dark)").matches;
+  $("#theme-toggle").textContent = prefersDark ? "Light" : "Dark";
+})();
+
+setInterval(() => { if (!$("#capture").open && current.screen !== "ontology" && current.screen !== "thesis_builder") render(); }, 60e3);
 
 load(false);
 </script>

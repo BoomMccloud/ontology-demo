@@ -48,9 +48,13 @@ A catalyst is attached to the company the event happens to. It reaches a thesis 
 
 ## Data entry
 
-The analyst works with theses and companies. The form creates the underlying records.
+The analyst works with theses and companies. Company and theme pages are distinct entry points for different workflows:
 
-- **Add a thesis.** On the theme page, the analyst writes the thesis statement.
+- **Company page (primary entry point for creating a thesis).** When watching a company, the analyst starts from that company's page (tapping `+` → **Add a thesis**), anchors the thesis to the company under a theme (such as `Apple` under `Edge AI`), and configures it in a one-page builder:
+  1. State the thesis and optionally add any custom drivers already in mind.
+  2. Populate with ontology findings (what is already priced in, plus supporting drivers and detracting risks, each carrying its merged observable watch event and window).
+  3. Tap `+` on the relevant drivers to attach their watch events to the thesis, then save to monitor incoming news against them on the live thesis view.
+- **Theme page (primary entry point for discovery and cross-company theses).** On the theme page, the analyst discovers and compares other companies that carry similar theses under the same theme, or starts a cross-company thesis spanning multiple companies.
 - **Add a company to a thesis.** The analyst picks the company, then chooses *in* or *watching*.
   - *In* asks for the reason. It creates a membership with status in.
   - *Watching* asks what the team is waiting for, by when, and why it would move the company in. It creates a candidate membership, a catalyst, and an entry prediction in one save.

@@ -4,7 +4,7 @@
 
 [Open the local HTML prototype](../../prototypes/ontolog.html) in a browser. Choose **Start empty** to try the first-note journey. AI replies and ontology processing are simulated.
 
-The prototype follows this file and uses the Margin notes direction below. It covers Recent, capture with processing status, company and theme pages with disagreement and sources, the note reader, Ontology with search, and chat with **Save as note**. It is the starting point for design work, not a finished design.
+The prototype follows this file and uses the Margin notes direction below. It covers Recent, capture with processing status, company and theme pages with disagreement, sources, and theses (with `+` offering **Add a thesis** or **Add a note**), a one-page thesis builder with ontology findings, live thesis tracking, the note reader, Coverage with search, and chat with **Save as note**. It is the starting point for design work, not a finished design.
 
 ## Outcome
 
@@ -41,20 +41,21 @@ The earlier draft used its own terms. They map to the ontology as follows.
 
 ## Navigation
 
-Recent and Ontology are two ways into the same company and theme pages. The three-slot bottom bar changes with the screen.
+Recent and Coverage are two ways into the same company and theme pages. The three-slot bottom bar changes with the screen.
 
 | View | Left | Center | Right |
 | --- | --- | --- | --- |
-| Recent, Ontology, or Note | **Recent** opens the home screen | **+** opens capture | **Ontology** opens the directory and search |
-| Company or Theme | **Sources** jumps to the notes behind this page | **+** captures a note for this company or theme | **Chat** opens or resumes research chat over this page |
+| Recent, Coverage, or Note | **Recent** opens the home screen | **+** opens capture | **Coverage** opens the directory and search |
+| Company or Theme | **Sources** jumps to the notes behind this page | **+** chooses **Add a thesis** or **Add a note** for this page | **Chat** opens or resumes research chat over this page |
+| Thesis | **Edit** opens the one-page thesis builder | **+** drops an incoming headline or note for this thesis | **Chat** opens or resumes research chat over this thesis |
 
-- **Recent** is the home screen. It lists companies and themes touched by recently processed notes, newest first.
-- **Ontology** lists companies, themes, and entities, with a search field on top. Search uses the same search service as the web app, so results match.
-- **+** opens capture. On a company or theme page, the note carries that page as a hint.
+- **Recent** is the home screen. It lists active theses alongside companies and themes touched by recently processed notes, newest first.
+- **Coverage** lists companies, themes, and entities, with a search field on top. Search uses the same search service as the web app, so results match.
+- **Company** is the primary entry point for creating a thesis under a theme; **Theme** is the primary entry point for comparing companies with similar theses or creating a cross-company thesis. On either page, **+** lets the analyst choose **Add a thesis** (opening the one-page configurator) or **Add a note** (carrying that page as a hint).
 
 Chat opens as a panel over the current page, above the bottom bar, and can expand to full height. Minimizing it keeps the analyst's place, and reopening it resumes the conversation. A note page has a **Research this note** action that opens chat focused on that note.
 
-The top **Back** control names and returns to the actual previous screen. After opening a company from Ontology and then one of its notes, Back returns to the company, then to Ontology. With no previous screen, the top left shows the OntoLog name, which returns to Recent.
+The top **Back** control names and returns to the actual previous screen. After opening a company from Coverage and then one of its notes, Back returns to the company, then to Coverage. With no previous screen, the top left shows the OntoLog name, which returns to Recent.
 
 ## Visual design
 
@@ -90,7 +91,7 @@ Stance comes from the View's stance and sentiment as extraction records them. De
 
 ### Daily use
 
-1. The analyst opens a company or theme from Recent or Ontology. The page shows the consensus, recent Events and Views, and the notes behind them.
+1. The analyst opens a company or theme from Recent or Coverage. The page shows the consensus, recent Events and Views, and the notes behind them.
 2. **Sources** jumps to that item's notes. The analyst opens a note to read it, see its processing status, and inspect what was extracted from it.
 3. The analyst taps **+** to log new information for the current item. The worker processes it and the item moves to the top of Recent.
 
